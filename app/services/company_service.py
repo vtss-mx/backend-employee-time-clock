@@ -7,7 +7,6 @@ fiscales y de contacto, sus administradores y conteos.
 from datetime import UTC, datetime
 from typing import Literal
 
-from email_validator import EmailNotValidError, validate_email
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -27,7 +26,7 @@ from app.schemas.company import (
     CompanyUpdate,
     PlatformStats,
 )
-from app.schemas.validators import normalize_company_rfc
+from app.schemas.validators import normalize_company_rfc, normalize_email
 from app.services.availability_service import Availability
 from app.services.policy_service import PolicyService, clear_policy_cache
 
@@ -81,14 +80,9 @@ class CompanyService:
             message = "El RFC es obligatorio" if is_rfc else "El correo es obligatorio"
             return Availability(field, value, None, False, False, "EMPTY", message)
         try:
-            normalized = (
-                normalize_company_rfc(raw)
-                if is_rfc
-                else validate_email(raw, check_deliverability=False).normalized.lower()
-            )
-        except (ValueError, EmailNotValidError) as exc:
-            message = str(exc) if is_rfc else "Correo electrónico inválido"
-            return Availability(field, value, None, False, False, "INVALID_FORMAT", message)
+            normalized = normalize_company_rfc(raw) if is_rfc else normalize_email(raw)
+        except ValueError as exc:
+            return Availability(field, value, None, False, False, "INVALID_FORMAT", str(exc))
         taken = self.companies.rfc_exists(normalized, exclude_id) if is_rfc else self.users.email_exists(normalized)
         if taken:
             return Availability(field, value, normalized, True, False, "TAKEN", RFC_TAKEN if is_rfc else EMAIL_TAKEN)

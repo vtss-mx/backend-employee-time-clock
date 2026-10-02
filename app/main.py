@@ -28,6 +28,7 @@ from app.routers import (
     health,
     realtime,
     users,
+    validation,
     validators,
     verification,
 )
@@ -140,6 +141,7 @@ for router in (
     validators.router,
     checkpoint.router,
     catalogs.router,
+    validation.router,
 ):
     app.include_router(router, prefix=settings.API_PREFIX)
 

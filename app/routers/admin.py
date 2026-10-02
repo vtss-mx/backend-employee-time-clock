@@ -4,7 +4,7 @@ El ADMIN no ve empleados ni datos biométricos de las empresas (privacidad por d
 datos fiscales y de contacto, sus administradores y conteos.
 """
 
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query, status
 
@@ -65,23 +65,6 @@ def list_companies(
 ) -> ApiResponse[CompanyList]:
     result = CompanyService(db).list_companies(search=search, active=active, page=page, size=size)
     return ok(result, f"{result.total} empresa(s) encontrada(s)", code="COMPANIES_LISTED")
-
-
-@router.get(
-    "/companies/availability",
-    response_model=ApiResponse[dict],
-    summary="Validar en tiempo real RFC de empresa o correo de administrador",
-    dependencies=[Depends(require_screen(Screen.ADMIN_COMPANIES))],
-)
-def company_availability(
-    _: AdminUser,
-    db: DbSession,
-    field: Annotated[Literal["rfc", "admin_email"], Query()],
-    value: Annotated[str, Query(max_length=255)] = "",
-    exclude_id: Annotated[int | None, Query(description="Al editar: id de la empresa")] = None,
-) -> ApiResponse[dict]:
-    result = CompanyService(db).availability(field, value, exclude_id)
-    return ok(result.as_dict(), result.message, code=result.code)
 
 
 @router.post(

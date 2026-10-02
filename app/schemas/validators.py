@@ -5,6 +5,7 @@ from datetime import date
 from typing import Annotated
 
 import phonenumbers
+from email_validator import EmailNotValidError, validate_email
 from pydantic import AfterValidator, Field
 
 from app.core.clock import business_today
@@ -108,6 +109,14 @@ def rfc_matches_birth_date(rfc: str, birth_date: date) -> bool:
 
 # RFC de persona moral (empresa): 3 letras, fecha de constitución aammdd y homoclave.
 _COMPANY_RFC_RE = re.compile(r"^[A-ZÑ&]{3}(\d{2})(\d{2})(\d{2})[A-Z\d]{2}[\dA]$")
+
+
+def normalize_email(value: str) -> str:
+    """Correo normalizado como se guarda (minúsculas, dominio en forma canónica)."""
+    try:
+        return validate_email(value.strip(), check_deliverability=False).normalized.lower()
+    except EmailNotValidError as exc:
+        raise ValueError("Correo electrónico inválido") from exc
 
 
 def normalize_company_rfc(value: str) -> str:

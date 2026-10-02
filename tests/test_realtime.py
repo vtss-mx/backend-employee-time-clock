@@ -1,4 +1,4 @@
-"""Canal WebSocket de validación en tiempo real (número de empleado y correo)."""
+"""Canal WebSocket de validación en tiempo real: campos de cada rol según sus pantallas."""
 
 import pytest
 from starlette.websockets import WebSocketDisconnect
@@ -56,7 +56,9 @@ def test_realtime_employee_number_and_email(client, company_headers):
         assert socket.receive_json()["code"] == "PONG"
         socket.send_text("{no json")
         assert socket.receive_json()["code"] == "BAD_MESSAGE"
-        socket.send_json({"type": "validate", "field": "password", "value": "x"})
+        socket.send_json({"type": "validate", "field": "password", "value": "x"})  # campo inexistente
+        assert socket.receive_json()["code"] == "FIELD_NOT_ALLOWED"
+        socket.send_json({"type": "validate", "field": "email", "value": 7})
         assert socket.receive_json()["code"] == "BAD_MESSAGE"
     finally:
         ws.__exit__(None, None, None)
@@ -124,7 +126,7 @@ def test_logout_closes_the_realtime_channel(client):
 
 def test_http_fallback_availability(client, company_headers):
     emp = create_employee(client, company_headers).json()["data"]
-    url = "/api/employees/availability"
+    url = "/api/validation"
     taken = client.get(url, params={"field": "employee_number", "value": "emp-001"}, headers=company_headers)
     assert taken.status_code == 200 and taken.json()["code"] == "TAKEN"
     mine = client.get(
@@ -132,4 +134,26 @@ def test_http_fallback_availability(client, company_headers):
     )
     assert mine.json()["data"]["available"] is True
     bad = client.get(url, params={"field": "password", "value": "x"}, headers=company_headers)
-    assert bad.status_code == 422
+    assert bad.status_code == 403 and bad.json()["code"] == "FIELD_NOT_ALLOWED"
+
+
+def test_each_role_validates_only_the_fields_of_its_screens(client, company_headers, admin_headers):
+    """El canal es de todos los roles; cada uno valida solo los campos de sus pantallas."""
+    admin_token = admin_headers["Authorization"].removeprefix("Bearer ")
+    ws, socket = connect(client, admin_token)
+    try:
+        assert validate(socket, "nuevo@pan.com", field="company_admin_email")["code"] == "AVAILABLE"
+        assert validate(socket, COMPANY_EMAIL, field="company_admin_email")["code"] == "TAKEN"
+        assert validate(socket, "+52 662 123 4567", field="company_phone")["code"] == "VALID"
+        denied = validate(socket, "EMP-001", field="employee_number")  # el ADMIN no ve empleados
+        assert denied["statusCode"] == 403 and denied["code"] == "FIELD_NOT_ALLOWED"
+    finally:
+        ws.__exit__(None, None, None)
+
+    ws, socket = connect(client, token(client))
+    try:
+        assert validate(socket, "recepcion@empresa.com", field="validator_email")["code"] == "AVAILABLE"
+        assert validate(socket, COMPANY_EMAIL, field="validator_email")["code"] == "TAKEN"
+        assert validate(socket, "PNO120315AB1", field="company_rfc")["code"] == "FIELD_NOT_ALLOWED"
+    finally:
+        ws.__exit__(None, None, None)

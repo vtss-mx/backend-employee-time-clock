@@ -21,6 +21,10 @@ identificadores en inglés; docstrings, comentarios, mensajes y documentación e
   alcance (`AdminUser`, `CompanyScope`, `EmployeeUser`...), que define **de qué datos** se trata.
   Un endpoint nuevo sin `require_screen` es un error, salvo los comunes a toda sesión
   (`/users/me`, `/auth/*`, `/catalogs`, `/face/*`, `GET /settings/verification`).
+- **Validación en vivo**: todo correo, teléfono o dato único de un formulario se valida mientras
+  se escribe por el canal `/api/ws/validation` (respaldo `GET /api/validation`). Campos, permisos
+  (por pantalla) y reglas viven en `app/services/live_validation.py`: un campo nuevo es una
+  entrada ahí, nunca un endpoint de disponibilidad aparte.
 - **Listas de valores en la BD** (esquema `catalog`): roles, estados, motivos, países, mensajes...
   Los `StrEnum` de `app/models/enums.py` solo nombran códigos que la lógica necesita y una prueba
   verifica que coincidan con las tablas (`tests/test_catalogs.py`).

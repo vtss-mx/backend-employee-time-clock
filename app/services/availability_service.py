@@ -7,12 +7,12 @@ empleados (la regla y los mensajes viven en un solo lugar).
 from dataclasses import asdict, dataclass
 from typing import Any, Literal, cast
 
-from email_validator import EmailNotValidError, validate_email
 from sqlalchemy.orm import Session
 
 from app.repositories.employee_repository import EmployeeRepository, UniqueDocument
 from app.schemas.validators import (
     normalize_curp,
+    normalize_email,
     normalize_employee_number,
     normalize_nss,
     normalize_phone,
@@ -98,10 +98,7 @@ class AvailabilityService:
             return normalize_nss(value)
         if field == "phone":
             return normalize_phone(value)
-        try:
-            return validate_email(value, check_deliverability=False).normalized.lower()
-        except EmailNotValidError as exc:
-            raise ValueError("Correo electrónico inválido") from exc
+        return normalize_email(value)
 
     def _exists(self, field: Field, value: str, exclude_employee_id: int | None) -> bool:
         if field == "employee_number":

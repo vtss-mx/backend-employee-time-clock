@@ -71,7 +71,7 @@ def test_email_and_phone_are_unique_per_person(client, admin_headers, company_he
 
     def check(headers, field, value):
         params = {"field": field, "value": value}
-        return client.get("/api/employees/availability", params=params, headers=headers).json()["data"]["code"]
+        return client.get("/api/validation", params=params, headers=headers).json()["data"]["code"]
 
     assert check(other, "email", EMAIL) == "LINKABLE"  # persona de otra empresa
     assert check(other, "phone", PHONE) == "LINKABLE"

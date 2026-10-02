@@ -171,7 +171,7 @@ def test_update_rfc_is_checked_against_birth_date(client, company_headers):
 
 def test_rfc_availability(client, company_headers):
     employee_id = create_employee(client, company_headers).json()["data"]["id"]
-    url = "/api/employees/availability"
+    url = "/api/validation"
 
     def check(value, **extra):
         return client.get(url, params={"field": "rfc", "value": value, **extra}, headers=company_headers).json()["data"]
@@ -295,7 +295,7 @@ def test_curp_and_nss_availability_and_search(client, company_headers):
 
     def check(field, value, **extra):
         params = {"field": field, "value": value, **extra}
-        return client.get("/api/employees/availability", params=params, headers=company_headers).json()["data"]["code"]
+        return client.get("/api/validation", params=params, headers=company_headers).json()["data"]["code"]
 
     assert check("curp", curp_for("EMP-001")) == "TAKEN"
     assert check("curp", curp_for("EMP-001"), exclude_id=employee_id) == "AVAILABLE"

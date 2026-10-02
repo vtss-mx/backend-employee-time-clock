@@ -18,8 +18,6 @@ from app.schemas.employee import (
 )
 from app.schemas.qr import EmployeeQrRead
 from app.schemas.verification import VerificationLogRead
-from app.services.availability_service import AvailabilityService
-from app.services.availability_service import Field as AvailabilityField
 from app.services.employee_service import EmployeeService
 from app.services.qr_service import QrService
 
@@ -51,27 +49,6 @@ def list_employees(
 ) -> ApiResponse[EmployeeList]:
     result = EmployeeService(db, company).list_employees(search=search, active=active, page=page, size=size)
     return ok(result, f"{result.total} empleado(s) encontrado(s)", code="EMPLOYEES_LISTED")
-
-
-@router.get(
-    "/availability",
-    response_model=ApiResponse[dict],
-    summary="Disponibilidad de número de empleado o correo (respaldo HTTP del WebSocket)",
-    description=(
-        "Misma validación que el canal en tiempo real `/api/ws/validation`, para clientes donde un "
-        "proxy bloquea WebSockets. `exclude_id` excluye al empleado que se está editando."
-    ),
-    dependencies=[Depends(require_screen(Screen.COMPANY_EMPLOYEES))],
-)
-def availability(
-    company: CompanyScope,
-    db: DbSession,
-    field: Annotated[AvailabilityField, Query()],
-    value: Annotated[str, Query(max_length=255)],
-    exclude_id: Annotated[int | None, Query(ge=1)] = None,
-) -> ApiResponse[dict]:
-    result = AvailabilityService(db, company).check(field, value, exclude_employee_id=exclude_id)
-    return ok(result.as_dict(), result.message, code=result.code)
 
 
 @router.post(

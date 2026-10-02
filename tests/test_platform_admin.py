@@ -72,17 +72,20 @@ def test_availability_for_company_forms(client, admin_headers):
     company_id = create_company(client, admin_headers).json()["data"]["id"]
 
     def check(field, value, **extra):
-        response = client.get(
-            f"{URL}/availability", params={"field": field, "value": value, **extra}, headers=admin_headers
-        )
-        return response.json()["data"]["code"]
+        params = {"field": field, "value": value, **extra}
+        return client.get("/api/validation", params=params, headers=admin_headers).json()["data"]["code"]
 
-    assert check("rfc", "PNO120315AB1") == "TAKEN"
-    assert check("rfc", "PNO120315AB1", exclude_id=company_id) == "AVAILABLE"
-    assert check("rfc", "ABC") == "INVALID_FORMAT"
-    assert check("admin_email", COMPANY_EMAIL) == "TAKEN"
-    assert check("admin_email", "nuevo@empresa.com") == "AVAILABLE"
-    assert check("admin_email", "") == "EMPTY"
+    assert check("company_rfc", "PNO120315AB1") == "TAKEN"
+    assert check("company_rfc", "PNO120315AB1", exclude_id=company_id) == "AVAILABLE"
+    assert check("company_rfc", "ABC") == "INVALID_FORMAT"
+    assert check("company_admin_email", COMPANY_EMAIL) == "TAKEN"
+    assert check("company_admin_email", "nuevo@empresa.com") == "AVAILABLE"
+    assert check("company_admin_email", "") == "EMPTY"
+    # Datos de contacto (no únicos): solo el formato, con la misma regla que al guardar.
+    assert check("company_contact_email", "contacto@pan.com") == "VALID"
+    assert check("company_contact_email", "no-es-correo") == "INVALID_FORMAT"
+    assert check("company_phone", "662 123 4567") == "VALID"
+    assert check("company_phone", "123") == "INVALID_FORMAT"
 
 
 def test_list_search_counts_and_stats(client, admin_headers, company_headers, second_company):

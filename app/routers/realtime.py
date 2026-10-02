@@ -1,4 +1,4 @@
-"""Canal WebSocket de validación en tiempo real (rol COMPANY).
+"""Canal WebSocket de validación en tiempo real de los formularios (todos los roles).
 
 Protocolo (JSON). Todas las respuestas usan el contrato único de la API (success, statusCode,
 code, message, data, errors, traceId, timestamp); `traceId` es el `id` enviado por el cliente
@@ -7,14 +7,18 @@ para correlacionar pregunta y respuesta.
     → {"type": "auth", "token": "<access token JWT>"}            (primer mensaje, ≤ 10 s)
     ← code WS_AUTHENTICATED
 
-    → {"type": "validate", "id": "a1b2c3d4", "field": "employee_number" | "email",
-       "value": "EMP-001", "excludeId": 7}                          (excludeId al editar)
-    ← code AVAILABLE | TAKEN | INVALID_FORMAT | EMPTY, data = disponibilidad
+    → {"type": "validate", "id": "a1b2c3d4", "field": "email", "value": "ana@x.com",
+       "excludeId": 7}                                              (excludeId al editar)
+    ← code AVAILABLE | LINKABLE | TAKEN | VALID | INVALID_FORMAT | EMPTY, data = resultado
+      (403 FIELD_NOT_ALLOWED si el rol no tiene la pantalla que usa el campo)
+
+Los campos y sus permisos viven en app/services/live_validation.py (los mismos que el respaldo
+HTTP `GET /api/validation`); al autenticarse, el canal informa los campos del usuario.
 
     → {"type": "ping"}                                              ← code PONG
 
 El token NO viaja en la URL (quedaría en logs de proxies). Cierres: 4401 sin autenticar o
-sesión revocada/expirada, 4403 rol sin permiso, 4408 no se autenticó a tiempo, 1013 servidor
+sesión revocada/expirada, 4403 rol sin campos que validar, 4408 no se autenticó a tiempo, 1013 servidor
 saturado, 1000 inactividad.
 """
 
@@ -25,19 +29,18 @@ import re
 import time
 from collections import deque
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from starlette.concurrency import run_in_threadpool
 
 from app.core.config import settings
 from app.core.database import SessionLocal
-from app.core.exceptions import AuthenticationError
+from app.core.exceptions import AuthenticationError, PermissionDeniedError
 from app.core.responses import envelope_body, new_trace_id
 from app.core.tokens import decode_access_token
-from app.models import UserRole
 from app.services.auth_service import ensure_account_usable
-from app.services.availability_service import FIELDS, AvailabilityService, Field
+from app.services.live_validation import fields_for, validate_field
 from app.services.session_service import SessionService
 
 router = APIRouter(tags=["Tiempo real"])
@@ -50,9 +53,10 @@ _open_connections = 0
 @dataclass
 class _Client:
     user_id: int
-    company_id: int
     session_id: str
     expires_at: float
+    #: Campos que el usuario puede validar (según las pantallas de su rol).
+    fields: frozenset[str]
 
 
 class _Closed(Exception):
@@ -67,24 +71,21 @@ def _envelope(status: int, code: str, message: str, *, data: Any = None, trace_i
 
 
 def _authenticate(token: str) -> _Client:
-    """Valida el JWT y que la sesión siga activa; solo COMPANY puede usar el canal."""
+    """Valida el JWT y que la sesión siga activa; el usuario debe tener algún campo que validar."""
     payload = decode_access_token(token)
     with SessionLocal() as db:
         user = SessionService(db).validate(str(payload["sid"]), int(payload["sub"])).user
-        if user.role != UserRole.COMPANY or user.company_id is None:
-            raise PermissionError
         ensure_account_usable(user)
-        company_id = user.company_id
-    return _Client(
-        user_id=user.id, company_id=company_id, session_id=str(payload["sid"]), expires_at=float(payload["exp"])
-    )
+        fields = frozenset(fields_for(user, db))
+        if not fields:
+            raise PermissionError
+    return _Client(user_id=user.id, session_id=str(payload["sid"]), expires_at=float(payload["exp"]), fields=fields)
 
 
 def _validate(client: _Client, field: str, value: str, exclude_id: int | None) -> dict[str, Any]:
     with SessionLocal() as db:
-        SessionService(db).validate(client.session_id, client.user_id)  # cerrar sesión corta el canal
-        service = AvailabilityService(db, client.company_id)
-        return service.check(cast(Field, field), value, exclude_employee_id=exclude_id).as_dict()
+        user = SessionService(db).validate(client.session_id, client.user_id).user  # cerrar sesión corta el canal
+        return validate_field(db, user, field, value, exclude_id).as_dict()
 
 
 class _RateLimiter:
@@ -132,9 +133,11 @@ async def _handshake(ws: WebSocket) -> _Client:
         await ws.send_json(_envelope(401, exc.code, exc.message))
         raise _Closed(4401) from exc
     except PermissionError as exc:
-        await ws.send_json(_envelope(403, "FORBIDDEN", "Solo COMPANY puede usar este canal"))
+        await ws.send_json(_envelope(403, "FORBIDDEN", "Tu cuenta no tiene campos que validar en este canal"))
         raise _Closed(4403) from exc
-    await ws.send_json(_envelope(200, "WS_AUTHENTICATED", "Canal de validación listo", data={"fields": list(FIELDS)}))
+    await ws.send_json(
+        _envelope(200, "WS_AUTHENTICATED", "Canal de validación listo", data={"fields": sorted(client.fields)})
+    )
     return client
 
 
@@ -157,8 +160,11 @@ async def _handle(ws: WebSocket, client: _Client, message: dict[str, Any] | None
         await ws.send_json(_envelope(200, "PONG", "pong", trace_id=trace_id))
         return
     field, value, exclude = message.get("field"), message.get("value"), message.get("excludeId")
-    if kind != "validate" or field not in FIELDS or not isinstance(value, str) or len(value) > 255:
+    if kind != "validate" or not isinstance(field, str) or not isinstance(value, str) or len(value) > 255:
         await ws.send_json(_envelope(400, "BAD_MESSAGE", "Mensaje de validación inválido", trace_id=trace_id))
+        return
+    if field not in client.fields:
+        await ws.send_json(_envelope(403, "FIELD_NOT_ALLOWED", "No puedes validar este campo", trace_id=trace_id))
         return
     exclude_id = exclude if isinstance(exclude, int) and not isinstance(exclude, bool) else None
     try:
@@ -166,6 +172,9 @@ async def _handle(ws: WebSocket, client: _Client, message: dict[str, Any] | None
     except AuthenticationError as exc:
         await ws.send_json(_envelope(401, exc.code, exc.message, trace_id=trace_id))
         raise _Closed(4401) from exc
+    except PermissionDeniedError as exc:  # la pantalla se le retiró al rol con el canal abierto
+        await ws.send_json(_envelope(403, exc.code, exc.message, trace_id=trace_id))
+        return
     status = 200 if result["valid"] else 422
     await ws.send_json(_envelope(status, result["code"], result["message"], data=result, trace_id=trace_id))
 
