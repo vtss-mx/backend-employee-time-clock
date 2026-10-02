@@ -27,7 +27,7 @@ from app.facial_recognition import (
 )
 from app.facial_recognition.image_utils import ALLOWED_CONTENT_TYPES
 from app.middleware.rate_limit import enforce
-from app.models import User, UserRole
+from app.models import Screen, User, UserRole
 from app.services.auth_service import ensure_account_usable
 from app.services.catalog_service import get_catalogs
 from app.services.policy_service import ensure_device_allowed
@@ -101,6 +101,21 @@ OptionalTokenPayload = Annotated[dict | None, Depends(optional_token_payload)]
 def require_roles(*roles: UserRole) -> Callable[[User], User]:
     def dependency(user: CurrentUser) -> User:
         if user.role not in roles:
+            raise PermissionDeniedError()
+        return user
+
+    return dependency
+
+
+def require_screen(*screens: Screen) -> Callable[[User, Session], User]:
+    """Permiso del endpoint: el rol del usuario debe tener alguna de las pantallas que lo usan.
+
+    Las pantallas de cada rol viven en la BD (catalog.role_screens): quitarle una pantalla a un rol
+    le quita también los endpoints de esa pantalla, sin desplegar.
+    """
+
+    def dependency(user: CurrentUser, db: DbSession) -> User:
+        if not get_catalogs(db).grants(user.role.value, screens):
             raise PermissionDeniedError()
         return user
 

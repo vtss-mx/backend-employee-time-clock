@@ -1,7 +1,7 @@
 from collections.abc import Iterable
 from datetime import datetime
 
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.orm import Session
 
 from app.models import AuthSession, Company, Employee, SessionRevocationReason, User, UserRole
@@ -71,6 +71,20 @@ class CompanyRepository:
             User.company_id == company_id, User.role == UserRole.COMPANY, User.active.is_(True)
         )
         return int(self.db.scalar(stmt) or 0)
+
+    def employee_count(self, company_id: int) -> int:
+        return int(self.db.scalar(select(func.count()).where(Employee.company_id == company_id)) or 0)
+
+    def delete(self, company: Company) -> None:
+        """Borra una empresa SIN empleados: primero sus cuentas (administradores y validadores; con
+        ellas se van sus sesiones y la configuración de cada validador) y después la empresa (con
+        ella, su política y su bitácora)."""
+        for stmt in (
+            delete(User).where(User.company_id == company.id),
+            delete(Company).where(Company.id == company.id),
+        ):
+            self.db.execute(stmt.execution_options(synchronize_session=False))
+        self.db.expunge(company)
 
     def revoke_sessions(
         self,

@@ -28,10 +28,12 @@ from app.models import (
     CatalogLivenessAction,
     CatalogReverificationReason,
     CatalogRole,
+    CatalogScreen,
     CatalogSessionRevocationReason,
     CatalogValidatorMode,
     CatalogVerificationMethod,
     CatalogVerificationReason,
+    RoleScreen,
     ValidatorModeMethod,
 )
 from app.models.catalog import CatalogEntry
@@ -53,6 +55,7 @@ CATALOG_MODELS: dict[str, type[CatalogEntry]] = {
     "session_revocation_reasons": CatalogSessionRevocationReason,
     "face_errors": CatalogFaceError,
     "enrollment_flags": CatalogEnrollmentFlag,
+    "screens": CatalogScreen,
 }
 #: Motivo cuyo mensaje se usa si llega un código que no está en el catálogo.
 FALLBACK_REASON = "NOT_FOUND"
@@ -81,6 +84,8 @@ class Catalogs:
     entries: Mapping[str, tuple[dict[str, Any], ...]]
     #: Modo de validador → métodos de identificación permitidos, en orden.
     mode_methods: Mapping[str, tuple[str, ...]]
+    #: Rol → pantallas que tiene (catalog.role_screens).
+    role_screens: Mapping[str, frozenset[str]] = field(default_factory=dict)
     _by_code: dict[str, dict[str, dict[str, Any]]] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -89,6 +94,11 @@ class Catalogs:
 
     def get(self, catalog: str, code: str) -> dict[str, Any] | None:
         return self._by_code[catalog].get(code)
+
+    def grants(self, role: str, screens: Iterable[str]) -> bool:
+        """¿El rol tiene alguna de esas pantallas (activas)? Es el permiso de los endpoints que la usan."""
+        granted = self.role_screens.get(role, frozenset())
+        return any(screen in granted and self.is_active("screens", screen) for screen in screens)
 
     def is_active(self, catalog: str, code: str) -> bool:
         row = self.get(catalog, code)
@@ -146,7 +156,14 @@ def load_catalogs(db: Session) -> Catalogs:
     mode_methods: dict[str, list[str]] = {}
     for link in db.scalars(select(ValidatorModeMethod).order_by(ValidatorModeMethod.sort_order)):
         mode_methods.setdefault(link.mode_code, []).append(link.method_code)
-    return Catalogs(entries, {mode: tuple(methods) for mode, methods in mode_methods.items()})
+    role_screens: dict[str, set[str]] = {}
+    for grant in db.scalars(select(RoleScreen)):
+        role_screens.setdefault(grant.role_code, set()).add(grant.screen_code)
+    return Catalogs(
+        entries,
+        {mode: tuple(methods) for mode, methods in mode_methods.items()},
+        {role: frozenset(screens) for role, screens in role_screens.items()},
+    )
 
 
 class _CatalogCache:

@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, ColumnElement, Index, Integer, String, func, literal_column, true
+from sqlalchemy import Boolean, CheckConstraint, ColumnElement, Index, Integer, String, func, literal_column, true
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -15,7 +15,11 @@ class Company(TimestampMixin, Base):
     """
 
     __tablename__ = "companies"
-    __table_args__ = ({"schema": TENANCY},)
+    __table_args__ = (
+        # Límite del plan: sin límite (NULL) o al menos un empleado.
+        CheckConstraint("max_employees IS NULL OR max_employees > 0", name="max_employees_positive"),
+        {"schema": TENANCY},
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(150), nullable=False)  # nombre comercial

@@ -12,8 +12,10 @@ from app.dependencies import (
     read_image_upload,
     read_image_uploads,
     request_meta,
+    require_screen,
     verification_rate_limit,
 )
+from app.models import Screen
 from app.schemas.common import ErrorResponse
 from app.schemas.verification import QrVerificationRequest, VerificationResult
 from app.services.verification_service import VerificationService
@@ -21,7 +23,7 @@ from app.services.verification_service import VerificationService
 router = APIRouter(
     prefix="/verification",
     tags=["Verificación (EMPLOYEE)"],
-    dependencies=[Depends(verification_rate_limit)],
+    dependencies=[Depends(require_screen(Screen.EMPLOYEE_VERIFY)), Depends(verification_rate_limit)],
     responses={
         401: {"model": ErrorResponse},
         403: {"model": ErrorResponse, "description": "Rol sin permisos o registro facial no aprobado"},

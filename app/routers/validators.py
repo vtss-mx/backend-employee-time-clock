@@ -2,10 +2,11 @@
 
 from typing import Any
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, Depends, status
 
 from app.core.responses import ApiResponse, ok
-from app.dependencies import CompanyScope, DbSession
+from app.dependencies import CompanyScope, DbSession, require_screen
+from app.models import Screen
 from app.schemas.common import ErrorResponse
 from app.schemas.validator import (
     ValidatorCreate,
@@ -17,6 +18,7 @@ from app.schemas.validator import (
 from app.services.validator_service import ValidatorService
 
 router = APIRouter(
+    dependencies=[Depends(require_screen(Screen.COMPANY_VALIDATORS))],
     prefix="/validators",
     tags=["Validadores de identidad (COMPANY)"],
     responses={

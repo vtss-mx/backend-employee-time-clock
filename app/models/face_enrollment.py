@@ -1,7 +1,21 @@
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, DateTime, Enum, Float, ForeignKey, Index, LargeBinary, String, func, text
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    Enum,
+    Float,
+    ForeignKey,
+    ForeignKeyConstraint,
+    Index,
+    LargeBinary,
+    String,
+    UniqueConstraint,
+    func,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -32,6 +46,16 @@ class FaceEnrollment(Base):
             postgresql_where=text("reviewed_by_id IS NOT NULL"),
             sqlite_where=text("reviewed_by_id IS NOT NULL"),
         ),
+        # La empresa del registro es la de su empleado (copia para la bandeja; la base la garantiza).
+        ForeignKeyConstraint(
+            ["employee_id", "company_id"],
+            [f"{WORKFORCE}.employees.id", f"{WORKFORCE}.employees.company_id"],
+            name="fk_face_enrollments_employee_company",
+            ondelete="CASCADE",
+        ),
+        # Destino de la FK compuesta de los embeddings: registro y empleado van juntos.
+        UniqueConstraint("id", "employee_id", name="uq_face_enrollments_id_employee"),
+        CheckConstraint("samples > 0", name="samples_positive"),
         {"schema": BIOMETRICS},
     )
 
@@ -56,7 +80,7 @@ class FaceEnrollment(Base):
     reviewed_by_id: Mapped[int | None] = mapped_column(ForeignKey(f"{AUTH}.users.id", ondelete="SET NULL"))
     rejection_reason: Mapped[str | None] = mapped_column(String(500))
 
-    employee: Mapped["Employee"] = relationship(lazy="joined")
+    employee: Mapped["Employee"] = relationship(foreign_keys=[employee_id], lazy="joined")
     #: Marcas para el revisor: accesorios que el sistema detectó y el empleado indicó no usar, o
     #: posible suplantación. El administrador lo confirma al revisar la fotografía.
     flags: Mapped[list["FaceEnrollmentFlag"]] = relationship(

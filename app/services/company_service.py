@@ -34,6 +34,7 @@ from app.services.policy_service import PolicyService, clear_policy_cache
 RFC_TAKEN = "Ya existe una empresa con ese RFC"
 EMAIL_TAKEN = "El correo ya está registrado en la plataforma"
 LAST_ADMIN = "La empresa debe conservar al menos un administrador activo"
+HAS_EMPLOYEES = "La empresa tiene empleados registrados: desactívala en lugar de eliminarla"
 _COMPANY_FIELDS = ("name", "legal_name", "rfc", "contact_email", "phone", "max_employees")
 
 AvailabilityField = Literal["rfc", "admin_email"]
@@ -144,6 +145,15 @@ class CompanyService:
         self.db.commit()
         clear_policy_cache(company.id)
         return self.detail(company.id)
+
+    def delete(self, company_id: int) -> None:
+        """Solo una empresa sin empleados (p. ej. registrada por error); con empleados se desactiva."""
+        company = self.get(company_id)
+        if self.companies.employee_count(company.id) > 0:
+            raise ConflictError(HAS_EMPLOYEES, code="COMPANY_HAS_EMPLOYEES")
+        self.companies.delete(company)
+        self.db.commit()
+        clear_policy_cache(company_id)
 
     def add_admin(self, company_id: int, data: CompanyAdminCreate) -> CompanyDetail:
         company = self.get(company_id)

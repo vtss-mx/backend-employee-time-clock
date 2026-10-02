@@ -2,10 +2,11 @@
 
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, Depends, Query, status
 
 from app.core.responses import ApiResponse, ok
-from app.dependencies import CompanyScope, DbSession
+from app.dependencies import CompanyScope, DbSession, require_screen
+from app.models import Screen
 from app.schemas.common import ErrorResponse
 from app.schemas.employee import (
     EmployeeCreate,
@@ -34,7 +35,12 @@ router = APIRouter(
 NOT_FOUND: dict[int | str, dict[str, Any]] = {404: {"model": ErrorResponse, "description": "Empleado no encontrado"}}
 
 
-@router.get("", response_model=ApiResponse[EmployeeList], summary="Listar/buscar empleados")
+@router.get(
+    "",
+    response_model=ApiResponse[EmployeeList],
+    summary="Listar/buscar empleados",
+    dependencies=[Depends(require_screen(Screen.COMPANY_EMPLOYEES, Screen.COMPANY_DASHBOARD))],
+)
 def list_employees(
     company: CompanyScope,
     db: DbSession,
@@ -55,6 +61,7 @@ def list_employees(
         "Misma validación que el canal en tiempo real `/api/ws/validation`, para clientes donde un "
         "proxy bloquea WebSockets. `exclude_id` excluye al empleado que se está editando."
     ),
+    dependencies=[Depends(require_screen(Screen.COMPANY_EMPLOYEES))],
 )
 def availability(
     company: CompanyScope,
@@ -79,6 +86,7 @@ def availability(
         "`/api/enrollments`."
     ),
     responses={409: {"model": ErrorResponse}, 422: {"model": ErrorResponse}},
+    dependencies=[Depends(require_screen(Screen.COMPANY_EMPLOYEES))],
 )
 def create_employee(payload: EmployeeCreate, company: CompanyScope, db: DbSession) -> ApiResponse[EmployeeRead]:
     service = EmployeeService(db, company)
@@ -91,7 +99,11 @@ def create_employee(payload: EmployeeCreate, company: CompanyScope, db: DbSessio
 
 
 @router.get(
-    "/{employee_id}", response_model=ApiResponse[EmployeeRead], summary="Detalle de empleado", responses=NOT_FOUND
+    "/{employee_id}",
+    response_model=ApiResponse[EmployeeRead],
+    summary="Detalle de empleado",
+    responses=NOT_FOUND,
+    dependencies=[Depends(require_screen(Screen.COMPANY_EMPLOYEES))],
 )
 def get_employee(employee_id: int, company: CompanyScope, db: DbSession) -> ApiResponse[EmployeeRead]:
     service = EmployeeService(db, company)
@@ -103,6 +115,7 @@ def get_employee(employee_id: int, company: CompanyScope, db: DbSession) -> ApiR
     response_model=ApiResponse[EmployeeRead],
     summary="Editar empleado (solo campos enviados)",
     responses={**NOT_FOUND, 409: {"model": ErrorResponse}},
+    dependencies=[Depends(require_screen(Screen.COMPANY_EMPLOYEES))],
 )
 def update_employee(
     employee_id: int, payload: EmployeeUpdate, company: CompanyScope, db: DbSession
@@ -116,6 +129,7 @@ def update_employee(
     response_model=ApiResponse[EmployeeRead],
     summary="Activar / desactivar empleado",
     responses=NOT_FOUND,
+    dependencies=[Depends(require_screen(Screen.COMPANY_EMPLOYEES))],
 )
 def set_employee_status(
     employee_id: int, payload: EmployeeStatusUpdate, company: CompanyScope, db: DbSession
@@ -131,6 +145,7 @@ def set_employee_status(
     response_model=ApiResponse[None],
     summary="Eliminar empleado definitivamente (incluye datos biométricos y QR)",
     responses=NOT_FOUND,
+    dependencies=[Depends(require_screen(Screen.COMPANY_EMPLOYEES))],
 )
 def delete_employee(employee_id: int, company: CompanyScope, db: DbSession) -> ApiResponse[None]:
     EmployeeService(db, company).delete(employee_id)
@@ -150,6 +165,7 @@ def delete_employee(employee_id: int, company: CompanyScope, db: DbSession) -> A
         "`reason` (opcional) se le muestra al empleado."
     ),
     responses=NOT_FOUND,
+    dependencies=[Depends(require_screen(Screen.COMPANY_EMPLOYEES))],
 )
 def reset_face(
     employee_id: int, company: CompanyScope, db: DbSession, payload: IdentityReverifyRequest | None = None
@@ -167,7 +183,11 @@ def reset_face(
 
 
 @router.get(
-    "/{employee_id}/qr", response_model=ApiResponse[EmployeeQrRead], summary="Obtener QR activo", responses=NOT_FOUND
+    "/{employee_id}/qr",
+    response_model=ApiResponse[EmployeeQrRead],
+    summary="Obtener QR activo",
+    responses=NOT_FOUND,
+    dependencies=[Depends(require_screen(Screen.COMPANY_EMPLOYEES))],
 )
 def get_qr(employee_id: int, company: CompanyScope, db: DbSession) -> ApiResponse[EmployeeQrRead]:
     employee = EmployeeService(db, company).get(employee_id)
@@ -180,6 +200,7 @@ def get_qr(employee_id: int, company: CompanyScope, db: DbSession) -> ApiRespons
     response_model=ApiResponse[EmployeeQrRead],
     summary="Regenerar QR (invalida el anterior)",
     responses=NOT_FOUND,
+    dependencies=[Depends(require_screen(Screen.COMPANY_EMPLOYEES))],
 )
 def regenerate_qr(employee_id: int, company: CompanyScope, db: DbSession) -> ApiResponse[EmployeeQrRead]:
     employee = EmployeeService(db, company).get(employee_id)
@@ -190,7 +211,13 @@ def regenerate_qr(employee_id: int, company: CompanyScope, db: DbSession) -> Api
     return ok(qr_service.to_read(employee, qr), "QR regenerado. El anterior ya no es válido.", code="QR_REGENERATED")
 
 
-@router.delete("/{employee_id}/qr", response_model=ApiResponse[None], summary="Revocar QR", responses=NOT_FOUND)
+@router.delete(
+    "/{employee_id}/qr",
+    response_model=ApiResponse[None],
+    summary="Revocar QR",
+    responses=NOT_FOUND,
+    dependencies=[Depends(require_screen(Screen.COMPANY_EMPLOYEES))],
+)
 def revoke_qr(employee_id: int, company: CompanyScope, db: DbSession) -> ApiResponse[None]:
     employee = EmployeeService(db, company).get(employee_id)
     QrService(db).revoke(employee)
@@ -206,6 +233,7 @@ def revoke_qr(employee_id: int, company: CompanyScope, db: DbSession) -> ApiResp
     response_model=ApiResponse[list[VerificationLogRead]],
     summary="Últimos intentos de verificación",
     responses=NOT_FOUND,
+    dependencies=[Depends(require_screen(Screen.COMPANY_EMPLOYEES))],
 )
 def verification_history(
     employee_id: int,

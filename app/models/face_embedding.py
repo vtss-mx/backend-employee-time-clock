@@ -1,7 +1,19 @@
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, LargeBinary, String, func
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    Float,
+    ForeignKey,
+    ForeignKeyConstraint,
+    Index,
+    Integer,
+    LargeBinary,
+    String,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -22,6 +34,14 @@ class FaceEmbedding(Base):
     __table_args__ = (
         # Cada comparación facial lee los embeddings ACTIVOS de un empleado en orden de captura.
         Index("ix_face_embeddings_employee_active", "employee_id", "active", "created_at"),
+        # El embedding es del mismo empleado que su registro facial (lo garantiza la base).
+        ForeignKeyConstraint(
+            ["enrollment_id", "employee_id"],
+            [f"{BIOMETRICS}.face_enrollments.id", f"{BIOMETRICS}.face_enrollments.employee_id"],
+            name="fk_face_embeddings_enrollment_employee",
+            ondelete="CASCADE",
+        ),
+        CheckConstraint("dimension > 0", name="dimension_positive"),
         {"schema": BIOMETRICS},
     )
 
@@ -41,4 +61,4 @@ class FaceEmbedding(Base):
     active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
-    employee: Mapped["Employee"] = relationship(back_populates="face_embeddings")
+    employee: Mapped["Employee"] = relationship(back_populates="face_embeddings", foreign_keys=[employee_id])

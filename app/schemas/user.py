@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, computed_field
 
 from app.models.enums import FaceStatus, UserRole
 
@@ -61,6 +61,23 @@ class UserPreferencesUpdate(BaseModel):
     sidebar_collapsed: bool | None = None
 
 
+class ScreenRead(BaseModel):
+    """Pantalla del usuario: el frontend arma con ellas su menú y sus rutas."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    code: str
+    name: str
+    #: Etiqueta corta: título de la barra superior en teléfonos (si no hay, `name`).
+    short_name: str | None = None
+    #: Ruta base de la pantalla.
+    path: str
+    #: Nombre del ícono (lucide).
+    icon: str
+    #: Contador que acompaña la opción (p. ej. PENDING_ENROLLMENTS).
+    badge: str | None = None
+
+
 class UserRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -79,3 +96,11 @@ class UserRead(BaseModel):
     #: Empresas en las que trabaja la persona (EMPLOYEE). Con varias, elige una al iniciar sesión.
     memberships: list[UserMembership] = Field(default_factory=list, validation_alias="employees")
     preferences: UserPreferences = Field(default_factory=UserPreferences)
+    #: Pantallas del usuario en orden (menú y rutas del frontend). Las arma navigation_service.
+    screens: list[ScreenRead] = Field(default_factory=list)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def home(self) -> str | None:
+        """Inicio del usuario: su primera pantalla."""
+        return self.screens[0].path if self.screens else None

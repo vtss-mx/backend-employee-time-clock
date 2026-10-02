@@ -13,10 +13,12 @@ from app.models.catalog import (
     CatalogLivenessAction,
     CatalogReverificationReason,
     CatalogRole,
+    CatalogScreen,
     CatalogSessionRevocationReason,
     CatalogValidatorMode,
     CatalogVerificationMethod,
     CatalogVerificationReason,
+    RoleScreen,
     ValidatorModeMethod,
 )
 from app.models.company import Company
@@ -25,6 +27,7 @@ from app.models.employee_qr import EmployeeQr
 from app.models.enums import (
     EnrollmentStatus,
     FaceStatus,
+    Screen,
     SessionRevocationReason,
     UserRole,
     ValidatorMode,
@@ -52,6 +55,7 @@ __all__ = [
     "CatalogLivenessAction",
     "CatalogReverificationReason",
     "CatalogRole",
+    "CatalogScreen",
     "CatalogSessionRevocationReason",
     "CatalogValidatorMode",
     "CatalogVerificationMethod",
@@ -67,6 +71,8 @@ __all__ = [
     "FaceStatus",
     "RateLimitCounter",
     "RememberedAccount",
+    "RoleScreen",
+    "Screen",
     "SessionRevocationReason",
     "User",
     "UserRole",

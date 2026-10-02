@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import JSON, Boolean, CheckConstraint, DateTime, Enum, ForeignKey, Index, String, text
+from sqlalchemy import JSON, Boolean, CheckConstraint, DateTime, Enum, ForeignKey, Index, String, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -21,6 +21,10 @@ class User(TimestampMixin, Base):
     __table_args__ = (
         # Administradores de una empresa (y conteos por rol en la consola de la plataforma).
         Index("ix_users_company_role", "company_id", "role"),
+        # Conteos por rol de toda la plataforma (indicadores del ADMIN) sin recorrer la tabla.
+        Index("ix_users_role", "role"),
+        # Destino de la FK compuesta de los validadores: la cuenta y su empresa van juntas.
+        UniqueConstraint("id", "company_id", name="uq_users_id_company"),
         # COMPANY y VALIDATOR pertenecen a UNA empresa por su cuenta. ADMIN es de la plataforma y
         # EMPLOYEE trabaja en una o varias empresas a través de sus registros de empleado.
         CheckConstraint("(role IN ('COMPANY', 'VALIDATOR')) = (company_id IS NOT NULL)", name="role_company"),
@@ -56,7 +60,12 @@ class User(TimestampMixin, Base):
     company: Mapped["Company | None"] = relationship(lazy="joined")
     #: Configuración del validador de identidad (rol VALIDATOR).
     validator: Mapped["Validator | None"] = relationship(
-        back_populates="user", uselist=False, lazy="selectin", cascade="all, delete-orphan", passive_deletes=True
+        back_populates="user",
+        foreign_keys="Validator.user_id",
+        uselist=False,
+        lazy="selectin",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
     )
 
     # ---------- Empresa en la que opera (la elige la sesión) ----------

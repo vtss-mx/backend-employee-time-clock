@@ -1,7 +1,19 @@
 from datetime import date
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, ColumnElement, Date, Enum, ForeignKey, Index, String, func, literal_column
+from sqlalchemy import (
+    Boolean,
+    ColumnElement,
+    Date,
+    Enum,
+    ForeignKey,
+    Index,
+    String,
+    UniqueConstraint,
+    func,
+    literal_column,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql.expression import false as sql_false
 
@@ -32,6 +44,16 @@ class Employee(TimestampMixin, Base):
         Index("uq_employees_company_user", "company_id", "user_id", unique=True),
         # Empleos de una persona (selector de empresa al iniciar sesión).
         Index("ix_employees_user", "user_id"),
+        # Galería facial de la empresa (identificación 1:N): solo empleados activos y aprobados.
+        Index(
+            "ix_employees_company_approved",
+            "company_id",
+            "id",
+            postgresql_where=text("active IS TRUE AND face_status = 'APPROVED'"),
+            sqlite_where=text("active = 1 AND face_status = 'APPROVED'"),
+        ),
+        # Destino de la FK compuesta de los registros faciales: empleado y empresa van juntos.
+        UniqueConstraint("id", "company_id", name="uq_employees_id_company"),
         {"schema": WORKFORCE},
     )
 

@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Numeric, func, text, true
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Numeric, func, text, true
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -14,7 +14,16 @@ class VerificationPolicy(Base):
     """
 
     __tablename__ = "verification_policy"
-    __table_args__ = ({"schema": TENANCY},)
+    __table_args__ = (
+        # FK con ON DELETE SET NULL (quién la cambió): evita recorrer la tabla al borrar un usuario.
+        Index(
+            "ix_verification_policy_updated_by_id",
+            "updated_by_id",
+            postgresql_where=text("updated_by_id IS NOT NULL"),
+            sqlite_where=text("updated_by_id IS NOT NULL"),
+        ),
+        {"schema": TENANCY},
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     company_id: Mapped[int] = mapped_column(

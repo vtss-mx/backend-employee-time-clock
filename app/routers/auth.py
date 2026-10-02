@@ -27,6 +27,7 @@ from app.schemas.auth import (
 from app.schemas.common import ErrorResponse
 from app.schemas.user import UserRead
 from app.services.auth_service import AuthService, default_company_id
+from app.services.navigation_service import user_read
 from app.services.policy_service import ensure_device_allowed
 from app.services.remembered_account_service import RememberedAccountService
 from app.services.session_service import IssuedSession, SessionService
@@ -69,7 +70,7 @@ def _token_response(issued: IssuedSession) -> TokenResponse:
         expires_in=issued.access.expires_in,
         expires_at=issued.access.expires_at,
         session_id=issued.session.id,
-        user=UserRead.model_validate(issued.session.user),
+        user=user_read(issued.session.user),
     )
 
 
@@ -144,7 +145,7 @@ def select_company(
     SessionService(db).select_company(request.state.session_id, user, payload.company_id, request.headers)
     company = user.current_company
     return ok(
-        UserRead.model_validate(user),
+        user_read(user),
         f"Entraste a {company.name if company else 'tu empresa'}",
         code="COMPANY_SELECTED",
     )

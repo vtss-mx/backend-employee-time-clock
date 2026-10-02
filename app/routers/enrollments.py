@@ -14,9 +14,10 @@ from app.dependencies import (
     company_of,
     read_image_upload,
     read_image_uploads,
+    require_screen,
     verification_rate_limit,
 )
-from app.models import EnrollmentStatus
+from app.models import EnrollmentStatus, Screen
 from app.schemas.common import ErrorResponse
 from app.schemas.enrollment import (
     EnrollmentRejectRequest,
@@ -44,7 +45,7 @@ router = APIRouter(
         "accesorios, consistencia y prueba de vida; los embeddings quedan inactivos y el estado "
         "pasa a PENDING_REVIEW hasta que COMPANY lo apruebe."
     ),
-    dependencies=[Depends(verification_rate_limit)],
+    dependencies=[Depends(require_screen(Screen.EMPLOYEE_ENROLL)), Depends(verification_rate_limit)],
     responses={409: {"model": ErrorResponse}, 422: {"model": ErrorResponse}},
 )
 def submit_enrollment(
@@ -81,6 +82,7 @@ def submit_enrollment(
     "/enrollments",
     response_model=ApiResponse[FaceEnrollmentList],
     summary="COMPANY: registros faciales por validar / historial",
+    dependencies=[Depends(require_screen(Screen.COMPANY_VALIDATIONS, Screen.COMPANY_DASHBOARD))],
 )
 def list_enrollments(
     company: CompanyScope,
@@ -98,6 +100,7 @@ def list_enrollments(
     response_model=ApiResponse[FaceEnrollmentDetail],
     summary="COMPANY: detalle con fotografía de referencia",
     responses={404: {"model": ErrorResponse}},
+    dependencies=[Depends(require_screen(Screen.COMPANY_VALIDATIONS))],
 )
 def get_enrollment(enrollment_id: int, company: CompanyScope, db: DbSession) -> ApiResponse[FaceEnrollmentDetail]:
     return ok(
@@ -110,6 +113,7 @@ def get_enrollment(enrollment_id: int, company: CompanyScope, db: DbSession) -> 
     response_model=ApiResponse[FaceEnrollmentDetail],
     summary="COMPANY: aceptar usuario (identidad validada)",
     responses={404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}},
+    dependencies=[Depends(require_screen(Screen.COMPANY_VALIDATIONS))],
 )
 def approve_enrollment(
     enrollment_id: int, reviewer: CompanyUser, company: CompanyScope, db: DbSession
@@ -123,6 +127,7 @@ def approve_enrollment(
     response_model=ApiResponse[FaceEnrollmentDetail],
     summary="COMPANY: rechazar usuario (debe registrarse de nuevo)",
     responses={404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}},
+    dependencies=[Depends(require_screen(Screen.COMPANY_VALIDATIONS))],
 )
 def reject_enrollment(
     enrollment_id: int, payload: EnrollmentRejectRequest, reviewer: CompanyUser, company: CompanyScope, db: DbSession

@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, String, false, func
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, String, false, func, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -23,6 +23,15 @@ class AuthSession(Base):
     __table_args__ = (
         # Sesiones de un usuario, de la más reciente a la más antigua (también sirve a la FK).
         Index("ix_auth_sessions_user_created", "user_id", "created_at"),
+        # Sesiones VIGENTES de un usuario (validación, límite por usuario, cerrar todas): solo las
+        # no revocadas, que son pocas, en lugar de todo su historial.
+        Index(
+            "ix_auth_sessions_user_open",
+            "user_id",
+            "expires_at",
+            postgresql_where=text("revoked_at IS NULL"),
+            sqlite_where=text("revoked_at IS NULL"),
+        ),
         {"schema": AUTH},
     )
 
@@ -58,7 +67,7 @@ class RateLimitCounter(Base):
     """Contador de ventana fija compartido por todos los procesos (RATE_LIMIT_BACKEND=database)."""
 
     __tablename__ = "rate_limit_counters"
-    __table_args__ = ({"schema": AUTH},)
+    __table_args__ = (CheckConstraint("count >= 0", name="count_not_negative"), {"schema": AUTH})
 
     key: Mapped[str] = mapped_column(String(255), primary_key=True)
     count: Mapped[int] = mapped_column(nullable=False, default=0)

@@ -1,11 +1,13 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
 from app.core.exceptions import NotFoundError
 from app.core.responses import ApiResponse, ok
-from app.dependencies import CurrentUser, DbSession, EmployeeUser
+from app.dependencies import CurrentUser, DbSession, EmployeeUser, require_screen
+from app.models import Screen
 from app.schemas.common import ErrorResponse
 from app.schemas.qr import EmployeeQrRead
 from app.schemas.user import UserPreferences, UserPreferencesUpdate, UserRead
+from app.services.navigation_service import user_read
 from app.services.qr_service import QrService
 from app.services.verification_service import VerificationService
 
@@ -14,7 +16,7 @@ router = APIRouter(prefix="/users", tags=["Usuarios"])
 
 @router.get("/me", response_model=ApiResponse[UserRead], summary="Información del usuario autenticado")
 def me(user: CurrentUser) -> ApiResponse[UserRead]:
-    return ok(UserRead.model_validate(user), "Usuario autenticado", code="USER_PROFILE")
+    return ok(user_read(user), "Usuario autenticado", code="USER_PROFILE")
 
 
 @router.patch(
@@ -43,6 +45,7 @@ def update_my_preferences(
         "personales: solo un token aleatorio cuyo hash se guarda en la BD."
     ),
     responses={403: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
+    dependencies=[Depends(require_screen(Screen.EMPLOYEE_QR))],
 )
 def my_qr(user: EmployeeUser, db: DbSession) -> ApiResponse[EmployeeQrRead]:
     employee = VerificationService._employee_of(user)  # activo + identidad aprobada

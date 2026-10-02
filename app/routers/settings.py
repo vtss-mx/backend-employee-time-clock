@@ -1,9 +1,10 @@
 """Configuración de la empresa editable desde el frontend (rol COMPANY)."""
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
 from app.core.responses import ApiResponse, ok
-from app.dependencies import CompanyScope, CompanyUser, DbSession, MemberCompany
+from app.dependencies import CompanyScope, CompanyUser, DbSession, MemberCompany, require_screen
+from app.models import Screen
 from app.schemas.common import ErrorResponse
 from app.schemas.policy import VerificationPolicyRead, VerificationPolicyUpdate
 from app.services.policy_service import PolicyService
@@ -34,6 +35,7 @@ def get_verification_policy(company: MemberCompany, db: DbSession) -> ApiRespons
         "el anti-spoofing y la verificación por QR. Solo se modifican los campos enviados. Los cambios "
         "aplican en segundos a todos los procesos de la API."
     ),
+    dependencies=[Depends(require_screen(Screen.COMPANY_SETTINGS))],
 )
 def update_verification_policy(
     payload: VerificationPolicyUpdate, user: CompanyUser, company: CompanyScope, db: DbSession

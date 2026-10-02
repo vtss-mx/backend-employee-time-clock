@@ -13,13 +13,16 @@ from app.dependencies import (
     read_image_upload,
     read_image_uploads,
     request_meta,
+    require_screen,
 )
+from app.models import Screen
 from app.schemas.checkpoint import CheckpointEmployee, CheckpointEvent, CheckpointProfile, CheckpointQrRequest
 from app.schemas.common import ErrorResponse
 from app.schemas.verification import VerificationResult
 from app.services.checkpoint_service import CheckpointService
 
 router = APIRouter(
+    dependencies=[Depends(require_screen(Screen.VALIDATOR_CHECKPOINT))],
     prefix="/checkpoint",
     tags=["Punto de control (VALIDATOR)"],
     responses={

@@ -7,7 +7,7 @@ Enum de `app/models/enums.py` solo nombran los códigos que la lógica necesita;
 garantiza que coincidan con estas tablas.
 """
 
-from sqlalchemy import Boolean, ForeignKey, Numeric, SmallInteger, String, false, text, true
+from sqlalchemy import Boolean, ForeignKey, Index, Numeric, SmallInteger, String, false, text, true
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -53,7 +53,11 @@ class ValidatorModeMethod(Base):
     """Qué métodos de identificación permite cada modo de validador."""
 
     __tablename__ = "validator_mode_methods"
-    __table_args__ = ({"schema": CATALOG},)
+    __table_args__ = (
+        # FK hacia el método: la llave primaria empieza por el modo y no la cubre.
+        Index("ix_validator_mode_methods_method_code", "method_code"),
+        {"schema": CATALOG},
+    )
 
     mode_code: Mapped[str] = mapped_column(
         ForeignKey(f"{CATALOG}.validator_modes.code", ondelete="CASCADE"), primary_key=True
@@ -165,3 +169,35 @@ class CatalogEnrollmentFlag(CatalogEntry, Base):
     """Marcas de un registro facial para que la empresa lo revise (accesorios o posible suplantación)."""
 
     __tablename__ = "enrollment_flags"
+
+
+class CatalogScreen(CatalogEntry, Base):
+    """Pantallas de la aplicación: el frontend arma el menú y sus rutas con las que recibe del backend.
+
+    `path` es la ruta base de la pantalla; `short_name`, el título corto en la barra superior de los
+    teléfonos; `icon`, el nombre del ícono (lucide); `badge`, el contador que acompaña la opción.
+    Qué rol ve cada pantalla vive en `role_screens`, y cada endpoint exige la pantalla que lo usa.
+    """
+
+    __tablename__ = "screens"
+
+    path: Mapped[str] = mapped_column(String(120), unique=True, nullable=False)
+    short_name: Mapped[str | None] = mapped_column(String(30))
+    icon: Mapped[str] = mapped_column(String(40), nullable=False)
+    badge: Mapped[str | None] = mapped_column(String(30))
+
+
+class RoleScreen(Base):
+    """Qué pantallas tiene cada rol (permiso de la pantalla y de los endpoints que usa)."""
+
+    __tablename__ = "role_screens"
+    __table_args__ = (
+        # FK hacia la pantalla (y "qué roles la tienen"): la llave primaria empieza por el rol.
+        Index("ix_role_screens_screen_code", "screen_code"),
+        {"schema": CATALOG},
+    )
+
+    role_code: Mapped[str] = mapped_column(ForeignKey(f"{CATALOG}.roles.code", ondelete="CASCADE"), primary_key=True)
+    screen_code: Mapped[str] = mapped_column(
+        ForeignKey(f"{CATALOG}.screens.code", ondelete="CASCADE"), primary_key=True
+    )

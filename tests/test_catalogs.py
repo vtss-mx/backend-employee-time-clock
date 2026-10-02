@@ -15,6 +15,7 @@ from app.models import (
     CatalogVerificationReason,
     EnrollmentStatus,
     FaceStatus,
+    Screen,
     SessionRevocationReason,
     UserRole,
     ValidatorMode,
@@ -78,6 +79,7 @@ def test_code_and_catalogs_name_the_same_values():
     assert _codes("verification_reasons") == REASONS
     assert _codes("session_revocation_reasons") == {r.value for r in SessionRevocationReason}
     assert _codes("enrollment_flags") == {a.value for a in Accessory} | {SPOOF_FLAG}
+    assert _codes("screens") == {s.value for s in Screen}
 
 
 def test_every_face_error_the_api_raises_has_its_message_in_the_catalog():

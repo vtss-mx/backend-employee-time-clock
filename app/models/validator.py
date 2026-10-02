@@ -1,6 +1,6 @@
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Enum, ForeignKey, Index, String
+from sqlalchemy import Enum, ForeignKey, ForeignKeyConstraint, Index, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -24,6 +24,13 @@ class Validator(TimestampMixin, Base):
     __table_args__ = (
         # Listado de la empresa en orden alfabético.
         Index("ix_validators_company_name", "company_id", "name"),
+        # La cuenta del validador es de la MISMA empresa que el validador (lo garantiza la base).
+        ForeignKeyConstraint(
+            ["user_id", "company_id"],
+            [f"{AUTH}.users.id", f"{AUTH}.users.company_id"],
+            name="fk_validators_user_company",
+            ondelete="CASCADE",
+        ),
         {"schema": WORKFORCE},
     )
 
@@ -40,5 +47,5 @@ class Validator(TimestampMixin, Base):
         nullable=False,
     )
 
-    user: Mapped["User"] = relationship(back_populates="validator", lazy="joined")
+    user: Mapped["User"] = relationship(back_populates="validator", foreign_keys=[user_id], lazy="joined")
     company: Mapped["Company"] = relationship(lazy="joined")
