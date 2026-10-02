@@ -20,6 +20,7 @@ from app.middleware.security import register_security_middlewares
 from app.routers import (
     admin,
     auth,
+    catalogs,
     checkpoint,
     employees,
     enrollments,
@@ -138,6 +139,7 @@ for router in (
     verification.router,
     validators.router,
     checkpoint.router,
+    catalogs.router,
 ):
     app.include_router(router, prefix=settings.API_PREFIX)
 

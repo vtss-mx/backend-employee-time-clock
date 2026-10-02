@@ -16,6 +16,7 @@ from app.facial_recognition.engine import DetectedFace, FaceEngine, FaceLandmark
 from app.facial_recognition.image_utils import decode_image
 from app.facial_recognition.pipeline import FacePipeline, FacePolicy, QualityThresholds
 from app.schemas import validators
+from app.services.catalog_service import get_catalogs
 
 
 def image_bytes(size=(320, 320), fmt="JPEG", color=(120, 120, 120)) -> bytes:
@@ -183,7 +184,11 @@ def test_pipeline_accessories_and_headwear_exemption():
     with pytest.raises(FaceValidationError) as exc:
         pipeline([face()], accessories=accessories).analyze_frontal(image_bytes(color=(40, 40, 40)))
     assert exc.value.details == {"accessories": ["GLASSES", "HEADWEAR", "MASK"]}
-    assert "los lentes, la gorra o sombrero y el cubrebocas" in exc.value.message
+    # El motor solo informa códigos: la frase la arma la API con los catálogos de la base.
+    assert (
+        get_catalogs().accessories_message(exc.value.details["accessories"])
+        == "Quítate los lentes, la gorra o sombrero y el cubrebocas para continuar"
+    )
 
     exempt = pipeline([face()], accessories=StubAccessories(headwear=0.9))
     no_headwear_rule = FacePolicy(block_headwear=False)

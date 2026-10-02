@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.core.exceptions import ConflictError, NotFoundError, UnprocessableError
 from app.core.passwords import hash_password
-from app.models import Company, Employee, EnrollmentStatus, FaceStatus, UserRole
+from app.models import Company, Employee, EnrollmentStatus, FaceStatus, SessionRevocationReason, UserRole
 from app.repositories.employee_repository import EmployeeRepository, UniqueDocument
 from app.repositories.enrollment_repository import FaceEnrollmentRepository
 from app.repositories.face_repository import FaceEmbeddingRepository
@@ -166,7 +166,7 @@ class EmployeeService:
         if "password" in changes:
             employee.user.password_hash = hash_password(changes["password"])
             # Cambio de contraseña: se cierran todas las sesiones del empleado.
-            SessionService(self.db).revoke_all(employee.user_id, "PASSWORD_CHANGED", commit=False)
+            SessionService(self.db).revoke_all(employee.user_id, SessionRevocationReason.PASSWORD_CHANGED, commit=False)
         try:
             self.db.commit()
         except IntegrityError as exc:
@@ -183,7 +183,9 @@ class EmployeeService:
         employee = self.get(employee_id)
         employee.active = active
         if not active:
-            SessionService(self.db).revoke_company(employee.user_id, self.company_id, "ACCOUNT_DEACTIVATED")
+            SessionService(self.db).revoke_company(
+                employee.user_id, self.company_id, SessionRevocationReason.ACCOUNT_DEACTIVATED
+            )
         self.db.commit()
         self.db.refresh(employee)
         return employee
@@ -196,7 +198,7 @@ class EmployeeService:
         employee = self.get(employee_id)
         user = employee.user
         others = [e for e in user.employees if e.id != employee.id]
-        SessionService(self.db).revoke_company(user.id, self.company_id, "EMPLOYEE_REMOVED")
+        SessionService(self.db).revoke_company(user.id, self.company_id, SessionRevocationReason.EMPLOYEE_REMOVED)
         self.employees.delete(employee)
         if not others:
             self.db.delete(user)

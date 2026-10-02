@@ -42,7 +42,9 @@ from app.facial_recognition import FaceAnalysis, FaceValidationError, TurnDirect
 from app.facial_recognition.pipeline import DEFAULT_POLICY, Accessory, FacePolicy, accessories_error  # noqa: E402
 from app.main import app  # noqa: E402
 from app.middleware.rate_limit import limiter  # noqa: E402
+from app.models.catalog_seed import create_schema  # noqa: E402
 from app.services.bootstrap import create_admin_user, create_company_user  # noqa: E402
+from app.services.catalog_service import clear_catalog_cache  # noqa: E402
 from app.services.policy_service import clear_policy_cache  # noqa: E402
 
 COMPANY_EMAIL = "admin@empresa.com"
@@ -83,9 +85,9 @@ class FakePipeline:
     ) -> FaceAnalysis:
         text = image_bytes.decode(errors="ignore")
         if text == "noface":
-            raise FaceValidationError("NO_FACE", "No se detectó ningún rostro en la imagen")
+            raise FaceValidationError("NO_FACE")
         if text == "multi":
-            raise FaceValidationError("MULTIPLE_FACES", "Se detectó más de una persona")
+            raise FaceValidationError("MULTIPLE_FACES")
         kind, _, name = text.partition(":")
         detected = {"glasses": Accessory.GLASSES, "mask": Accessory.MASK, "hat": Accessory.HEADWEAR}.get(kind)
         found = (detected,) if detected is not None and policy.blocks(detected) else ()
@@ -99,16 +101,17 @@ class FakePipeline:
         kind, _, name = image_bytes.decode(errors="ignore").partition(":")
         expected = "turn-left" if direction == TurnDirection.LEFT else "turn-right"
         if kind != expected:
-            raise FaceValidationError("LIVENESS_TURN_NOT_DETECTED", "No se detectó el giro de cabeza solicitado")
+            raise FaceValidationError("LIVENESS_TURN_NOT_DETECTED")
         return _analysis(name)
 
 
 @pytest.fixture(autouse=True)
 def _db():
     Base.metadata.drop_all(engine)
-    Base.metadata.create_all(engine)
+    create_schema(engine)
     limiter.reset()
     clear_policy_cache()
+    clear_catalog_cache()
     with SessionLocal() as db:
         create_company_user(db, COMPANY_EMAIL, COMPANY_PASSWORD)
         create_admin_user(db, ADMIN_EMAIL, ADMIN_PASSWORD)

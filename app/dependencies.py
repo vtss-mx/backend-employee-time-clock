@@ -29,6 +29,7 @@ from app.facial_recognition.image_utils import ALLOWED_CONTENT_TYPES
 from app.middleware.rate_limit import enforce
 from app.models import User, UserRole
 from app.services.auth_service import ensure_account_usable
+from app.services.catalog_service import get_catalogs
 from app.services.policy_service import ensure_device_allowed
 from app.services.session_service import SessionService
 
@@ -159,13 +160,13 @@ def get_pipeline() -> Generator[FacePipeline, None, None]:
         pipeline = lease.__enter__()
     except FaceEngineUnavailable as exc:
         raise ServiceUnavailableError(
-            "El reconocimiento facial no está disponible temporalmente. Puedes identificarte con QR.",
+            get_catalogs().face_error_message("FACE_SERVICE_UNAVAILABLE"),
             code="FACE_SERVICE_UNAVAILABLE",
             retry_after=settings.FACE_ENGINE_RETRY_SECONDS,
         ) from exc
     except (QueueFullError, QueueTimeoutError) as exc:
         raise ServiceUnavailableError(
-            "Hay muchas solicitudes de reconocimiento en este momento. Intenta en unos segundos.",
+            get_catalogs().face_error_message("FACE_SERVICE_BUSY"),
             code="FACE_SERVICE_BUSY",
             retry_after=3,
         ) from exc

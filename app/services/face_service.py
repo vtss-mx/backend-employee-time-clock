@@ -1,9 +1,10 @@
 """Análisis facial, registro (embeddings cifrados) y carga de referencias."""
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from functools import partial
 from itertools import combinations
+from typing import Any
 
 import cv2
 import numpy as np
@@ -14,12 +15,27 @@ from app.core.crypto import decrypt_bytes, encrypt_bytes
 from app.core.exceptions import ServiceUnavailableError, UnprocessableError
 from app.facial_recognition import FaceAnalysis, FacePipeline, FacePolicy, FaceValidationError
 from app.facial_recognition.matcher import cosine_similarity, embedding_from_bytes, embedding_to_bytes
-from app.facial_recognition.pipeline import accessories_error, accessory_consensus
+from app.facial_recognition.pipeline import Accessory, accessory_consensus
 from app.models import FaceEmbedding
 from app.repositories.face_repository import FaceEmbeddingRepository
+from app.services.catalog_service import get_catalogs
 
 MAX_ENROLL_IMAGES = 5
 logger = logging.getLogger(__name__)
+
+
+def face_rejection(code: str, details: Mapping[str, Any] | None = None, prefix: str = "") -> UnprocessableError:
+    """422 de la captura facial con el mensaje del catálogo `face_errors` (el motor solo informa el código)."""
+    message = prefix + get_catalogs().face_error_message(code, details)
+    return UnprocessableError(message, code=code, details=dict(details) if details else None)
+
+
+def accessories_rejection(found: Sequence[Accessory | str], prefix: str = "") -> UnprocessableError:
+    """422 "Quítate los lentes para continuar": los nombres salen del catálogo de accesorios
+    (el motor facial corre en otros procesos, sin base de datos, y solo informa los códigos)."""
+    codes = [str(a) for a in found]
+    message = prefix + get_catalogs().accessories_message(codes)
+    return UnprocessableError(message, code="ACCESSORIES_DETECTED", details={"accessories": codes})
 
 
 def _run(fn: Callable[[], FaceAnalysis], prefix: str = "") -> FaceAnalysis:
@@ -27,26 +43,22 @@ def _run(fn: Callable[[], FaceAnalysis], prefix: str = "") -> FaceAnalysis:
     try:
         return fn()
     except FaceValidationError as exc:
-        raise UnprocessableError(prefix + exc.message, code=exc.code, details=exc.details) from exc
+        if exc.code == "ACCESSORIES_DETECTED":
+            raise accessories_rejection((exc.details or {}).get("accessories", []), prefix) from exc
+        raise face_rejection(exc.code, exc.details, prefix) from exc
     except cv2.error as exc:
         logger.warning("OpenCV no pudo procesar la imagen: %s", exc)
-        raise UnprocessableError(
-            prefix + "No se pudo procesar la imagen. Toma otra foto", code="INVALID_IMAGE"
-        ) from exc
+        raise face_rejection("INVALID_IMAGE", prefix=prefix) from exc
     except Exception as exc:
         # Un fallo inesperado del motor no debe convertirse en un 500 opaco ni tumbar el servicio.
         logger.exception("Error en el motor de reconocimiento facial")
         raise ServiceUnavailableError(
-            "No fue posible procesar el rostro en este momento. Intenta nuevamente.",
-            code="FACE_PROCESSING_ERROR",
+            get_catalogs().face_error_message("FACE_PROCESSING_ERROR"), code="FACE_PROCESSING_ERROR"
         ) from exc
 
 
+#: Marca de posible suplantación (catalog.enrollment_flags), junto a las de accesorios.
 SPOOF_FLAG = "SPOOF"
-SPOOF_MESSAGE = (
-    "No pudimos confirmar que eres una persona frente a la cámara. Evita reflejos y pantallas, "
-    "y usa tu rostro real (no una foto o video)"
-)
 
 
 def spoof_consensus(analyses: list[FaceAnalysis]) -> bool:
@@ -88,10 +100,9 @@ def analyze_frames(
     if allow_review:
         return analyses, flags
     if found:
-        error = accessories_error(found)
-        raise UnprocessableError(error.message, code=error.code, details=error.details)
+        raise accessories_rejection(found)
     if spoof:
-        raise UnprocessableError(SPOOF_MESSAGE, code="SPOOF_DETECTED")
+        raise face_rejection("SPOOF_DETECTED")
     return analyses, flags
 
 
@@ -119,11 +130,7 @@ class FaceService:
         analyses, flagged = self.analyze_frames(images, policy=policy, allow_review=allow_review)
         for a, b in combinations(analyses, 2):
             if cosine_similarity(a.embedding, b.embedding) < settings.FACE_ENROLL_CONSISTENCY_THRESHOLD:
-                raise UnprocessableError(
-                    "Las fotografías no son consistentes entre sí. Repite la captura con una sola persona, "
-                    "de frente y bien iluminada",
-                    code="ENROLL_INCONSISTENT",
-                )
+                raise face_rejection("ENROLL_INCONSISTENT")
         return analyses, flagged
 
     # ---------- Persistencia ----------

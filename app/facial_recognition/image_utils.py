@@ -17,7 +17,7 @@ PROCESSING_MAX_SIDE = 1280
 def decode_image(data: bytes, *, min_dimension: int, max_dimension: int) -> np.ndarray:
     """Valida formato/tamaño y devuelve la imagen en BGR (uint8) lista para OpenCV."""
     if not data:
-        raise FaceValidationError("EMPTY_IMAGE", "No se recibió ninguna imagen")
+        raise FaceValidationError("EMPTY_IMAGE")
 
     try:
         with warnings.catch_warnings():
@@ -25,27 +25,21 @@ def decode_image(data: bytes, *, min_dimension: int, max_dimension: int) -> np.n
             source = Image.open(io.BytesIO(data))
             # El formato se determina por el contenido real (magic bytes), no por la extensión.
             if source.format not in ALLOWED_FORMATS:
-                raise FaceValidationError(
-                    "INVALID_IMAGE_FORMAT", "Formato de imagen no permitido (usa JPEG, PNG o WEBP)"
-                )
+                raise FaceValidationError("INVALID_IMAGE_FORMAT")
             width, height = source.size
             if max(width, height) > max_dimension:
-                raise FaceValidationError(
-                    "IMAGE_TOO_LARGE", f"La imagen excede {max_dimension}px en alguno de sus lados"
-                )
+                raise FaceValidationError("IMAGE_TOO_LARGE", {"max_dimension": max_dimension})
             if min(width, height) < min_dimension:
-                raise FaceValidationError(
-                    "IMAGE_TOO_SMALL", f"La imagen debe medir al menos {min_dimension}px por lado"
-                )
+                raise FaceValidationError("IMAGE_TOO_SMALL", {"min_dimension": min_dimension})
             oriented = ImageOps.exif_transpose(source) or source  # fotos de móvil con orientación EXIF
             image: Image.Image = oriented.convert("RGB")
             image.thumbnail((PROCESSING_MAX_SIDE, PROCESSING_MAX_SIDE))
     except FaceValidationError:
         raise
     except (Image.DecompressionBombError, Image.DecompressionBombWarning) as exc:
-        raise FaceValidationError("IMAGE_TOO_LARGE", "La imagen es demasiado grande") from exc
+        raise FaceValidationError("IMAGE_TOO_LARGE", {"max_dimension": max_dimension}) from exc
     except Exception as exc:
-        raise FaceValidationError("INVALID_IMAGE", "El archivo no es una imagen válida") from exc
+        raise FaceValidationError("INVALID_IMAGE") from exc
 
     rgb = np.asarray(image, dtype=np.uint8)
     return np.ascontiguousarray(rgb[:, :, ::-1])  # RGB -> BGR

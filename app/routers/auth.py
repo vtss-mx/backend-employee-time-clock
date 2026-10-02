@@ -14,6 +14,7 @@ from app.core.responses import ApiResponse, ok
 from app.core.tokens import jwks
 from app.dependencies import CurrentUser, DbSession, EmployeeAccount, OptionalTokenPayload, request_meta
 from app.middleware.rate_limit import enforce, ip_rate_limit
+from app.models import SessionRevocationReason
 from app.schemas.auth import (
     ChangePasswordRequest,
     CompanySelection,
@@ -218,7 +219,7 @@ def change_password(
     enforce(f"change-password:user:{user.id}", settings.RATE_LIMIT_LOGIN_PER_MINUTE)
     AuthService(db).change_password(user, payload.current_password, payload.new_password)
     current = getattr(request.state, "session_id", None)
-    revoked = SessionService(db).revoke_all(user.id, "PASSWORD_CHANGED", except_id=current)
+    revoked = SessionService(db).revoke_all(user.id, SessionRevocationReason.PASSWORD_CHANGED, except_id=current)
     message = "Contraseña actualizada." + (
         f" Se cerraron {revoked} sesión(es) en otros dispositivos." if revoked else ""
     )
@@ -232,7 +233,7 @@ def change_password(
     responses={401: {"model": ErrorResponse}},
 )
 def logout_all(request: Request, response: Response, user: CurrentUser, db: DbSession) -> ApiResponse[dict]:
-    revoked = SessionService(db).revoke_all(user.id, "LOGOUT_ALL")
+    revoked = SessionService(db).revoke_all(user.id, SessionRevocationReason.LOGOUT_ALL)
     _clear_cookie(response, request, settings.REFRESH_COOKIE_NAME)
     return ok({"revoked": revoked}, f"Se cerraron {revoked} sesión(es)", code="LOGGED_OUT_ALL")
 
@@ -259,7 +260,7 @@ def list_sessions(request: Request, user: CurrentUser, db: DbSession) -> ApiResp
     responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
 )
 def revoke_session(session_id: str, user: CurrentUser, db: DbSession) -> ApiResponse[None]:
-    SessionService(db).revoke(session_id, user.id, "REVOKED_BY_USER")
+    SessionService(db).revoke(session_id, user.id, SessionRevocationReason.REVOKED_BY_USER)
     return ok(None, "Sesión revocada", code="SESSION_REVOKED")
 
 

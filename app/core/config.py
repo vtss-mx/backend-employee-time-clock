@@ -185,6 +185,8 @@ class Settings(BaseSettings):
 
     # --- QR ---
     QR_TOKEN_EXPIRE_DAYS: int = Field(default=365, ge=0)  # 0 = sin vencimiento
+    # Catálogos (esquema catalog): segundos que cada proceso los conserva en memoria antes de releerlos.
+    CATALOG_CACHE_SECONDS: float = Field(default=60, ge=0, le=3600)
 
     # --- Protección contra abuso (peticiones por minuto) ---
     # memory = por proceso; database = compartido por todos los procesos/instancias (PostgreSQL).

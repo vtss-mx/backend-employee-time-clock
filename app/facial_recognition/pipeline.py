@@ -31,21 +31,12 @@ class Accessory(StrEnum):
     MASK = "MASK"
 
 
-_ACCESSORY_TEXT = {
-    Accessory.GLASSES: "los lentes",
-    Accessory.HEADWEAR: "la gorra o sombrero",
-    Accessory.MASK: "el cubrebocas",
-}
-
 logger = logging.getLogger(__name__)
 
 
 def accessories_error(found: Sequence[Accessory]) -> FaceValidationError:
-    items = [_ACCESSORY_TEXT[a] for a in found]
-    listed = items[0] if len(items) == 1 else ", ".join(items[:-1]) + " y " + items[-1]
-    return FaceValidationError(
-        "ACCESSORIES_DETECTED", f"Quítate {listed} para continuar", {"accessories": [a.value for a in found]}
-    )
+    """Accesorios detectados (solo códigos): la API arma el mensaje con el catálogo de accesorios."""
+    return FaceValidationError("ACCESSORIES_DETECTED", {"accessories": [a.value for a in found]})
 
 
 def accessory_consensus(per_frame: Sequence[Sequence[Accessory]]) -> tuple[Accessory, ...]:
@@ -159,22 +150,22 @@ class FacePipeline:
 
         pose = estimate_pose(face.landmarks)
         if abs(pose.yaw_ratio) > self.t.max_yaw_ratio:
-            raise FaceValidationError("POSE_NOT_FRONTAL", "Mira de frente a la cámara, sin girar la cabeza")
+            raise FaceValidationError("POSE_NOT_FRONTAL")
         if abs(pose.roll_degrees) > self.t.max_roll_degrees:
-            raise FaceValidationError("POSE_TILTED", "Mantén la cabeza derecha, sin inclinarla")
+            raise FaceValidationError("POSE_TILTED")
         if not self.t.min_pitch_ratio <= pose.pitch_ratio <= self.t.max_pitch_ratio:
-            raise FaceValidationError("POSE_PITCH", "Mira directo a la cámara, sin subir ni bajar la cabeza")
+            raise FaceValidationError("POSE_PITCH")
 
         aligned = self.engine.align(image, face)
         gray = cv2.cvtColor(aligned, cv2.COLOR_BGR2GRAY)
         brightness = float(gray.mean())
         sharpness = float(cv2.Laplacian(gray, cv2.CV_64F).var())
         if brightness < self.t.min_brightness:
-            raise FaceValidationError("TOO_DARK", "La imagen está muy oscura. Busca mejor iluminación")
+            raise FaceValidationError("TOO_DARK")
         if brightness > self.t.max_brightness:
-            raise FaceValidationError("TOO_BRIGHT", "La imagen está sobreexpuesta. Evita luz directa")
+            raise FaceValidationError("TOO_BRIGHT")
         if sharpness < self.t.min_sharpness:
-            raise FaceValidationError("TOO_BLURRY", "La imagen está borrosa. Mantente quieto")
+            raise FaceValidationError("TOO_BLURRY")
 
         scores, skin, found = self._detect_accessories(image, face, policy=policy)
         if found and enforce_accessories:
@@ -206,9 +197,7 @@ class FacePipeline:
         pose = estimate_pose(face.landmarks)
         if not pose.turned(direction, self.t.liveness_min_yaw_ratio):
             raise FaceValidationError(
-                "LIVENESS_TURN_NOT_DETECTED",
-                "No se detectó el giro de cabeza solicitado",
-                {"yaw_ratio": pose.yaw_ratio, "expected": direction.value},
+                "LIVENESS_TURN_NOT_DETECTED", {"yaw_ratio": pose.yaw_ratio, "expected": direction.value}
             )
         aligned = self.engine.align(image, face)
         return FaceAnalysis(
@@ -234,20 +223,18 @@ class FacePipeline:
         # Se usa un umbral bajo para "ver" también posibles segundas personas.
         faces = self.engine.detect(image, min_score=min(self.t.secondary_detection_score, min_score))
         if not faces:
-            raise FaceValidationError("NO_FACE", "No se detectó ningún rostro en la imagen")
+            raise FaceValidationError("NO_FACE")
         if len(faces) > 1:
-            raise FaceValidationError("MULTIPLE_FACES", "Se detectó más de una persona. Solo debe aparecer un rostro")
+            raise FaceValidationError("MULTIPLE_FACES")
         face = faces[0]
         if face.score < min_score:
-            raise FaceValidationError(
-                "LOW_DETECTION_SCORE", "El rostro no se distingue con claridad. Mira de frente a la cámara"
-            )
+            raise FaceValidationError("LOW_DETECTION_SCORE")
         return face
 
     def _check_framing(self, image: np.ndarray, face: DetectedFace) -> None:
         img_h, img_w = image.shape[:2]
         if min(face.width, face.height) < self.t.min_face_size_px:
-            raise FaceValidationError("FACE_TOO_SMALL", "El rostro está muy lejos. Acércate a la cámara")
+            raise FaceValidationError("FACE_TOO_SMALL")
         margin = 0.05
         if (
             face.x < -face.width * margin
@@ -255,7 +242,7 @@ class FacePipeline:
             or face.x + face.width > img_w * (1 + margin)
             or face.y + face.height > img_h * (1 + margin)
         ):
-            raise FaceValidationError("FACE_CUT_OFF", "El rostro está incompleto. Céntralo en la cámara")
+            raise FaceValidationError("FACE_CUT_OFF")
 
     def _detect_accessories(
         self, image: np.ndarray, face: DetectedFace, *, policy: FacePolicy

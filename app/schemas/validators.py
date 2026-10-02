@@ -8,6 +8,7 @@ import phonenumbers
 from pydantic import AfterValidator, Field
 
 from app.core.clock import business_today
+from app.services.catalog_service import get_catalogs
 
 __all__ = ["business_today"]  # fecha del negocio (también la usan las validaciones de fechas)
 
@@ -213,11 +214,20 @@ def normalize_phone(value: str) -> str:
     return phonenumbers.format_number(number, phonenumbers.PhoneNumberFormat.E164)
 
 
+def ensure_active_country(phone: str) -> str:
+    """La lada debe ser de un país activo del catálogo (catalog.countries)."""
+    region = phonenumbers.region_code_for_number(phonenumbers.parse(phone))
+    if region is None or not get_catalogs().is_active("countries", region):
+        raise ValueError("Los teléfonos de ese país no están disponibles")
+    return phone
+
+
 #: Teléfono en los esquemas de entrada (empleados y empresas): se guarda en E.164.
 PhoneNumber = Annotated[
     str,
     Field(max_length=25, description="Teléfono con lada internacional (E.164)", examples=["+526621234567"]),
     AfterValidator(normalize_phone),
+    AfterValidator(ensure_active_country),
 ]
 
 

@@ -4,7 +4,8 @@
 - CheckpointService (VALIDATOR): identifica a cualquier empleado de su empresa (rostro 1:N o QR).
 
 Ambos usan las mismas reglas (umbral de confianza de la empresa, prueba de vida, mensajes) y
-registran cada intento en la bitácora (attendance.verification_logs).
+registran cada intento en la bitácora (attendance.verification_logs). Los mensajes de rechazo y las
+instrucciones de la prueba de vida salen de los catálogos de la base (catalog_service).
 """
 
 from collections.abc import Sequence
@@ -16,38 +17,24 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.exceptions import UnprocessableError
-from app.facial_recognition import FaceAnalysis, FacePipeline, FaceValidationError, TurnDirection
+from app.facial_recognition import FaceAnalysis, FacePipeline, FaceValidationError
 from app.facial_recognition.calibration import match_confidence, similarity_for_confidence
 from app.facial_recognition.matcher import best_match, cosine_similarity
 from app.models import Employee, VerificationLog, VerificationMethod
 from app.repositories.verification_repository import VerificationLogRepository
 from app.schemas.verification import FaceChallengeResponse, VerificationResult
+from app.services.catalog_service import get_catalogs
 from app.services.liveness_service import Challenge, challenge_store
 from app.services.policy_service import PolicySnapshot
 
 FACE_SUCCESS = "Identificación exitosa"
-FACE_FAILED = "Rostro no reconocido"
-FACE_LIVENESS_FAILED = "No fue posible verificar tu identidad"
-LIVENESS_NOT_DETECTED = "no se detectó el giro de cabeza solicitado"
-MAX_FRONTAL_FRAMES = 3
-TURN_INSTRUCTIONS = {
-    TurnDirection.LEFT: "Gira lentamente la cabeza hacia tu izquierda",
-    TurnDirection.RIGHT: "Gira lentamente la cabeza hacia tu derecha",
-}
 QR_SUCCESS = "Identificación exitosa"
-QR_INVALID = "QR inválido"
-QR_UNKNOWN = "QR no reconocido"
-QR_EXPIRED = "El QR ha expirado. Solicita uno nuevo a tu empresa"
+MAX_FRONTAL_FRAMES = 3
 
 
-def qr_message(reason: str) -> str:
-    """Mensaje para el usuario según el motivo del rechazo del QR."""
-    messages = {
-        "INVALID_FORMAT": QR_INVALID,
-        "EXPIRED": QR_EXPIRED,
-        "EMPLOYEE_INACTIVE": "El empleado está desactivado",
-    }
-    return messages.get(reason, QR_UNKNOWN)
+def reason_message(reason: str | None) -> str:
+    """Mensaje para la persona según el motivo del rechazo (catalog.verification_reasons)."""
+    return get_catalogs().reason_message(reason)
 
 
 def required_similarity(policy: PolicySnapshot) -> float:
@@ -82,7 +69,7 @@ def issue_challenge(db: Session, user_id: int, policy: PolicySnapshot) -> FaceCh
         liveness_required=True,
         challenge_id=challenge.id,
         action=challenge.direction,
-        instruction=TURN_INSTRUCTIONS[challenge.direction],
+        instruction=get_catalogs(db).liveness_instruction(challenge.direction.value),
         min_yaw_ratio=settings.FACE_LIVENESS_MIN_YAW_RATIO,
         expires_in=settings.FACE_CHALLENGE_TTL_SECONDS,
     )
@@ -90,9 +77,20 @@ def issue_challenge(db: Session, user_id: int, policy: PolicySnapshot) -> FaceCh
 
 @dataclass(frozen=True)
 class LivenessFailure:
+    """Prueba de vida no superada."""
+
+    #: LIVENESS_FAILED (no se vio el giro o la captura del reto no sirvió) o LIVENESS_MISMATCH.
     reason: str
-    message: str
     score: float | None = None
+    #: Error de la captura del reto (sin rostro, borrosa...) cuando fue eso lo que falló.
+    capture_error: FaceValidationError | None = None
+
+    @property
+    def message(self) -> str:
+        """Para la identificación: el motivo de la bitácora (o el error de la captura del reto)."""
+        if self.capture_error is not None:
+            return get_catalogs().face_error_message(self.capture_error.code, self.capture_error.details)
+        return reason_message(self.reason)
 
 
 def liveness_failure(
@@ -107,15 +105,11 @@ def liveness_failure(
     try:
         turned = pipeline.analyze_turn(challenge_image, challenge.direction)
     except FaceValidationError as exc:
-        reason = LIVENESS_NOT_DETECTED if exc.code == "LIVENESS_TURN_NOT_DETECTED" else exc.message
-        return LivenessFailure("LIVENESS_FAILED", f"{FACE_LIVENESS_FAILED}: {reason}")
+        turn_missing = exc.code == "LIVENESS_TURN_NOT_DETECTED"
+        return LivenessFailure("LIVENESS_FAILED", capture_error=None if turn_missing else exc)
     consistency = max(cosine_similarity(turned.embedding, f.embedding) for f in frontal)
     if consistency < settings.FACE_LIVENESS_CONSISTENCY_THRESHOLD:
-        return LivenessFailure(
-            "LIVENESS_MISMATCH",
-            f"{FACE_LIVENESS_FAILED}: las capturas no corresponden a la misma persona",
-            round(consistency, 4),
-        )
+        return LivenessFailure("LIVENESS_MISMATCH", round(consistency, 4))
     return None
 
 

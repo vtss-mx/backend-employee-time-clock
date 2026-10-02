@@ -12,7 +12,9 @@ class VerificationPolicyRead(BaseModel):
     liveness_challenge: bool = Field(description="Prueba de vida: girar la cabeza en una dirección aleatoria")
     anti_spoofing: bool = Field(description="Detectar fotos impresas, pantallas y videos (anti-spoofing pasivo)")
     qr_enabled: bool = Field(description="Permitir identificarse con el código QR")
-    min_confidence: float = Field(description="Confianza mínima para aceptar el reconocimiento facial (0.80-0.99999)")
+    min_confidence: float = Field(
+        description="Confianza mínima para aceptar el reconocimiento facial (catalog.confidence_levels)"
+    )
     employee_mobile_only: bool = Field(
         description="Los empleados solo pueden usar la aplicación desde un teléfono celular"
     )
@@ -34,4 +36,5 @@ class VerificationPolicyUpdate(BaseModel):
     qr_enabled: bool | None = None
     employee_mobile_only: bool | None = None
     validator_mobile_only: bool | None = None
-    min_confidence: float | None = Field(default=None, ge=0.80, le=0.99999)
+    #: Uno de los niveles activos de catalog.confidence_levels (lo valida el servicio).
+    min_confidence: float | None = None

@@ -4,7 +4,7 @@ from typing import Any, cast
 from sqlalchemy import CursorResult, delete, select, update
 from sqlalchemy.orm import Session
 
-from app.models import AuthSession
+from app.models import AuthSession, SessionRevocationReason
 
 
 class SessionRepository:
@@ -29,7 +29,13 @@ class SessionRepository:
         )
 
     def revoke_all(
-        self, user_id: int, now: datetime, reason: str, *, except_id: str | None = None, company_id: int | None = None
+        self,
+        user_id: int,
+        now: datetime,
+        reason: SessionRevocationReason,
+        *,
+        except_id: str | None = None,
+        company_id: int | None = None,
     ) -> int:
         """Sesiones activas del usuario (todas, o solo las que entraron a `company_id`)."""
         stmt = update(AuthSession).where(AuthSession.user_id == user_id, AuthSession.revoked_at.is_(None))

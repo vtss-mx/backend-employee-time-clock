@@ -4,5 +4,6 @@ venv/
 __pycache__/
 *.pyc
 .pytest_cache/
-models/
+# Modelos ONNX descargados (carpeta de la raíz del backend; NO app/models, que es código)
+/models/
 *.db

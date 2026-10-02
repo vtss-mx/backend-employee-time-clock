@@ -27,6 +27,12 @@ python -m app.cli create-company --email admin@empresa.com
 
 Con Docker: `docker build --target runtime -t timeclock-backend .`. El contenedor aplica las migraciones al iniciar.
 
+## Base de datos y catálogos
+
+- La estructura la crean las migraciones de `alembic/versions/` (`alembic upgrade head`); los modelos de `app/models/` deben coincidir con ellas (lo verifica `scripts/quality.sh --postgres`).
+- Todas las listas de valores son tablas del esquema `catalog` con llave foránea desde cada columna que guarda un código. Sus registros están en `alembic/seed/catalogs.json`: la migración `0020` los carga y las pruebas usan el mismo archivo (`app/models/catalog_seed.py`).
+- Cambiar un catálogo: edita `catalogs.json` y agrega una migración que lleve las bases existentes al mismo contenido. Un cambio de estructura: nueva migración y el modelo igual.
+
 ## Pruebas y calidad
 
 ```bash

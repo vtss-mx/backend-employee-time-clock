@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from app.core.clock import business_day_start
 from app.core.exceptions import ConflictError, NotFoundError
 from app.core.passwords import hash_password
-from app.models import UserRole, Validator
+from app.models import SessionRevocationReason, UserRole, Validator
 from app.repositories.company_repository import CompanyRepository
 from app.repositories.user_repository import UserRepository
 from app.repositories.validator_repository import ValidatorRepository
@@ -73,7 +73,7 @@ class ValidatorService:
         validator = self.get(validator_id)
         validator.user.active = active
         if not active:
-            self._close_sessions(validator, "ACCOUNT_DEACTIVATED")
+            self._close_sessions(validator, SessionRevocationReason.ACCOUNT_DEACTIVATED)
         self.db.commit()
         self.db.refresh(validator)
         return validator
@@ -81,7 +81,7 @@ class ValidatorService:
     def reset_password(self, validator_id: int, data: ValidatorPasswordReset) -> Validator:
         validator = self.get(validator_id)
         validator.user.password_hash = hash_password(data.password)
-        self._close_sessions(validator, "PASSWORD_RESET")
+        self._close_sessions(validator, SessionRevocationReason.PASSWORD_RESET)
         self.db.commit()
         return validator
 
@@ -91,7 +91,7 @@ class ValidatorService:
         self.db.delete(validator.user)
         self.db.commit()
 
-    def _close_sessions(self, validator: Validator, reason: str) -> None:
+    def _close_sessions(self, validator: Validator, reason: SessionRevocationReason) -> None:
         CompanyRepository(self.db).revoke_sessions(datetime.now(UTC), reason, user_id=validator.user_id)
 
     @staticmethod

@@ -23,7 +23,8 @@ class FaceEnrollmentRead(BaseModel):
     samples: int
     quality_score: float
     liveness_passed: bool
-    #: Accesorios detectados que el empleado indicó no usar: revisar en la foto antes de aceptar.
+    #: Marcas para revisar en la foto antes de aceptar (catalog.enrollment_flags): accesorios que el
+    #: sistema detectó y el empleado indicó no usar, o posible suplantación (SPOOF).
     flagged_accessories: list[str] = []
     submitted_at: datetime
     reviewed_at: datetime | None = None

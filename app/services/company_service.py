@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.core.exceptions import ConflictError, NotFoundError
 from app.core.passwords import hash_password
-from app.models import Company, User, UserRole
+from app.models import Company, SessionRevocationReason, User, UserRole
 from app.repositories.company_repository import CompanyRepository
 from app.repositories.user_repository import UserRepository
 from app.schemas.company import (
@@ -138,7 +138,9 @@ class CompanyService:
         company = self.get(company_id)
         company.active = active
         if not active:
-            self.companies.revoke_sessions(datetime.now(UTC), "COMPANY_DEACTIVATED", company_id=company.id)
+            self.companies.revoke_sessions(
+                datetime.now(UTC), SessionRevocationReason.COMPANY_DEACTIVATED, company_id=company.id
+            )
         self.db.commit()
         clear_policy_cache(company.id)
         return self.detail(company.id)
@@ -162,7 +164,9 @@ class CompanyService:
             raise ConflictError(LAST_ADMIN, code="LAST_COMPANY_ADMIN")
         admin.active = active
         if not active:
-            self.companies.revoke_sessions(datetime.now(UTC), "ACCOUNT_DEACTIVATED", user_id=admin.id)
+            self.companies.revoke_sessions(
+                datetime.now(UTC), SessionRevocationReason.ACCOUNT_DEACTIVATED, user_id=admin.id
+            )
         self.db.commit()
         return self.detail(company.id)
 
@@ -170,7 +174,7 @@ class CompanyService:
         """Contraseña olvidada: se asigna una nueva y se cierran las sesiones abiertas del administrador."""
         company, admin = self._company_admin(company_id, user_id)
         admin.password_hash = hash_password(data.admin_password)
-        self.companies.revoke_sessions(datetime.now(UTC), "PASSWORD_RESET", user_id=admin.id)
+        self.companies.revoke_sessions(datetime.now(UTC), SessionRevocationReason.PASSWORD_RESET, user_id=admin.id)
         self.db.commit()
         return self.detail(company.id)
 

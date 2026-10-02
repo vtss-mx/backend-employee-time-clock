@@ -58,6 +58,8 @@ max-complexity = 12
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["ANN", "S", "DTZ", "C90", "PLR2004"]
 "scripts/**" = ["S"]
+# Códigos de catálogo como PASSWORD_CHANGED no son contraseñas (falso positivo de S105).
+"app/models/enums.py" = ["S105"]
 
 [tool.mypy]
 python_version = "3.12"

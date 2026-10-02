@@ -9,9 +9,10 @@ from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 from app.core.config import settings
 from app.core.db_schemas import ALL_SCHEMAS
 
-# Convención de nombres para que Alembic genere constraints predecibles.
+# Convención de nombres: la misma que usan las migraciones de Alembic (los modelos y la base deben
+# coincidir; lo verifica scripts/quality.sh). Sin el esquema en el nombre.
 NAMING_CONVENTION = {
-    "ix": "ix_%(column_0_label)s",
+    "ix": "ix_%(table_name)s_%(column_0_name)s",
     "uq": "uq_%(table_name)s_%(column_0_name)s",
     "ck": "ck_%(table_name)s_%(constraint_name)s",
     "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
@@ -33,13 +34,13 @@ for _schema in ALL_SCHEMAS:
     )
 
 # Los índices de búsqueda usan trigramas (pg_trgm) combinados con company_id (btree_gin). En
-# producción las extensiones las crean las migraciones; esto cubre las BD creadas con create_all
-# (pruebas en PostgreSQL).
+# producción las extensiones las crean las migraciones (en public); esto cubre las BD creadas con
+# create_all (pruebas en PostgreSQL).
 for _extension in ("pg_trgm", "btree_gin"):
     event.listen(
         Base.metadata,
         "before_create",
-        DDL(f"CREATE EXTENSION IF NOT EXISTS {_extension}").execute_if(dialect="postgresql"),
+        DDL(f"CREATE EXTENSION IF NOT EXISTS {_extension} WITH SCHEMA public").execute_if(dialect="postgresql"),
     )
 
 

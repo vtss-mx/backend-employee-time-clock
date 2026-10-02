@@ -17,9 +17,9 @@ from app.facial_recognition import FacePipeline
 from app.models import Employee, EnrollmentStatus, FaceStatus, User, VerificationMethod
 from app.repositories.enrollment_repository import FaceEnrollmentRepository
 from app.schemas.verification import FaceChallengeResponse, VerificationResult
+from app.services.catalog_service import get_catalogs
 from app.services.face_service import FaceService
 from app.services.identity_core import (
-    FACE_FAILED,
     FACE_SUCCESS,
     QR_SUCCESS,
     IdentityLog,
@@ -29,7 +29,7 @@ from app.services.identity_core import (
     liveness_failure,
     match_references,
     mean_confidence,
-    qr_message,
+    reason_message,
     required_similarity,
     succeeded,
 )
@@ -73,9 +73,7 @@ class VerificationService:
         face_service = FaceService(self.db, pipeline)
         references = face_service.load_references(employee.id) or self.migrate_references(employee, face_service)
         if not references:
-            raise ConflictError(
-                "No tienes información facial registrada. Contacta a tu empresa.", code="FACE_NOT_REGISTERED"
-            )
+            raise ConflictError(get_catalogs().face_error_message("FACE_NOT_REGISTERED"), code="FACE_NOT_REGISTERED")
 
         challenge = challenge_store.require(
             self.db, user.id, challenge_id, challenge_image, required=policy.liveness_required
@@ -97,7 +95,7 @@ class VerificationService:
 
         self._record(employee, user, VerificationMethod.FACE, matched, score, None if matched else "NO_MATCH")
         if not matched:
-            return failed(VerificationMethod.FACE, FACE_FAILED)
+            return failed(VerificationMethod.FACE, reason_message("NO_MATCH"))
         if len(references) < settings.FACE_MAX_SAMPLES_PER_EMPLOYEE and challenge is not None:
             # Tras una migración de modelo el empleado tiene pocas muestras: se completan con
             # capturas ya verificadas (identidad + prueba de vida superadas), hasta el máximo.
@@ -125,7 +123,7 @@ class VerificationService:
 
         if reason is not None:
             self._record(employee, user, VerificationMethod.QR, False, None, reason)
-            return failed(VerificationMethod.QR, qr_message(reason))
+            return failed(VerificationMethod.QR, reason_message(reason))
 
         self._record(employee, user, VerificationMethod.QR, True, None, None)
         return succeeded(employee, VerificationMethod.QR, QR_SUCCESS, confidence=None)

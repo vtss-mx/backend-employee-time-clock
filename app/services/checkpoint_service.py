@@ -14,17 +14,16 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.exceptions import ConflictError, PermissionDeniedError, UnprocessableError
 from app.facial_recognition import Accessory, FaceAnalysis, FacePipeline
-from app.facial_recognition.pipeline import accessories_error
-from app.models import Employee, User, ValidatorMode, VerificationLog, VerificationMethod
+from app.models import Employee, User, VerificationLog, VerificationMethod
 from app.repositories.employee_repository import EmployeeRepository
 from app.repositories.face_repository import FaceEmbeddingRepository
 from app.schemas.checkpoint import CheckpointEmployee, CheckpointEvent, CheckpointProfile
 from app.schemas.user import UserCompanyInfo
 from app.schemas.verification import FaceChallengeResponse, VerificationResult
+from app.services.catalog_service import get_catalogs
 from app.services.face_gallery import face_galleries, identify
-from app.services.face_service import SPOOF_FLAG, SPOOF_MESSAGE, FaceService, analyze_frames
+from app.services.face_service import SPOOF_FLAG, FaceService, accessories_rejection, analyze_frames, face_rejection
 from app.services.identity_core import (
-    FACE_FAILED,
     FACE_SUCCESS,
     QR_SUCCESS,
     IdentityLog,
@@ -34,7 +33,7 @@ from app.services.identity_core import (
     liveness_failure,
     match_references,
     mean_confidence,
-    qr_message,
+    reason_message,
     required_similarity,
     succeeded,
 )
@@ -43,25 +42,6 @@ from app.services.policy_service import PolicyService
 from app.services.qr_service import QrService
 from app.services.verification_service import VerificationService
 
-#: Métodos que permite cada modo.
-MODE_METHODS: dict[ValidatorMode, frozenset[VerificationMethod]] = {
-    ValidatorMode.QR: frozenset({VerificationMethod.QR}),
-    ValidatorMode.FACE: frozenset({VerificationMethod.FACE}),
-    ValidatorMode.QR_OR_FACE: frozenset({VerificationMethod.QR, VerificationMethod.FACE}),
-    ValidatorMode.QR_AND_FACE: frozenset({VerificationMethod.QR_FACE}),
-}
-MODE_TEXT = {
-    ValidatorMode.QR: "solo con el código QR",
-    ValidatorMode.FACE: "solo con reconocimiento facial",
-    ValidatorMode.QR_OR_FACE: "con QR o reconocimiento facial",
-    ValidatorMode.QR_AND_FACE: "con QR y reconocimiento facial (ambos)",
-}
-NOT_IDENTIFIED = {
-    "EMPTY_GALLERY": "Aún no hay empleados con identidad validada en esta empresa",
-    "AMBIGUOUS_MATCH": "No fue posible distinguir a la persona con suficiente certeza. Intenta de nuevo con buena luz",
-    "INCONSISTENT_MATCH": "Las capturas no coinciden con una sola persona. Intenta de nuevo",
-}
-NO_FACE_REGISTERED = "El empleado aún no tiene su rostro validado por la empresa"
 #: Accesorios que impiden identificar desde la captura (la prenda de cabeza se decide al saber
 #: quién es: puede tener excepción por motivos religiosos o médicos).
 BLOCKING_ACCESSORIES = (Accessory.GLASSES, Accessory.MASK)
@@ -126,7 +106,7 @@ class CheckpointService:
             self._deny()
         employee, reason = self._employee_from_qr(qr_content)
         if employee is None:
-            raise UnprocessableError(qr_message(reason or ""), code=f"QR_{reason}")
+            raise UnprocessableError(reason_message(reason), code=f"QR_{reason}")
         return CheckpointEmployee(
             employee_id=employee.id, name=employee.full_name, employee_number=employee.employee_number
         )
@@ -137,7 +117,7 @@ class CheckpointService:
         employee, reason = self._employee_from_qr(qr_content)
         self._record(employee, VerificationMethod.QR, employee is not None, None, reason)
         if employee is None:
-            return failed(VerificationMethod.QR, qr_message(reason or ""))
+            return failed(VerificationMethod.QR, reason_message(reason))
         return succeeded(employee, VerificationMethod.QR, QR_SUCCESS, confidence=None)
 
     def identify_face(
@@ -187,7 +167,7 @@ class CheckpointService:
         )
         if employee is None:
             self._record(None, VerificationMethod.FACE, False, score, found.reason or "NO_MATCH")
-            return failed(VerificationMethod.FACE, NOT_IDENTIFIED.get(found.reason or "", FACE_FAILED))
+            return failed(VerificationMethod.FACE, reason_message(found.reason or "NO_MATCH"))
         self._ensure_headwear_allowed(employee, headwear)
         self._record(employee, VerificationMethod.FACE, True, score, None)
         return succeeded(employee, VerificationMethod.FACE, FACE_SUCCESS, confidence=score)
@@ -199,14 +179,14 @@ class CheckpointService:
         employee, reason = self._employee_from_qr(qr_content)
         if employee is None:
             self._record(None, method, False, None, reason)
-            return failed(method, qr_message(reason or ""))
+            return failed(method, reason_message(reason))
         face_service = FaceService(self.db, pipeline)
         references = face_service.load_references(employee.id) or VerificationService(self.db).migrate_references(
             employee, face_service
         )
         if not references:
             self._record(employee, method, False, None, "FACE_NOT_REGISTERED")
-            return failed(method, NO_FACE_REGISTERED)
+            return failed(method, reason_message("FACE_NOT_REGISTERED"))
         required = required_similarity(self.policy)
         similarities = match_references(frontal, references, required)
         score = mean_confidence(similarities)
@@ -225,17 +205,15 @@ class CheckpointService:
         frontal, flags = analyze_frames(pipeline, images, policy=self.policy.face_policy(None), allow_review=True)
         blocking = [a for a in BLOCKING_ACCESSORIES if a.value in flags]
         if blocking:
-            error = accessories_error(blocking)
-            raise UnprocessableError(error.message, code=error.code, details=error.details)
+            raise accessories_rejection(blocking)
         if SPOOF_FLAG in flags:
-            raise UnprocessableError(SPOOF_MESSAGE, code="SPOOF_DETECTED")
+            raise face_rejection("SPOOF_DETECTED")
         return frontal, Accessory.HEADWEAR.value in flags
 
     @staticmethod
     def _ensure_headwear_allowed(employee: Employee, headwear: bool) -> None:
         if headwear and not employee.headwear_exempt:
-            error = accessories_error([Accessory.HEADWEAR])
-            raise UnprocessableError(error.message, code=error.code, details=error.details)
+            raise accessories_rejection([Accessory.HEADWEAR])
 
     def _migrate_missing(self, pipeline: FacePipeline) -> None:
         """Empleados aprobados sin muestras del modelo actual: se generan desde su foto aprobada
@@ -267,11 +245,13 @@ class CheckpointService:
         return employee, None
 
     def _allows(self, method: VerificationMethod) -> bool:
-        return method in MODE_METHODS[self.validator.mode]
+        # Métodos permitidos por modo: catalog.validator_mode_methods.
+        return method.value in get_catalogs(self.db).mode_methods.get(self.validator.mode.value, ())
 
     def _deny(self) -> None:
         raise ConflictError(
-            f"Este validador identifica {MODE_TEXT[self.validator.mode]}", code="VALIDATOR_METHOD_NOT_ALLOWED"
+            f"Este validador identifica en modo «{get_catalogs(self.db).name('validator_modes', self.validator.mode)}»",
+            code="VALIDATOR_METHOD_NOT_ALLOWED",
         )
 
     def _record(

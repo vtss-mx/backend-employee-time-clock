@@ -8,7 +8,6 @@ de gracia para pestañas concurrentes) se asume robo y se revoca la sesión comp
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import NoReturn
 
 from sqlalchemy.orm import Session
 
@@ -18,17 +17,19 @@ from app.core.crypto import hash_token
 from app.core.exceptions import AuthenticationError, NotFoundError
 from app.core.opaque_tokens import new_id, new_secret, secret_matches, split_token
 from app.core.tokens import AccessToken, create_access_token
-from app.models import AuthSession, User
+from app.models import AuthSession, SessionRevocationReason, User
 from app.repositories.session_repository import SessionRepository
 from app.services.auth_service import ensure_account_usable
+from app.services.catalog_service import get_catalogs
 from app.services.policy_service import ensure_device_allowed
 
-SESSION_INVALID = "Tu sesión ya no es válida. Inicia sesión nuevamente."
-SESSION_REPLACED = (
-    "Se inició sesión con tu cuenta en otro dispositivo. Por seguridad, solo puedes tener una sesión activa a la vez."
-)
-#: Motivo de revocación cuando un inicio de sesión nuevo desplaza a uno anterior.
-REPLACED_REASON = "SIGNED_IN_ELSEWHERE"
+
+def session_closed(reason: str | None, code: str) -> AuthenticationError:
+    """401 de una sesión inválida o cerrada: el mensaje depende del motivo del cierre
+    (catalog.session_revocation_reasons). Si fue un inicio de sesión en otro dispositivo, se dice así."""
+    if reason == SessionRevocationReason.SIGNED_IN_ELSEWHERE:
+        code = "SESSION_REPLACED"
+    return AuthenticationError(get_catalogs().session_message(reason), code=code)
 
 
 @dataclass(frozen=True)
@@ -70,14 +71,14 @@ class SessionService:
     def refresh(self, refresh_token: str | None) -> IssuedSession:
         sid, secret = split_token(refresh_token)
         if not sid:
-            raise AuthenticationError(SESSION_INVALID, code="REFRESH_TOKEN_MISSING")
+            raise session_closed(None, "REFRESH_TOKEN_MISSING")
         now = datetime.now(UTC)
         # FOR UPDATE: dos procesos no pueden rotar el mismo token a la vez.
         session = self.sessions.get(sid, for_update=True)
         if session is None:
-            raise AuthenticationError(SESSION_INVALID, code="SESSION_INVALID")
+            raise session_closed(None, "SESSION_INVALID")
         if not self._is_active(session, now):
-            self._raise_inactive(session, "SESSION_INVALID")
+            raise session_closed(session.revoked_reason, "SESSION_INVALID")
         rotated: str | None = None
         if secret_matches(secret, session.refresh_hash):
             rotated = new_secret()
@@ -86,9 +87,9 @@ class SessionService:
             session.rotated_at = now
         elif not self._within_grace(session, secret, now):
             # Token ya usado: alguien más lo tiene. Se revoca la sesión completa.
-            session.revoked_at, session.revoked_reason = now, "REFRESH_REUSE_DETECTED"
+            session.revoked_at, session.revoked_reason = now, SessionRevocationReason.REFRESH_REUSE_DETECTED
             self.db.commit()
-            raise AuthenticationError(SESSION_INVALID, code="REFRESH_TOKEN_REUSED")
+            raise session_closed(session.revoked_reason, "REFRESH_TOKEN_REUSED")
         session.last_used_at = now
         self.db.commit()
         user = session.user
@@ -116,19 +117,14 @@ class SessionService:
         """Usado en cada petición autenticada: la sesión debe existir y no estar revocada."""
         session = self.sessions.get(session_id)
         if session is None or session.user_id != user_id:
-            raise AuthenticationError(SESSION_INVALID, code="SESSION_REVOKED")
+            raise session_closed(None, "SESSION_REVOKED")
         if not self._is_active(session, datetime.now(UTC)):
-            self._raise_inactive(session, "SESSION_REVOKED")
+            raise session_closed(session.revoked_reason, "SESSION_REVOKED")
         return session
 
-    @staticmethod
-    def _raise_inactive(session: AuthSession, code: str) -> NoReturn:
-        """Sesión cerrada: si fue por un inicio de sesión en otro dispositivo, se dice así."""
-        if session.revoked_reason == REPLACED_REASON:
-            raise AuthenticationError(SESSION_REPLACED, code="SESSION_REPLACED")
-        raise AuthenticationError(SESSION_INVALID, code=code)
-
-    def revoke(self, session_id: str, user_id: int, reason: str = "LOGOUT") -> None:
+    def revoke(
+        self, session_id: str, user_id: int, reason: SessionRevocationReason = SessionRevocationReason.LOGOUT
+    ) -> None:
         session = self.sessions.get(session_id)
         if session is None or session.user_id != user_id:
             raise NotFoundError("Sesión no encontrada", code="SESSION_NOT_FOUND")
@@ -136,7 +132,9 @@ class SessionService:
             session.revoked_at, session.revoked_reason = datetime.now(UTC), reason
         self.db.commit()
 
-    def revoke_quietly(self, session_id: str, user_id: int, reason: str = "LOGOUT") -> None:
+    def revoke_quietly(
+        self, session_id: str, user_id: int, reason: SessionRevocationReason = SessionRevocationReason.LOGOUT
+    ) -> None:
         """Revoca la sesión del access token si existe y es del usuario (sin error si no)."""
         session = self.sessions.get(session_id)
         if session is not None and session.user_id == user_id and session.revoked_at is None:
@@ -152,16 +150,18 @@ class SessionService:
             and session.revoked_at is None
             and secret_matches(secret, session.refresh_hash, session.previous_refresh_hash)
         ):
-            session.revoked_at, session.revoked_reason = datetime.now(UTC), "LOGOUT"
+            session.revoked_at, session.revoked_reason = datetime.now(UTC), SessionRevocationReason.LOGOUT
             self.db.commit()
 
-    def revoke_all(self, user_id: int, reason: str, *, except_id: str | None = None, commit: bool = True) -> int:
+    def revoke_all(
+        self, user_id: int, reason: SessionRevocationReason, *, except_id: str | None = None, commit: bool = True
+    ) -> int:
         count = self.sessions.revoke_all(user_id, datetime.now(UTC), reason, except_id=except_id)
         if commit:
             self.db.commit()
         return count
 
-    def revoke_company(self, user_id: int, company_id: int, reason: str) -> None:
+    def revoke_company(self, user_id: int, company_id: int, reason: SessionRevocationReason) -> None:
         """Cierra las sesiones en las que la persona entró a esa empresa (sin confirmar la transacción)."""
         self.sessions.revoke_all(user_id, datetime.now(UTC), reason, company_id=company_id)
 
@@ -199,4 +199,4 @@ class SessionService:
         active = self.sessions.active_for_user(user_id, now)
         for old in active[settings.MAX_SESSIONS_PER_USER :]:
             if old.id != keep:
-                old.revoked_at, old.revoked_reason = now, REPLACED_REASON
+                old.revoked_at, old.revoked_reason = now, SessionRevocationReason.SIGNED_IN_ELSEWHERE

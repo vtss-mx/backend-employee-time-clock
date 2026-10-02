@@ -19,9 +19,9 @@ from sqlalchemy.orm import Session
 
 from app.core.clock import as_utc
 from app.core.config import settings
-from app.core.exceptions import UnprocessableError
 from app.facial_recognition import TurnDirection
 from app.models import FaceChallenge
+from app.services.face_service import face_rejection
 
 
 @dataclass(frozen=True)
@@ -85,12 +85,10 @@ class ChallengeStore:
         if not required:
             return None
         if not challenge_id or challenge_image is None:
-            raise UnprocessableError("Se requiere completar la prueba de vida", code="LIVENESS_REQUIRED")
+            raise face_rejection("LIVENESS_REQUIRED")
         challenge = self.consume(db, challenge_id, user_id)
         if challenge is None:
-            raise UnprocessableError(
-                "El reto de verificación expiró o no es válido. Inténtalo de nuevo", code="CHALLENGE_INVALID"
-            )
+            raise face_rejection("CHALLENGE_INVALID")
         return challenge
 
 

@@ -14,13 +14,10 @@ from datetime import UTC, datetime
 
 from sqlalchemy.orm import Session
 
-from app.core.config import settings
 from app.core.crypto import decrypt_bytes, encrypt_bytes
 from app.core.exceptions import ConflictError, NotFoundError, PermissionDeniedError, UnprocessableError
-from app.facial_recognition import Accessory, FacePipeline, FaceValidationError
-from app.facial_recognition.matcher import cosine_similarity
-from app.facial_recognition.pipeline import accessories_error
-from app.models import EnrollmentStatus, FaceEnrollment, FaceStatus, User
+from app.facial_recognition import FacePipeline
+from app.models import EnrollmentStatus, FaceEnrollment, FaceEnrollmentFlag, FaceStatus, User
 from app.repositories.enrollment_repository import FaceEnrollmentRepository
 from app.repositories.face_repository import FaceEmbeddingRepository
 from app.schemas.enrollment import (
@@ -29,7 +26,9 @@ from app.schemas.enrollment import (
     FaceEnrollmentList,
     FaceEnrollmentRead,
 )
-from app.services.face_service import SPOOF_FLAG, FaceService
+from app.services.catalog_service import get_catalogs
+from app.services.face_service import SPOOF_FLAG, FaceService, accessories_rejection
+from app.services.identity_core import liveness_failure
 from app.services.liveness_service import challenge_store
 from app.services.policy_service import PolicyService
 
@@ -88,25 +87,14 @@ class EnrollmentService:
         )
         accessories = [f for f in flags if f != SPOOF_FLAG]
         if accessories and not accessory_review:
-            error = accessories_error([Accessory(a) for a in accessories])
-            raise UnprocessableError(error.message, code=error.code, details=error.details)
-        flagged = flags
+            raise accessories_rejection(accessories)
 
-        if challenge is not None and challenge_image is not None:
-            try:
-                turned = pipeline.analyze_turn(challenge_image, challenge.direction)
-            except FaceValidationError as exc:
-                raise UnprocessableError(
-                    "No se detectó el giro de cabeza solicitado. Inténtalo de nuevo"
-                    if exc.code == "LIVENESS_TURN_NOT_DETECTED"
-                    else exc.message,
-                    code="LIVENESS_FAILED",
-                ) from exc
-            consistency = max(cosine_similarity(turned.embedding, a.embedding) for a in analyses)
-            if consistency < settings.FACE_LIVENESS_CONSISTENCY_THRESHOLD:
-                raise UnprocessableError(
-                    "Las capturas no corresponden a la misma persona. Inténtalo de nuevo", code="LIVENESS_MISMATCH"
-                )
+        failure = liveness_failure(pipeline, challenge, challenge_image, analyses)
+        if failure is not None:
+            # Mismo código que la identificación; el texto es el del registro (catalog.face_errors).
+            error = failure.capture_error
+            code, details = (error.code, error.details) if error else (failure.reason, None)
+            raise UnprocessableError(get_catalogs().face_error_message(code, details), code=failure.reason)
 
         # Reemplaza cualquier registro previo (rechazado) del empleado.
         face_service.delete_all(employee.id)
@@ -119,7 +107,7 @@ class EnrollmentService:
                 quality_score=min(a.quality_score for a in analyses),
                 samples=len(analyses),
                 liveness_passed=challenge is not None,
-                flagged_accessories=",".join(flagged) or None,
+                flags=[FaceEnrollmentFlag(flag_code=flag) for flag in flags],
             )
         )
         # Inactivos hasta que COMPANY valide la identidad.
@@ -200,7 +188,7 @@ class EnrollmentService:
             samples=e.samples,
             quality_score=e.quality_score,
             liveness_passed=e.liveness_passed,
-            flagged_accessories=(e.flagged_accessories or "").split(",") if e.flagged_accessories else [],
+            flagged_accessories=e.flag_codes,
             submitted_at=e.submitted_at,
             reviewed_at=e.reviewed_at,
             reviewed_by=reviewer.email if reviewer else None,

@@ -1,8 +1,8 @@
 from datetime import datetime
-from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.facial_recognition.pose import TurnDirection
 from app.models.enums import VerificationMethod
 
 
@@ -15,7 +15,7 @@ class FaceChallengeResponse(BaseModel):
 
     liveness_required: bool
     challenge_id: str | None = None
-    action: Literal["TURN_LEFT", "TURN_RIGHT"] | None = None
+    action: TurnDirection | None = None
     instruction: str | None = None
     #: Giro mínimo esperado (ratio nariz/ojos) para guiar al usuario en el cliente.
     min_yaw_ratio: float | None = None

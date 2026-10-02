@@ -4,14 +4,17 @@ from sqlalchemy import inspect
 
 import app.models  # noqa: F401  (registra todas las tablas)
 from app.core.database import Base, engine
-from app.core.db_schemas import ALL_SCHEMAS, ATTENDANCE, AUTH, BIOMETRICS, TENANCY, WORKFORCE
+from app.core.db_schemas import ALL_SCHEMAS, ATTENDANCE, AUTH, BIOMETRICS, CATALOG, TENANCY, WORKFORCE
+from app.models.catalog_seed import load_catalog_seed
 
 EXPECTED = {
     AUTH: {"users", "auth_sessions", "remembered_accounts", "rate_limit_counters"},
     TENANCY: {"companies", "verification_policy"},
     WORKFORCE: {"employees", "employee_qr_codes", "validators"},
-    BIOMETRICS: {"face_enrollments", "face_embeddings", "face_challenges"},
+    BIOMETRICS: {"face_enrollments", "face_enrollment_flags", "face_embeddings", "face_challenges"},
     ATTENDANCE: {"verification_logs"},
+    # Cada tabla del catálogo tiene sus registros en alembic/seed/catalogs.json (y viceversa).
+    CATALOG: set(load_catalog_seed()),
 }
 
 

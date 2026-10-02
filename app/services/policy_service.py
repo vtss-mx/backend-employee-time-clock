@@ -16,10 +16,11 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.devices import classify_device
-from app.core.exceptions import PermissionDeniedError
+from app.core.exceptions import PermissionDeniedError, UnprocessableError
 from app.facial_recognition import FacePolicy
 from app.models import Employee, User, UserRole, VerificationPolicy
 from app.schemas.policy import VerificationPolicyRead, VerificationPolicyUpdate
+from app.services.catalog_service import get_catalogs
 
 TOUCH_ONLY_MESSAGE = (
     "Por políticas de tu empresa, la validación de identidad solo está disponible desde una tableta o "
@@ -130,7 +131,17 @@ class PolicyService:
 
     def update(self, data: VerificationPolicyUpdate, user: User) -> VerificationPolicyRead:
         row = self._row()
-        for field, value in data.model_dump(exclude_unset=True, exclude_none=True).items():
+        changes = data.model_dump(exclude_unset=True, exclude_none=True)
+        if "min_confidence" in changes:
+            level = get_catalogs(self.db).confidence_level(changes["min_confidence"])
+            if level is None:
+                raise UnprocessableError(
+                    "Elige uno de los niveles de confianza disponibles",
+                    code="INVALID_CONFIDENCE_LEVEL",
+                    field="min_confidence",
+                )
+            changes["min_confidence"] = level["value"]
+        for field, value in changes.items():
             setattr(row, field, value)
         row.updated_by_id = user.id
         self.db.commit()
