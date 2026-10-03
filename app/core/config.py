@@ -10,6 +10,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Literal
 from urllib.parse import quote
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from cryptography.fernet import Fernet
 from pydantic import Field, field_validator, model_validator
@@ -31,7 +32,9 @@ class Settings(BaseSettings):
     DOCS_ENABLED: bool = True
     API_PREFIX: str = "/api"
     LOG_LEVEL: str = "INFO"
-    # Zona horaria del negocio (fechas como "hoy" para validar la edad mínima).
+    # Zona horaria del negocio: hora del Centro de México (UTC−6, sin horario de verano desde 2022).
+    # En ella se cuentan los días ("hoy", edad mínima) y la webapp muestra todas las fechas y horas,
+    # sin importar la zona del servidor ni la del dispositivo.
     APP_TIMEZONE: str = "America/Mexico_City"
 
     # --- Base de datos ---
@@ -220,8 +223,13 @@ class Settings(BaseSettings):
     MAX_IMAGE_DIMENSION: int = Field(default=4096, ge=640)
     MIN_IMAGE_DIMENSION: int = Field(default=160, ge=64)
 
-    # --- QR ---
-    QR_TOKEN_EXPIRE_DAYS: int = Field(default=365, ge=0)  # 0 = sin vencimiento
+    # --- QR dinámico (un solo uso; su vigencia la decide cada empresa: qr_lifetime_seconds) ---
+    # QR + rostro: segundos para confirmar el rostro tras escanear el QR (el QR ya quedó usado).
+    QR_FACE_WINDOW_SECONDS: int = Field(default=120, ge=30, le=600)
+    # Los QR vencidos se depuran tras estos días (un QR depurado tampoco se acepta: no existe).
+    QR_TOKEN_RETENTION_DAYS: int = Field(default=30, ge=1)
+    # Códigos nuevos por empleado y minuto (rotación automática + "Generar otro").
+    RATE_LIMIT_QR_PER_MINUTE: int = Field(default=30, ge=1)
 
     # --- Ubicación de los validadores (inicio de sesión solo dentro del radio permitido) ---
     # Precisión mínima exigida al GPS del dispositivo (m): con una lectura más imprecisa no se puede
@@ -258,6 +266,17 @@ class Settings(BaseSettings):
     # Administrador de la primera empresa.
     FIRST_COMPANY_EMAIL: str | None = None
     FIRST_COMPANY_PASSWORD: str | None = None
+
+    @field_validator("APP_TIMEZONE")
+    @classmethod
+    def _known_timezone(cls, value: str) -> str:
+        """Una zona IANA que exista (p. ej. America/Mexico_City): un error de escritura no debe
+        cambiar en silencio la hora del negocio."""
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ValueError(f"APP_TIMEZONE desconocida: {value}") from exc
+        return value
 
     @field_validator("FACE_BLOCKED_CAMERAS", mode="before")
     @classmethod

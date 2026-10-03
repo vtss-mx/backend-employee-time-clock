@@ -93,6 +93,10 @@ class CompanyAdminRead(BaseModel):
     created_at: datetime
 
 
+class CompanyAdminList(Page[CompanyAdminRead]):
+    """Página de administradores de una empresa."""
+
+
 class CompanyRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -110,7 +114,8 @@ class CompanyRead(BaseModel):
 
 
 class CompanyDetail(CompanyRead):
-    admins: list[CompanyAdminRead]
+    """Detalle de una empresa. Sus administradores se piden aparte, paginados (`GET .../admins`):
+    el detalle nunca carga una lista sin límite."""
 
 
 class CompanyList(Page[CompanyRead]):

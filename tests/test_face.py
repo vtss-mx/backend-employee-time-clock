@@ -19,7 +19,6 @@ def _verify(client, headers, *, frontal=(b"face:juan", b"face:juan"), turn_perso
 def test_company_creates_employee_without_face(client, company_headers):
     body = create_employee(client, company_headers).json()["data"]
     assert body["face_status"] == "NOT_ENROLLED" and body["has_face"] is False
-    assert body["has_active_qr"] is True
 
 
 def test_full_enrollment_review_flow(client, company_headers):
@@ -35,10 +34,9 @@ def test_full_enrollment_review_flow(client, company_headers):
     assert submitted.json()["data"]["face_status"] == "PENDING_REVIEW"
     assert submit_enrollment(client, headers).json()["code"] == "ENROLLMENT_PENDING"
 
-    # Pendiente: sigue sin poder verificarse (ni por rostro ni por QR).
+    # Pendiente: sigue sin poder verificarse ni generar su QR.
     assert _verify(client, headers).status_code == 403
-    qr = client.post("/api/verification/qr", json={"qr_content": "TCQR1:x"}, headers=headers)
-    assert qr.status_code == 403
+    assert client.post("/api/users/me/qr", headers=headers).status_code == 403
 
     pending = client.get("/api/enrollments", headers=company_headers).json()["data"]
     assert pending["total"] == 1
@@ -156,28 +154,25 @@ def test_liveness_wrong_direction_swapped_face_and_replay(client, company_header
     assert replay.json()["code"] == "CHALLENGE_INVALID"
 
 
-def test_employee_sees_own_qr_only_after_approval(client, company_headers):
+def test_employee_generates_dynamic_qr_only_after_approval(client, company_headers):
     from tests.conftest import create_employee, login, submit_enrollment
 
     assert create_employee(client, company_headers).status_code == 201
     headers = login(client, "juan@empresa.com", "Empleado123")
-    denied = client.get("/api/users/me/qr", headers=headers)
+    denied = client.post("/api/users/me/qr", headers=headers)
     assert denied.status_code == 403 and denied.json()["code"] == "FACE_NOT_APPROVED"
 
     enrollment_id = submit_enrollment(client, headers).json()["data"]["enrollment_id"]
-    assert client.get("/api/users/me/qr", headers=headers).status_code == 403  # en validación
+    assert client.post("/api/users/me/qr", headers=headers).status_code == 403  # en validación
     client.post(f"/api/enrollments/{enrollment_id}/approve", headers=company_headers)
 
-    response = client.get("/api/users/me/qr", headers=headers)
-    assert response.status_code == 200 and response.json()["code"] == "MY_QR"
+    response = client.post("/api/users/me/qr", headers=headers)
+    assert response.status_code == 201 and response.json()["code"] == "MY_QR"
     qr = response.json()["data"]
     assert qr["image_base64"].startswith("data:image/png;base64,") and qr["employee_number"] == "EMP-001"
-    # COMPANY no usa este endpoint (tiene /api/employees/{id}/qr).
-    assert client.get("/api/users/me/qr", headers=company_headers).status_code == 403
-    # Si COMPANY revoca el QR, el empleado recibe 404 con el contrato.
-    client.delete(f"/api/employees/{qr['employee_id']}/qr", headers=company_headers)
-    gone = client.get("/api/users/me/qr", headers=headers)
-    assert gone.status_code == 404 and gone.json()["code"] == "QR_NOT_FOUND"
+    assert qr["lifetime_seconds"] == 30 and "content" not in qr  # el token solo viaja en la imagen
+    # COMPANY no genera QR de empleados (ni los ve: son del teléfono del empleado).
+    assert client.post("/api/users/me/qr", headers=company_headers).status_code == 403
 
 
 # ---------------- Consenso de accesorios (robustez ante falsos positivos) ----------------

@@ -49,7 +49,7 @@ def test_every_endpoint_returns_the_envelope(client, company_headers):
         ("get", f"/api/employees/{emp_id}/verifications", company_headers, 200),
         ("get", "/api/enrollments?status=APPROVED", company_headers, 200),
         ("post", "/api/face/challenge", headers, 200),
-        ("post", f"/api/employees/{emp_id}/qr/regenerate", company_headers, 200),
+        ("post", "/api/users/me/qr", headers, 201),
         ("patch", f"/api/employees/{emp_id}/status", company_headers, 200),
         ("delete", f"/api/employees/{other['data']['id']}/qr", company_headers, 200),
         ("delete", f"/api/employees/{other['data']['id']}", company_headers, 200),

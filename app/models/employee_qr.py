@@ -5,7 +5,7 @@ from sqlalchemy import Boolean, DateTime, ForeignKey, Index, LargeBinary, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
-from app.core.db_schemas import WORKFORCE
+from app.core.db_schemas import AUTH, WORKFORCE
 from app.models.mixins import TimestampMixin
 
 if TYPE_CHECKING:
@@ -13,12 +13,18 @@ if TYPE_CHECKING:
 
 
 class EmployeeQr(TimestampMixin, Base):
-    """Código QR de identificación de un empleado.
+    """Código QR DINÁMICO de un empleado: vive unos segundos y sirve UNA sola vez.
 
-    - `token_hash`: SHA-256 del token aleatorio; se usa para buscar el QR al verificar.
-    - `token_encrypted`: token cifrado (Fernet) solo para que COMPANY pueda volver a
-      mostrar/descargar la imagen. Nunca se guarda el token en texto plano.
-    - Solo un QR activo por empleado; regenerar desactiva el anterior.
+    El empleado lo muestra en su teléfono; se renueva solo (cada `qr_lifetime_seconds` de la
+    política de su empresa) o cuando lo pide, y al usarse queda consumido para siempre.
+
+    - `token_hash`: SHA-256 del token aleatorio; el token nunca se guarda (ni cifrado).
+    - `active`: el QR vigente del empleado (uno a la vez; emitir otro o usarlo lo apaga).
+    - `used_at` / `used_by_id`: cuándo y quién lo escaneó (el validador). Se marca en una sola
+      sentencia atómica: dos lecturas simultáneas del mismo QR no pueden ganar ambas.
+    - `completed_at`: el uso terminó. Con QR basta el escaneo; con QR + rostro, el escaneo aparta el
+      QR para ese validador y se completa al comparar el rostro (o vence a QR_FACE_WINDOW_SECONDS).
+    - `token_encrypted`: solo los QR fijos anteriores (ya no válidos); los dinámicos no lo guardan.
     """
 
     __tablename__ = "employee_qr_codes"
@@ -32,6 +38,13 @@ class EmployeeQr(TimestampMixin, Base):
             postgresql_where=text("active IS TRUE"),
             sqlite_where=text("active = 1"),
         ),
+        # FK con ON DELETE SET NULL (quién lo usó): evita recorrer la tabla al borrar un usuario.
+        Index(
+            "ix_employee_qr_codes_used_by_id",
+            "used_by_id",
+            postgresql_where=text("used_by_id IS NOT NULL"),
+            sqlite_where=text("used_by_id IS NOT NULL"),
+        ),
         {"schema": WORKFORCE},
     )
 
@@ -40,9 +53,13 @@ class EmployeeQr(TimestampMixin, Base):
         ForeignKey(f"{WORKFORCE}.employees.id", ondelete="CASCADE"), index=True, nullable=False
     )
     token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
-    token_encrypted: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    token_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary)
     active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    #: Vencimiento (se depuran los vencidos tras QR_TOKEN_RETENTION_DAYS).
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    used_by_id: Mapped[int | None] = mapped_column(ForeignKey(f"{AUTH}.users.id", ondelete="SET NULL"))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     employee: Mapped["Employee"] = relationship(back_populates="qr_codes")

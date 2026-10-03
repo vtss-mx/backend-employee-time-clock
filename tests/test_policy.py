@@ -52,7 +52,7 @@ def test_company_can_disable_liveness_and_qr(client, company_headers):
     files = [("images", ("f.jpg", b"face:juan", "image/jpeg"))]
     assert client.post("/api/verification/face", files=files, headers=headers).json()["data"]["verified"] is True
 
-    qr = client.post("/api/verification/qr", json={"qr_content": "TCQR1:x"}, headers=headers)
+    qr = client.post("/api/users/me/qr", headers=headers)
     assert qr.status_code == 403 and qr.json()["code"] == "QR_DISABLED"
 
 

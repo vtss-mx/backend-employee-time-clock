@@ -46,7 +46,9 @@ def test_create_company_with_its_first_admin(client, admin_headers):
     assert created.status_code == 201
     company = created.json()["data"]
     assert company["rfc"] == "PNO120315AB1" and company["active"] is True and company["max_employees"] == 50
-    assert [a["email"] for a in company["admins"]] == ["admin@panificadora.com"]
+    assert "admins" not in company  # se piden paginados
+    admins = client.get(f"{URL}/{company['id']}/admins", headers=admin_headers).json()["data"]["items"]
+    assert [a["email"] for a in admins] == ["admin@panificadora.com"]
     assert company["admin_count"] == 1 and company["employee_count"] == 0
 
     # Un solo correo: el de la empresa es el de sus administradores (no hay correo de contacto aparte).
@@ -194,7 +196,7 @@ def test_deactivating_a_company_cuts_access_immediately(client, admin_headers, c
 def test_company_admins_management(client, admin_headers, second_company):
     company, first_admin = second_company
     url = f"{URL}/{company['id']}/admins"
-    only = company["admins"][0]["id"]
+    only = client.get(url, headers=admin_headers).json()["data"]["items"][0]["id"]
     last = client.patch(f"{url}/{only}/status", json={"active": False}, headers=admin_headers)
     assert last.status_code == 409 and last.json()["code"] == "LAST_COMPANY_ADMIN"
 
@@ -219,8 +221,13 @@ def test_company_admins_management(client, admin_headers, second_company):
 
 def test_platform_admin_resets_a_company_admin_password(client, admin_headers, second_company):
     company, admin_session = second_company
-    admin_id = company["admins"][0]["id"]
-    url = f"{URL}/{company['id']}/admins/{admin_id}/password"
+    admins_url = f"{URL}/{company['id']}/admins"
+    admin_id = client.get(admins_url, headers=admin_headers).json()["data"]["items"][0]["id"]
+    url = f"{admins_url}/{admin_id}/password"
+    found = client.get(f"{admins_url}/{admin_id}", headers=admin_headers)
+    assert found.status_code == 200 and found.json()["data"]["email"] == "admin@panificadora.com"
+    assert client.get(f"{admins_url}/1", headers=admin_headers).status_code == 404  # de otra empresa
+    assert client.get(f"{admins_url}/{admin_id}", headers=admin_session).status_code == 403
 
     weak = client.put(url, json={"admin_password": "corta"}, headers=admin_headers)
     assert weak.status_code == 422 and weak.json()["errors"][0]["field"] == "admin_password"

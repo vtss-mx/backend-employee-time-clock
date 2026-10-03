@@ -2,13 +2,14 @@
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 
 from app.core.responses import ApiResponse, ok
 from app.dependencies import (
     CameraLabel,
     ChallengeImages,
     DbSession,
+    Pagination,
     Pipeline,
     ValidatorUser,
     checkpoint_rate_limit,
@@ -18,7 +19,7 @@ from app.dependencies import (
     require_screen,
 )
 from app.models import Screen
-from app.schemas.checkpoint import CheckpointEmployee, CheckpointEvent, CheckpointProfile, CheckpointQrRequest
+from app.schemas.checkpoint import CheckpointEmployee, CheckpointEventList, CheckpointProfile, CheckpointQrRequest
 from app.schemas.common import ErrorResponse
 from app.schemas.verification import VerificationResult
 from app.services.checkpoint_service import CheckpointService
@@ -57,13 +58,11 @@ def checkpoint_profile(checkpoint: Checkpoint) -> ApiResponse[CheckpointProfile]
 
 @router.get(
     "/recent",
-    response_model=ApiResponse[list[CheckpointEvent]],
-    summary="Últimas identificaciones de este validador",
+    response_model=ApiResponse[CheckpointEventList],
+    summary="Identificaciones de este validador (paginadas, la más reciente primero)",
 )
-def checkpoint_recent(
-    checkpoint: Checkpoint, limit: Annotated[int, Query(ge=1, le=50)] = 10
-) -> ApiResponse[list[CheckpointEvent]]:
-    return ok(checkpoint.recent(limit), "Identificaciones recientes", code="CHECKPOINT_RECENT")
+def checkpoint_recent(checkpoint: Checkpoint, page: Pagination) -> ApiResponse[CheckpointEventList]:
+    return ok(checkpoint.recent(page), "Identificaciones recientes", code="CHECKPOINT_RECENT")
 
 
 @router.post(

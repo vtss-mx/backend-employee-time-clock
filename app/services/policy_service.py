@@ -60,6 +60,7 @@ class PolicySnapshot:
     lockout_max_failures: int = 5
     lockout_minutes: int = 15
     validator_device_approval: bool = True
+    qr_lifetime_seconds: int = 30
     #: Del nivel de anti-spoofing (catálogo): umbral y si basta una captura sospechosa.
     antispoof_threshold: float = field(default=0.05, compare=False)
     antispoof_any_frame: bool = field(default=False, compare=False)

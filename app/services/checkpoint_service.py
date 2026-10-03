@@ -17,9 +17,11 @@ from app.core.config import settings
 from app.core.exceptions import ConflictError, PermissionDeniedError, UnprocessableError
 from app.facial_recognition import Accessory, FaceAnalysis, FacePipeline
 from app.models import Employee, User, VerificationLog, VerificationMethod
+from app.repositories.aggregates import paginate
 from app.repositories.employee_repository import EmployeeRepository
 from app.repositories.face_repository import FaceEmbeddingRepository
-from app.schemas.checkpoint import CheckpointEmployee, CheckpointEvent, CheckpointProfile
+from app.schemas.checkpoint import CheckpointEmployee, CheckpointEvent, CheckpointEventList, CheckpointProfile
+from app.schemas.common import PageParams
 from app.schemas.user import UserCompanyInfo
 from app.schemas.verification import FaceChallengeResponse, VerificationResult
 from app.services.attempt_guard import ensure_unlocked
@@ -81,28 +83,35 @@ class CheckpointService:
             qr_enabled=self.policy.qr_enabled,
         )
 
-    def recent(self, limit: int) -> list[CheckpointEvent]:
-        """Últimas identificaciones de este validador (las más recientes primero)."""
-        rows = self.db.execute(
-            select(VerificationLog, Employee)
-            .outerjoin(Employee, VerificationLog.employee_id == Employee.id)
-            .where(VerificationLog.user_id == self.user.id)
-            .order_by(VerificationLog.created_at.desc(), VerificationLog.id.desc())
-            .limit(limit)
-        ).all()
-        return [
-            CheckpointEvent(
-                id=log.id,
-                created_at=log.created_at,
-                method=log.method,
-                success=log.success,
-                reason=log.reason,
-                confidence=log.score if log.method != VerificationMethod.QR else None,
-                employee_name=employee.full_name if employee and log.success else None,
-                employee_number=employee.employee_number if employee and log.success else None,
-            )
-            for log, employee in rows
-        ]
+    def recent(self, page: PageParams) -> CheckpointEventList:
+        """Identificaciones de este validador, paginadas (las más recientes primero)."""
+        logs, total = paginate(
+            self.db,
+            select(VerificationLog).where(VerificationLog.user_id == self.user.id),
+            (VerificationLog.created_at.desc(), VerificationLog.id.desc()),
+            offset=page.offset,
+            limit=page.size,
+        )
+        ids = {log.employee_id for log in logs if log.employee_id is not None}
+        people = {e.id: e for e in self.db.scalars(select(Employee).where(Employee.id.in_(ids)))} if ids else {}
+        rows = [(log, people.get(log.employee_id) if log.employee_id else None) for log in logs]
+        return CheckpointEventList.of(
+            [
+                CheckpointEvent(
+                    id=log.id,
+                    created_at=log.created_at,
+                    method=log.method,
+                    success=log.success,
+                    reason=log.reason,
+                    confidence=log.score if log.method != VerificationMethod.QR else None,
+                    employee_name=employee.full_name if employee and log.success else None,
+                    employee_number=employee.employee_number if employee and log.success else None,
+                )
+                for log, employee in rows
+            ],
+            total,
+            page,
+        )
 
     # ---------- Identificación ----------
 
@@ -112,12 +121,14 @@ class CheckpointService:
         return issue_challenge(self.db, self.user.id, self.policy)
 
     def inspect_qr(self, qr_content: str) -> CheckpointEmployee:
-        """Paso 1 del modo QR_AND_FACE: de quién es el QR (no se registra: el rostro decide)."""
+        """Paso 1 del modo QR_AND_FACE: de quién es el QR. El QR queda usado (apartado para este
+        validador) y el rostro lo completa; no se registra en la bitácora: el rostro decide."""
         if not self._allows(VerificationMethod.QR_FACE):
             self._deny()
-        employee, reason = self._employee_from_qr(qr_content)
+        employee, reason = self._employee_from_qr(qr_content, hold=True)
         if employee is None:
             raise UnprocessableError(reason_message(reason), code=f"QR_{reason}")
+        self.db.commit()  # el QR queda apartado: ya no sirve en ningún otro validador
         return CheckpointEmployee(
             employee_id=employee.id, name=employee.full_name, employee_number=employee.employee_number
         )
@@ -203,7 +214,9 @@ class CheckpointService:
         self, pipeline: FacePipeline, qr_content: str, frontal: list[FaceAnalysis], headwear: bool
     ) -> VerificationResult:
         method = VerificationMethod.QR_FACE
-        employee, reason = self._employee_from_qr(qr_content)
+        PolicyService(self.db, self.company_id).ensure_qr_enabled()
+        use = QrService(self.db).complete_hold(qr_content, company_id=self.company_id, actor_id=self.user.id)
+        employee, reason = use.employee, use.reason
         if employee is None:
             self._record(None, method, False, None, reason)
             return failed(method, reason_message(reason))
@@ -259,18 +272,12 @@ class CheckpointService:
             if employee is not None:
                 verification.migrate_references(employee, face_service)
 
-    def _employee_from_qr(self, qr_content: str) -> tuple[Employee | None, str | None]:
-        """Empleado activo de ESTA empresa dueño del QR, o el motivo del rechazo."""
+    def _employee_from_qr(self, qr_content: str, *, hold: bool = False) -> tuple[Employee | None, str | None]:
+        """Empleado activo de ESTA empresa dueño del QR (que queda usado para siempre), o el motivo
+        del rechazo."""
         PolicyService(self.db, self.company_id).ensure_qr_enabled()
-        lookup = QrService(self.db).lookup(qr_content)
-        if lookup.reason is not None or lookup.qr is None:
-            return None, lookup.reason or "NOT_FOUND"
-        employee = lookup.qr.employee
-        if employee.company_id != self.company_id:
-            return None, "OTHER_COMPANY"  # se informa como "QR no reconocido"
-        if not employee.active:
-            return None, "EMPLOYEE_INACTIVE"
-        return employee, None
+        use = QrService(self.db).use(qr_content, company_id=self.company_id, actor_id=self.user.id, hold=hold)
+        return use.employee, use.reason
 
     def _allows(self, method: VerificationMethod) -> bool:
         # Métodos permitidos por modo: catalog.validator_mode_methods.

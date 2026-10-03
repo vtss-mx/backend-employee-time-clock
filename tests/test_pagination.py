@@ -3,10 +3,9 @@ máximo de 50 (lo que ofrece el paginador de la webapp)."""
 
 import pytest
 
-from tests.conftest import approved_employee
-from tests.test_api import _qr_content
+from tests.conftest import approved_employee, create_company, qr_content
 from tests.test_validators import URL as VALIDATORS
-from tests.test_validators import create_validator
+from tests.test_validators import create_validator, validator_headers
 
 COMPANY_LISTS = ["/api/employees", "/api/validators", "/api/enrollments"]
 
@@ -44,9 +43,10 @@ def test_validators_are_paginated_by_name(client, company_headers):
 def test_verification_history_is_paginated_newest_first(client, company_headers):
     headers = approved_employee(client, company_headers)
     employee_id = client.get("/api/users/me", headers=headers).json()["data"]["employee"]["id"]
-    content = _qr_content(employee_id)
-    for _ in range(3):
-        assert client.post("/api/verification/qr", json={"qr_content": content}, headers=headers).status_code == 200
+    checkpoint = validator_headers(client, company_headers, mode="QR")
+    for _ in range(3):  # cada identificación con un QR nuevo (un QR sirve una sola vez)
+        body = {"qr_content": qr_content(employee_id)}
+        assert client.post("/api/checkpoint/identify/qr", json=body, headers=checkpoint).status_code == 200
 
     url = f"/api/employees/{employee_id}/verifications"
     everything = client.get(url, params={"size": 50}, headers=company_headers).json()["data"]
@@ -58,3 +58,19 @@ def test_verification_history_is_paginated_newest_first(client, company_headers)
     second = client.get(url, params={"size": 2, "page": 2}, headers=company_headers).json()["data"]
     assert first["items"] + second["items"] == logs[:4]
     assert client.get("/api/employees/999999/verifications", headers=company_headers).status_code == 404
+
+
+def test_company_admins_are_paginated(client, admin_headers):
+    company = create_company(client, admin_headers).json()["data"]
+    url = f"/api/admin/companies/{company['id']}/admins"
+    for i in range(2):
+        added = client.post(
+            url, json={"admin_email": f"rh{i}@pan.com", "admin_password": "Recursos123"}, headers=admin_headers
+        )
+        assert added.status_code == 201, added.text
+    first = client.get(url, params={"size": 2}, headers=admin_headers).json()["data"]
+    assert first["total"] == 3 and [a["email"] for a in first["items"]] == ["admin@panificadora.com", "rh0@pan.com"]
+    second = client.get(url, params={"size": 2, "page": 2}, headers=admin_headers).json()["data"]
+    assert [a["email"] for a in second["items"]] == ["rh1@pan.com"]
+    assert client.get("/api/admin/companies/999999/admins", headers=admin_headers).status_code == 404
+    _check_limits(client, admin_headers, url)

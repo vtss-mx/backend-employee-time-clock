@@ -11,7 +11,6 @@ from app.models import Company, Employee, EnrollmentStatus, FaceStatus, SessionR
 from app.repositories.employee_repository import EmployeeRepository, UniqueDocument
 from app.repositories.enrollment_repository import FaceEnrollmentRepository
 from app.repositories.face_repository import FaceEmbeddingRepository
-from app.repositories.qr_repository import EmployeeQrRepository
 from app.repositories.user_repository import UserRepository
 from app.repositories.verification_repository import VerificationLogRepository
 from app.schemas.common import PageParams
@@ -23,7 +22,6 @@ from app.schemas.validators import (
 from app.schemas.verification import VerificationLogList, VerificationLogRead
 from app.services.availability_service import CURP_TAKEN, NSS_TAKEN, NUMBER_TAKEN, RFC_TAKEN
 from app.services.people_service import SHARED_ACCOUNT, PeopleService
-from app.services.qr_service import QrService
 from app.services.session_service import SessionService
 
 REVERIFY_DEFAULT_REASON = "Tu empresa solicitó que verifiques nuevamente tu identidad."
@@ -59,7 +57,6 @@ class EmployeeService:
         self.users = UserRepository(db)
         self.employees = EmployeeRepository(db, company_id)
         self.faces = FaceEmbeddingRepository(db)
-        self.qrs = EmployeeQrRepository(db)
         self.people = PeopleService(db, company_id)
 
     # ---------- Consultas ----------
@@ -74,17 +71,10 @@ class EmployeeService:
         items, total = self.employees.search(search=search, active=active, offset=page.offset, limit=page.size)
         ids = [e.id for e in items]
         face_counts = self.faces.count_active_by_employee(ids)
-        with_qr = self.qrs.employees_with_active_qr(ids)
-        return EmployeeList.of(
-            [self._to_read(e, face_counts.get(e.id, 0), e.id in with_qr) for e in items], total, page
-        )
+        return EmployeeList.of([self._to_read(e, face_counts.get(e.id, 0)) for e in items], total, page)
 
     def read(self, employee: Employee) -> EmployeeRead:
-        data = self._to_read(
-            employee,
-            self.faces.count_active(employee.id),
-            self.qrs.get_active_for_employee(employee.id) is not None,
-        )
+        data = self._to_read(employee, self.faces.count_active(employee.id))
         latest = FaceEnrollmentRepository(self.db, self.company_id).latest_for_employee(employee.id)
         data.latest_enrollment_id = latest.id if latest else None
         return data
@@ -130,7 +120,6 @@ class EmployeeService:
                     active=True,
                 )
             )
-            QrService(self.db).issue(employee)  # QR generado automáticamente
             self.db.commit()
         except IntegrityError as exc:
             self.db.rollback()
@@ -279,7 +268,7 @@ class EmployeeService:
             raise UnprocessableError(curp_error, code="CURP_BIRTH_DATE_MISMATCH", field="curp")
 
     @staticmethod
-    def _to_read(employee: Employee, face_count: int, has_qr: bool) -> EmployeeRead:
+    def _to_read(employee: Employee, face_count: int) -> EmployeeRead:
         return EmployeeRead(
             id=employee.id,
             user_id=employee.user_id,
@@ -300,7 +289,6 @@ class EmployeeService:
             face_rejection_reason=employee.face_rejection_reason,
             has_face=face_count > 0,
             face_samples=face_count,
-            has_active_qr=has_qr,
             created_at=employee.created_at,
             updated_at=employee.updated_at,
         )

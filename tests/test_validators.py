@@ -6,8 +6,7 @@ import pytest
 from app.core.database import SessionLocal
 from app.models import VerificationLog
 from app.services.face_gallery import face_galleries
-from tests.conftest import DESKTOP_UA, create_company, create_employee, login, submit_enrollment, turn_files
-from tests.test_api import _qr_content
+from tests.conftest import DESKTOP_UA, create_company, create_employee, login, qr_content, submit_enrollment, turn_files
 from tests.test_policy import set_policy
 
 URL = "/api/validators"
@@ -133,21 +132,25 @@ def test_validators_only_from_tablets_or_phones(client, company_headers):
 def test_identify_by_qr(client, company_headers, admin_headers):
     juan = create_employee(client, company_headers).json()["data"]
     headers = validator_headers(client, company_headers, mode="QR")
-    ok = client.post("/api/checkpoint/identify/qr", json={"qr_content": _qr_content(juan["id"])}, headers=headers)
+    content = qr_content(juan["id"])
+    ok = client.post("/api/checkpoint/identify/qr", json={"qr_content": content}, headers=headers)
     body = ok.json()
     assert body["code"] == "EMPLOYEE_IDENTIFIED" and body["data"]["name"] == "Juan Pérez"
+    # Un solo uso: el mismo QR ya no vuelve a servir.
+    again = client.post("/api/checkpoint/identify/qr", json={"qr_content": content}, headers=headers).json()["data"]
+    assert again["verified"] is False and "ya se usó" in again["message"]
 
     # QR de otra empresa: "no reconocido" (no revela que existe en otra empresa).
     create_company(client, admin_headers)
     other = login(client, "admin@panificadora.com", "Empresa1234")
     stranger = create_employee(client, other, number="PAN-1", email="ana@pan.com", phone="+52 662 765 4321")
     foreign = client.post(
-        "/api/checkpoint/identify/qr", json={"qr_content": _qr_content(stranger.json()["data"]["id"])}, headers=headers
+        "/api/checkpoint/identify/qr", json={"qr_content": qr_content(stranger.json()["data"]["id"])}, headers=headers
     )
     assert foreign.json()["data"] == {**foreign.json()["data"], "verified": False, "message": "QR no reconocido"}
 
     client.patch(f"/api/employees/{juan['id']}/status", json={"active": False}, headers=company_headers)
-    inactive = client.post("/api/checkpoint/identify/qr", json={"qr_content": _qr_content(juan["id"])}, headers=headers)
+    inactive = client.post("/api/checkpoint/identify/qr", json={"qr_content": qr_content(juan["id"])}, headers=headers)
     assert inactive.json()["data"]["message"] == "El empleado está desactivado"
 
     # Modo QR: el rostro no está permitido (ni el reto de prueba de vida ni la identificación).
@@ -182,8 +185,12 @@ def test_identify_by_face_among_all_employees(client, company_headers):
         mine = [log for log in logs if log.method.value == "FACE" and log.employee_id in (ana["id"], None)]
         assert {log.reason for log in mine} >= {None, "NO_MATCH", "LIVENESS_MISMATCH"}
 
-    recent = client.get("/api/checkpoint/recent", headers=headers).json()["data"]
+    page = client.get("/api/checkpoint/recent", headers=headers).json()["data"]
+    recent = page["items"]
+    assert page["total"] == 3 and (page["page"], page["size"]) == (1, 10)
     assert [event["success"] for event in recent] == [False, False, True]  # los más recientes primero
+    second = client.get("/api/checkpoint/recent", params={"size": 2, "page": 2}, headers=headers).json()["data"]
+    assert [event["id"] for event in second["items"]] == [recent[2]["id"]]
     assert recent[2]["employee_number"] == "EMP-002" and recent[0]["employee_name"] is None
     listed = client.get(URL, headers=company_headers).json()["data"]["items"][0]
     assert listed["identifications_today"] == 1
@@ -219,16 +226,24 @@ def test_identify_with_qr_and_face(client, company_headers):
     juan = approved(client, company_headers, "juan", number="EMP-001")
     ana = approved(client, company_headers, "ana", number="EMP-002")
     headers = validator_headers(client, company_headers, mode="QR_AND_FACE")
-    qr = _qr_content(ana["id"])
+    qr = qr_content(ana["id"])
 
     holder = client.post("/api/checkpoint/qr/inspect", json={"qr_content": qr}, headers=headers)
     assert holder.json()["data"]["name"] == ana["full_name"]
+    # Escanearlo lo usó: ni otra lectura ni otro validador pueden aprovecharlo.
+    again = client.post("/api/checkpoint/qr/inspect", json={"qr_content": qr}, headers=headers)
+    assert again.status_code == 422 and again.json()["code"] == "QR_ALREADY_USED"
     assert client.post("/api/checkpoint/identify/qr", json={"qr_content": qr}, headers=headers).status_code == 409
     assert identify_face(client, headers, "ana").json()["code"] == "QR_REQUIRED"  # sin QR no basta el rostro
 
     both = identify_face(client, headers, "ana", qr=qr).json()["data"]
     assert both["verified"] is True and both["method"] == "QR_FACE"
-    impostor = identify_face(client, headers, "juan", qr=qr).json()["data"]  # QR de ana, rostro de juan
+    reused = identify_face(client, headers, "ana", qr=qr).json()["data"]  # el rostro lo cerró: no se repite
+    assert reused["verified"] is False and "ya se usó" in reused["message"]
+
+    impostor_qr = qr_content(ana["id"])
+    client.post("/api/checkpoint/qr/inspect", json={"qr_content": impostor_qr}, headers=headers)
+    impostor = identify_face(client, headers, "juan", qr=impostor_qr).json()["data"]  # QR de ana, rostro de juan
     assert impostor["verified"] is False and "dueño del código QR" in impostor["message"]
     assert juan["id"] != ana["id"]
 

@@ -27,7 +27,6 @@ from app.services.catalog_service import get_catalogs
 from app.services.face_service import FaceService, SuspiciousCapture
 from app.services.identity_core import (
     FACE_SUCCESS,
-    QR_SUCCESS,
     IdentityLog,
     check_liveness,
     ensure_frame_count,
@@ -41,7 +40,6 @@ from app.services.identity_core import (
 )
 from app.services.liveness_service import challenge_store
 from app.services.policy_service import PolicyService
-from app.services.qr_service import QrService
 
 logger = logging.getLogger(__name__)
 
@@ -181,23 +179,6 @@ class VerificationService:
         if enrollment is None or enrollment.status != EnrollmentStatus.APPROVED or enrollment.photo_encrypted is None:
             return []
         return face_service.migrate_from_photo(employee.id, enrollment.id, decrypt_bytes(enrollment.photo_encrypted))
-
-    def verify_qr(self, user: User, qr_content: str) -> VerificationResult:
-        employee = self._employee_of(user)
-        PolicyService(self.db, employee.company_id).ensure_qr_enabled()
-        lookup = QrService(self.db).lookup(qr_content)
-
-        reason = lookup.reason
-        # El QR debe pertenecer a la cuenta autenticada.
-        if reason is None and lookup.qr is not None and lookup.qr.employee_id != employee.id:
-            reason = "OTHER_EMPLOYEE"
-
-        if reason is not None:
-            self._record(employee, user, VerificationMethod.QR, False, None, reason)
-            return failed(VerificationMethod.QR, reason_message(reason))
-
-        self._record(employee, user, VerificationMethod.QR, True, None, None)
-        return succeeded(employee, VerificationMethod.QR, QR_SUCCESS, confidence=None)
 
     # ---------- Internos ----------
 

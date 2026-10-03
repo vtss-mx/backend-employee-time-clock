@@ -96,9 +96,9 @@ def test_revoking_a_screen_in_the_database_hides_it_and_blocks_its_endpoints(cli
 
 def test_endpoints_of_a_screen_follow_its_grant(client, admin_headers, company_headers):
     approved = approved_employee(client, company_headers)
-    assert client.get("/api/users/me/qr", headers=approved).status_code == 200
+    assert client.post("/api/users/me/qr", headers=approved).status_code == 201
     _revoke("EMPLOYEE", Screen.EMPLOYEE_QR)
-    assert client.get("/api/users/me/qr", headers=approved).status_code == 403
+    assert client.post("/api/users/me/qr", headers=approved).status_code == 403
 
     _revoke("ADMIN", Screen.ADMIN_DASHBOARD)
     assert client.get("/api/admin/stats", headers=admin_headers).status_code == 403

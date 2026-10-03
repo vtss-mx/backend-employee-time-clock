@@ -195,8 +195,11 @@ def test_sessions_list_logout_all_and_revoke_one(client, monkeypatch):
     # Varias sesiones simultáneas solo si la empresa las permite (por defecto, una).
     monkeypatch.setattr(settings, "MAX_SESSIONS_PER_USER", 10)
     a, b = _login(client), _login(client)
-    sessions = client.get("/api/auth/sessions", headers=_bearer(b)).json()["data"]
-    assert len(sessions) == 2 and sum(s["current"] for s in sessions) == 1
+    page = client.get("/api/auth/sessions", headers=_bearer(b)).json()["data"]
+    sessions = page["items"]
+    assert page["total"] == 2 and len(sessions) == 2 and sum(s["current"] for s in sessions) == 1
+    one = client.get("/api/auth/sessions", params={"size": 1, "page": 2}, headers=_bearer(b)).json()["data"]
+    assert (one["total"], len(one["items"]), one["page"]) == (2, 1, 2)  # paginadas
 
     assert client.delete(f"/api/auth/sessions/{a.json()['data']['session_id']}", headers=_bearer(b)).status_code == 200
     assert client.get("/api/users/me", headers=_bearer(a)).status_code == 401

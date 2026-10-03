@@ -47,11 +47,12 @@ from app.facial_recognition import FaceAnalysis, FaceValidationError, TurnDirect
 from app.facial_recognition.pipeline import DEFAULT_POLICY, Accessory, FacePolicy, accessories_error  # noqa: E402
 from app.main import app  # noqa: E402
 from app.middleware.rate_limit import limiter  # noqa: E402
-from app.models import DeviceStatus, ValidatorDevice  # noqa: E402
+from app.models import DeviceStatus, Employee, ValidatorDevice  # noqa: E402
 from app.models.catalog_seed import create_schema  # noqa: E402
 from app.services.bootstrap import create_admin_user, create_company_user  # noqa: E402
 from app.services.catalog_service import clear_catalog_cache  # noqa: E402
 from app.services.policy_service import clear_policy_cache  # noqa: E402
+from app.services.qr_service import QrService  # noqa: E402
 
 COMPANY_EMAIL = "admin@empresa.com"
 COMPANY_PASSWORD = "Admin1234"
@@ -316,6 +317,16 @@ def submit_enrollment(client, headers, *, frontal=(b"face:juan", b"face:juan", b
     return client.post(
         "/api/enrollment/face", data={"challenge_id": challenge["challenge_id"]}, files=files, headers=headers
     )
+
+
+def qr_content(employee_id: int, lifetime_seconds: int = 30) -> str:
+    """Emite un QR dinámico del empleado (como su teléfono) y devuelve lo que lee el escáner."""
+    with SessionLocal() as db:
+        employee = db.get(Employee, employee_id)
+        assert employee is not None
+        _, content = QrService(db).issue(employee, lifetime_seconds)
+        db.commit()
+        return content
 
 
 def approved_employee(client, company_headers, **kwargs) -> dict[str, str]:

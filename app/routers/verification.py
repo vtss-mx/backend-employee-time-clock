@@ -1,4 +1,8 @@
-"""Verificación de identidad del EMPLOYEE autenticado. Métodos independientes."""
+"""Verificación de identidad del EMPLOYEE autenticado (con su rostro).
+
+El QR ya no se verifica aquí: es dinámico y vive en el teléfono del propio empleado, que lo
+muestra a un validador (punto de control) para identificarse.
+"""
 
 from typing import Annotated
 
@@ -19,7 +23,7 @@ from app.dependencies import (
 )
 from app.models import Screen
 from app.schemas.common import ErrorResponse
-from app.schemas.verification import QrVerificationRequest, VerificationResult
+from app.schemas.verification import VerificationResult
 from app.services.verification_service import VerificationService
 
 router = APIRouter(
@@ -66,14 +70,6 @@ def verify_face(
         user, frontal, pipeline, challenge_id=challenge_id, challenge_images=turns, camera_label=camera_label
     )
     return _result(result)
-
-
-@router.post("/qr", response_model=ApiResponse[VerificationResult], summary="Verificar identidad por QR")
-def verify_qr(
-    request: Request, payload: QrVerificationRequest, user: EmployeeUser, db: DbSession
-) -> ApiResponse[VerificationResult]:
-    ip, user_agent = request_meta(request)
-    return _result(VerificationService(db, ip=ip, user_agent=user_agent).verify_qr(user, payload.qr_content))
 
 
 def _result(result: VerificationResult) -> ApiResponse[VerificationResult]:

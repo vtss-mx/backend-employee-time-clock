@@ -137,7 +137,7 @@ def test_login_with_several_companies_requires_choosing_one(client, two_companie
     headers, user = _login(client)
     assert user["company"] is None and user["employee"] is None
     assert {m["company"]["id"] for m in user["memberships"]} == {two_companies["a"], two_companies["b"]}
-    pending = client.get("/api/users/me/qr", headers=headers)
+    pending = client.post("/api/users/me/qr", headers=headers)
     assert pending.status_code == 409 and pending.json()["code"] == "COMPANY_SELECTION_REQUIRED"
 
     chosen = client.post("/api/auth/company", json={"company_id": two_companies["b"]}, headers=headers)

@@ -12,7 +12,7 @@ from fastapi import APIRouter, Cookie, Depends, Request, Response
 from app.core.config import settings
 from app.core.responses import ApiResponse, ok
 from app.core.tokens import jwks
-from app.dependencies import CurrentUser, DbSession, EmployeeAccount, OptionalTokenPayload, request_meta
+from app.dependencies import CurrentUser, DbSession, EmployeeAccount, OptionalTokenPayload, Pagination, request_meta
 from app.middleware.rate_limit import enforce, ip_rate_limit
 from app.models import SessionRevocationReason
 from app.schemas.auth import (
@@ -21,6 +21,7 @@ from app.schemas.auth import (
     JwksResponse,
     LoginRequest,
     RememberedAccountRead,
+    SessionList,
     SessionRead,
     TokenResponse,
 )
@@ -247,17 +248,15 @@ def logout_all(request: Request, response: Response, user: CurrentUser, db: DbSe
 
 @router.get(
     "/sessions",
-    response_model=ApiResponse[list[SessionRead]],
+    response_model=ApiResponse[SessionList],
     summary="Mis sesiones activas (dispositivos)",
     responses={401: {"model": ErrorResponse}},
 )
-def list_sessions(request: Request, user: CurrentUser, db: DbSession) -> ApiResponse[list[SessionRead]]:
+def list_sessions(request: Request, user: CurrentUser, db: DbSession, page: Pagination) -> ApiResponse[SessionList]:
     current = getattr(request.state, "session_id", None)
-    items = [
-        SessionRead.model_validate(s).model_copy(update={"current": s.id == current})
-        for s in SessionService(db).list_active(user.id)
-    ]
-    return ok(items, f"{len(items)} sesión(es) activa(s)", code="SESSIONS_LISTED")
+    sessions, total = SessionService(db).page_active(user.id, page)
+    items = [SessionRead.model_validate(s).model_copy(update={"current": s.id == current}) for s in sessions]
+    return ok(SessionList.of(items, total, page), f"{total} sesión(es) activa(s)", code="SESSIONS_LISTED")
 
 
 @router.delete(

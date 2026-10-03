@@ -34,7 +34,7 @@ from app.schemas.employee import (
     IdentityReverifyRequest,
 )
 from app.schemas.enrollment import EnrollmentSubmitResponse
-from app.schemas.qr import EmployeeQrRead
+from app.schemas.qr import EmployeeQrSummary
 from app.schemas.verification import VerificationLogList, VerificationResult
 from app.services.employee_service import EmployeeService
 from app.services.enrollment_service import EnrollmentService
@@ -265,45 +265,33 @@ def verify_face_in_person(
 
 @router.get(
     "/{employee_id}/qr",
-    response_model=ApiResponse[EmployeeQrRead],
-    summary="Obtener QR activo",
+    response_model=ApiResponse[EmployeeQrSummary],
+    summary="Actividad del QR dinámico del empleado",
+    description=(
+        "El QR es dinámico: lo genera el empleado en su teléfono, vive unos segundos y sirve una sola vez, "
+        "así que la empresa no lo ve ni lo descarga. Aquí: si tiene uno vigente y cuándo lo generó y usó."
+    ),
     responses=NOT_FOUND,
     dependencies=[Depends(require_screen(Screen.COMPANY_EMPLOYEES))],
 )
-def get_qr(employee_id: int, company: CompanyScope, db: DbSession) -> ApiResponse[EmployeeQrRead]:
+def qr_summary(employee_id: int, company: CompanyScope, db: DbSession) -> ApiResponse[EmployeeQrSummary]:
     employee = EmployeeService(db, company).get(employee_id)
-    qr_service = QrService(db)
-    return ok(qr_service.to_read(employee, qr_service.get_active(employee)), "QR activo", code="QR_FOUND")
-
-
-@router.post(
-    "/{employee_id}/qr/regenerate",
-    response_model=ApiResponse[EmployeeQrRead],
-    summary="Regenerar QR (invalida el anterior)",
-    responses=NOT_FOUND,
-    dependencies=[Depends(require_screen(Screen.COMPANY_EMPLOYEES))],
-)
-def regenerate_qr(employee_id: int, company: CompanyScope, db: DbSession) -> ApiResponse[EmployeeQrRead]:
-    employee = EmployeeService(db, company).get(employee_id)
-    qr_service = QrService(db)
-    qr = qr_service.issue(employee)
-    db.commit()
-    db.refresh(qr)
-    return ok(qr_service.to_read(employee, qr), "QR regenerado. El anterior ya no es válido.", code="QR_REGENERATED")
+    return ok(QrService(db).summary(employee), "Actividad del código QR", code="QR_SUMMARY")
 
 
 @router.delete(
     "/{employee_id}/qr",
-    response_model=ApiResponse[None],
-    summary="Revocar QR",
+    response_model=ApiResponse[EmployeeQrSummary],
+    summary="Invalidar el QR vigente (el teléfono del empleado muestra otro)",
     responses=NOT_FOUND,
     dependencies=[Depends(require_screen(Screen.COMPANY_EMPLOYEES))],
 )
-def revoke_qr(employee_id: int, company: CompanyScope, db: DbSession) -> ApiResponse[None]:
+def revoke_qr(employee_id: int, company: CompanyScope, db: DbSession) -> ApiResponse[EmployeeQrSummary]:
     employee = EmployeeService(db, company).get(employee_id)
-    QrService(db).revoke(employee)
+    qr_service = QrService(db)
+    qr_service.revoke(employee)
     db.commit()
-    return ok(None, "QR revocado", code="QR_REVOKED")
+    return ok(qr_service.summary(employee), "Código QR invalidado", code="QR_REVOKED")
 
 
 # ---------------- Historial ----------------

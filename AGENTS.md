@@ -85,6 +85,11 @@ identificadores en inglés; docstrings, comentarios, mensajes y documentación e
 - Contraseñas con hash; tokens ES256; sesiones validadas en cada petición.
 - Secretos solo en `.env` (nunca en el código ni en el repositorio).
 - Datos biométricos cifrados; el ADMIN de la plataforma no ve empleados ni rostros.
+- **QR dinámicos de un solo uso** (`qr_service`): un QR solo se consume con `QrService.use` /
+  `complete_hold` (sentencia atómica `WHERE used_at IS NULL`); uno usado, vencido o reemplazado no
+  vuelve a servir. La BD guarda solo el hash del token (nunca el token ni una copia cifrada).
+- **Hora del negocio**: "hoy" y los conteos diarios con `app/core/clock.py` (`business_now`,
+  `business_today`, `business_day_start`; `APP_TIMEZONE` = hora del Centro), nunca la del servidor.
 - **Toda captura facial** (registro, verificación, identificación) pasa por los candados de
   `capture_guard` (cámara real, tiempo humano, toma única, sin fotos fijas ni reenvíos), por
   `check_liveness` (giros en orden, anti-spoofing también en el giro) y por `attempt_guard`

@@ -19,6 +19,7 @@ from app.core.opaque_tokens import new_id, new_secret, secret_matches, split_tok
 from app.core.tokens import AccessToken, create_access_token
 from app.models import AuthSession, SessionRevocationReason, User
 from app.repositories.session_repository import SessionRepository
+from app.schemas.common import PageParams
 from app.services.auth_service import ensure_account_usable
 from app.services.catalog_service import get_catalogs
 from app.services.policy_service import ensure_device_allowed
@@ -165,8 +166,8 @@ class SessionService:
         """Cierra las sesiones en las que la persona entró a esa empresa (sin confirmar la transacción)."""
         self.sessions.revoke_all(user_id, datetime.now(UTC), reason, company_id=company_id)
 
-    def list_active(self, user_id: int) -> list[AuthSession]:
-        return self.sessions.active_for_user(user_id, datetime.now(UTC))
+    def page_active(self, user_id: int, page: PageParams) -> tuple[list[AuthSession], int]:
+        return self.sessions.page_active(user_id, datetime.now(UTC), offset=page.offset, limit=page.size)
 
     # ---------- Internos ----------
 

@@ -1,14 +1,10 @@
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 
 from app.facial_recognition.pose import TurnDirection
 from app.models.enums import VerificationMethod
 from app.schemas.common import Page
-
-
-class QrVerificationRequest(BaseModel):
-    qr_content: str = Field(min_length=1, max_length=512, description="Texto leído del código QR")
 
 
 class FaceChallengeResponse(BaseModel):

@@ -2,6 +2,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
+from app.schemas.common import Page
 from app.schemas.user import UserRead
 from app.schemas.validators import validate_password_strength
 
@@ -76,6 +77,10 @@ class SessionRead(BaseModel):
     ip_address: str | None
     user_agent: str | None
     current: bool = False
+
+
+class SessionList(Page[SessionRead]):
+    """Página de las sesiones vigentes del usuario (la más reciente primero)."""
 
 
 class Jwk(BaseModel):

@@ -37,7 +37,7 @@ def test_face_engine_down_returns_503_but_qr_and_admin_keep_working(client, comp
     assert "Retry-After" in response.headers and response.json()["traceId"]
     # El resto del sistema sigue operando.
     assert client.get("/api/employees", headers=company_headers).status_code == 200
-    assert client.post("/api/verification/qr", json={"qr_content": "x"}, headers=headers).status_code == 200
+    assert client.post("/api/users/me/qr", headers=headers).status_code == 201  # el QR no depende del motor
 
 
 def test_database_outage_returns_503(client, company_headers, monkeypatch):

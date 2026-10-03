@@ -18,6 +18,7 @@ from app.repositories.user_repository import UserRepository
 from app.schemas.common import PageParams
 from app.schemas.company import (
     CompanyAdminCreate,
+    CompanyAdminList,
     CompanyAdminPasswordReset,
     CompanyAdminRead,
     CompanyCreate,
@@ -59,13 +60,20 @@ class CompanyService:
         counts = self.companies.counts(c.id for c in items)
         return CompanyList.of([self._to_read(c, *counts.get(c.id, (0, 0))) for c in items], total, page)
 
+    def list_admins(self, company_id: int, page: PageParams) -> CompanyAdminList:
+        """Administradores de la empresa, paginados (el más antiguo primero)."""
+        self.get(company_id)
+        admins, total = self.companies.admins_page(company_id, offset=page.offset, limit=page.size)
+        return CompanyAdminList.of([CompanyAdminRead.model_validate(u) for u in admins], total, page)
+
     def detail(self, company_id: int) -> CompanyDetail:
         company = self.get(company_id)
         employees, admins = self.companies.counts([company.id])[company.id]
-        return CompanyDetail(
-            **self._to_read(company, employees, admins).model_dump(),
-            admins=[CompanyAdminRead.model_validate(u) for u in self.companies.admins(company.id)],
-        )
+        return CompanyDetail(**self._to_read(company, employees, admins).model_dump())
+
+    def admin(self, company_id: int, user_id: int) -> CompanyAdminRead:
+        """Un administrador de la empresa (p. ej. para restablecer su contraseña)."""
+        return CompanyAdminRead.model_validate(self._company_admin(company_id, user_id)[1])
 
     def stats(self) -> PlatformStats:
         companies, active, employees, admins = self.companies.stats()

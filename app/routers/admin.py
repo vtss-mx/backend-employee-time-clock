@@ -14,7 +14,9 @@ from app.models import Screen
 from app.schemas.common import ErrorResponse
 from app.schemas.company import (
     CompanyAdminCreate,
+    CompanyAdminList,
     CompanyAdminPasswordReset,
+    CompanyAdminRead,
     CompanyCreate,
     CompanyDetail,
     CompanyList,
@@ -124,6 +126,31 @@ def set_company_status(
 def delete_company(company_id: int, _: AdminUser, db: DbSession) -> ApiResponse[None]:
     CompanyService(db).delete(company_id)
     return ok(None, "Empresa eliminada", code="COMPANY_DELETED")
+
+
+@router.get(
+    "/companies/{company_id}/admins",
+    response_model=ApiResponse[CompanyAdminList],
+    summary="Administradores de la empresa (paginados)",
+    responses=NOT_FOUND,
+    dependencies=[Depends(require_screen(Screen.ADMIN_COMPANIES))],
+)
+def list_company_admins(
+    company_id: int, _: AdminUser, db: DbSession, page: Pagination
+) -> ApiResponse[CompanyAdminList]:
+    result = CompanyService(db).list_admins(company_id, page)
+    return ok(result, f"{result.total} administrador(es)", code="COMPANY_ADMINS_LISTED")
+
+
+@router.get(
+    "/companies/{company_id}/admins/{user_id}",
+    response_model=ApiResponse[CompanyAdminRead],
+    summary="Un administrador de la empresa",
+    responses=NOT_FOUND,
+    dependencies=[Depends(require_screen(Screen.ADMIN_COMPANIES))],
+)
+def get_company_admin(company_id: int, user_id: int, _: AdminUser, db: DbSession) -> ApiResponse[CompanyAdminRead]:
+    return ok(CompanyService(db).admin(company_id, user_id), "Administrador encontrado", code="COMPANY_ADMIN_FOUND")
 
 
 @router.post(

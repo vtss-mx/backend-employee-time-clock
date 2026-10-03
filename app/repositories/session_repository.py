@@ -5,6 +5,7 @@ from sqlalchemy import CursorResult, delete, select, update
 from sqlalchemy.orm import Session
 
 from app.models import AuthSession, SessionRevocationReason
+from app.repositories.aggregates import paginate
 
 
 class SessionRepository:
@@ -27,6 +28,13 @@ class SessionRepository:
                 .order_by(AuthSession.created_at.desc())
             )
         )
+
+    def page_active(self, user_id: int, now: datetime, *, offset: int, limit: int) -> tuple[list[AuthSession], int]:
+        """Sesiones vigentes del usuario, la más reciente primero."""
+        stmt = select(AuthSession).where(
+            AuthSession.user_id == user_id, AuthSession.revoked_at.is_(None), AuthSession.expires_at > now
+        )
+        return paginate(self.db, stmt, (AuthSession.created_at.desc(), AuthSession.id), offset=offset, limit=limit)
 
     def revoke_all(
         self,

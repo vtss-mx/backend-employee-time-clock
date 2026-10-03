@@ -3,6 +3,7 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 
 from app.models.enums import ValidatorMode, VerificationMethod
+from app.schemas.common import Page
 from app.schemas.user import UserCompanyInfo
 
 
@@ -40,3 +41,7 @@ class CheckpointEvent(BaseModel):
     confidence: float | None = None
     employee_name: str | None = None
     employee_number: str | None = None
+
+
+class CheckpointEventList(Page[CheckpointEvent]):
+    """Página de identificaciones del validador (la más reciente primero)."""

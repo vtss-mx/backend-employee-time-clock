@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 from PIL import Image
 
+from app.core.config import Settings
 from app.core.crypto import decrypt_bytes, encrypt_bytes
 from app.core.system import available_cpus, default_api_workers
 from app.facial_recognition import FaceValidationError, TurnDirection
@@ -228,6 +229,12 @@ def test_password_and_name_validators():
     assert validators.normalize_employee_number(" emp-01 ") == "EMP-01"
     with pytest.raises(ValueError):
         validators.normalize_employee_number("con espacios")
+
+
+def test_business_timezone_must_exist():
+    assert Settings(APP_TIMEZONE="America/Mexico_City").APP_TIMEZONE == "America/Mexico_City"
+    with pytest.raises(ValueError, match="APP_TIMEZONE"):
+        Settings(APP_TIMEZONE="Mexico/Centro")
 
 
 def test_birth_date_uses_business_timezone():

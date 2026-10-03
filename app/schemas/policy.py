@@ -51,6 +51,9 @@ class VerificationPolicyRead(BaseModel):
     validator_device_approval: bool = Field(
         default=True, description="Cada dispositivo de un validador debe autorizarlo la empresa antes de operar"
     )
+    qr_lifetime_seconds: int = Field(
+        default=30, description="Segundos que vive cada QR dinámico del empleado antes de renovarse solo"
+    )
     #: Nombres de cámaras virtuales que no se aceptan (la webapp avisa antes de capturar).
     blocked_cameras: list[str] = Field(
         default_factory=lambda: list(settings.FACE_BLOCKED_CAMERAS),
@@ -87,3 +90,4 @@ class VerificationPolicyUpdate(BaseModel):
     lockout_max_failures: int | None = Field(default=None, ge=3, le=20)
     lockout_minutes: int | None = Field(default=None, ge=1, le=1440)
     validator_device_approval: bool | None = None
+    qr_lifetime_seconds: int | None = Field(default=None, ge=15, le=300)

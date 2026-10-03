@@ -132,7 +132,6 @@ class EmployeeRead(BaseModel):
     latest_enrollment_id: int | None = None
     has_face: bool
     face_samples: int
-    has_active_qr: bool
     created_at: datetime
     updated_at: datetime
 

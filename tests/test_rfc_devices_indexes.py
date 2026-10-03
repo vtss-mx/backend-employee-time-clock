@@ -19,6 +19,7 @@ from tests.conftest import (
     login,
     nss_for,
     phone_for,
+    qr_content,
     rfc_for,
 )
 from tests.test_policy import set_policy
@@ -221,17 +222,18 @@ def test_search_by_name_number_rfc_and_email(client, company_headers):
 
 def test_database_allows_a_single_active_qr_per_employee(client, company_headers):
     employee_id = create_employee(client, company_headers).json()["data"]["id"]
+    qr_content(employee_id)  # su QR vigente
     with SessionLocal() as db:
-        db.add(EmployeeQr(employee_id=employee_id, token_hash="f" * 64, token_encrypted=b"x", active=True))
+        db.add(EmployeeQr(employee_id=employee_id, token_hash="f" * 64, active=True))
         with pytest.raises(IntegrityError):
             db.commit()
         db.rollback()
         # Inactivos (revocados) puede haber los que sean.
-        db.add(EmployeeQr(employee_id=employee_id, token_hash="e" * 64, token_encrypted=b"x", active=False))
+        db.add(EmployeeQr(employee_id=employee_id, token_hash="e" * 64, active=False))
         db.commit()
 
-    # Regenerar sigue funcionando: revoca el vigente y crea uno nuevo en la misma transacción.
-    assert client.post(f"/api/employees/{employee_id}/qr/regenerate", headers=company_headers).status_code in (200, 201)
+    # Emitir otro sigue funcionando: apaga el vigente y crea uno nuevo en la misma transacción.
+    assert qr_content(employee_id) != qr_content(employee_id)
 
 
 # ---------------------------------------------------------------- CURP, NSS y teléfono

@@ -55,14 +55,9 @@ class CompanyRepository:
         )
         return {cid: (employees.get(cid, 0), admins.get(cid, 0)) for cid in ids}
 
-    def admins(self, company_id: int) -> list[User]:
-        return list(
-            self.db.scalars(
-                select(User)
-                .where(User.company_id == company_id, User.role == UserRole.COMPANY)
-                .order_by(User.created_at, User.id)
-            )
-        )
+    def admins_page(self, company_id: int, *, offset: int, limit: int) -> tuple[list[User], int]:
+        stmt = select(User).where(User.company_id == company_id, User.role == UserRole.COMPANY)
+        return paginate(self.db, stmt, (User.created_at, User.id), offset=offset, limit=limit)
 
     def active_admin_count(self, company_id: int) -> int:
         stmt = select(func.count()).where(

@@ -2,6 +2,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, computed_field
 
+from app.core.config import settings
 from app.models.enums import FaceStatus, UserRole
 
 
@@ -98,6 +99,9 @@ class UserRead(BaseModel):
     preferences: UserPreferences = Field(default_factory=UserPreferences)
     #: Pantallas del usuario en orden (menú y rutas del frontend). Las arma navigation_service.
     screens: list[ScreenRead] = Field(default_factory=list)
+    #: Zona horaria del negocio (hora del Centro): la webapp muestra fechas y horas en ella, no en
+    #: la del dispositivo (un teléfono en otra zona ve la misma hora que la empresa).
+    timezone: str = Field(default_factory=lambda: settings.APP_TIMEZONE)
 
     @computed_field  # type: ignore[prop-decorator]
     @property

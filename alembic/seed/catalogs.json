@@ -7,7 +7,7 @@
   ],
   "verification_methods": [
     {"code": "FACE", "name": "Rostro", "description": "La persona mira a la cámara; se busca entre todo el personal", "sort_order": 1, "active": true},
-    {"code": "QR", "name": "QR", "description": "Credencial impresa o en el teléfono del empleado", "sort_order": 2, "active": true},
+    {"code": "QR", "name": "QR", "description": "Código dinámico en el teléfono del empleado; sirve una sola vez", "sort_order": 2, "active": true},
     {"code": "QR_FACE", "name": "QR + rostro", "description": "Escanea su QR y confirma que el rostro es de su dueño", "sort_order": 3, "active": true}
   ],
   "validator_modes": [
@@ -51,8 +51,8 @@
     {"code": "INVALID_FORMAT", "name": "QR inválido", "description": null, "message": "QR inválido", "sort_order": 8, "active": true},
     {"code": "NOT_FOUND", "name": "QR no reconocido", "description": null, "message": "QR no reconocido", "sort_order": 9, "active": true},
     {"code": "OTHER_COMPANY", "name": "QR no reconocido", "description": null, "message": "QR no reconocido", "sort_order": 10, "active": true},
-    {"code": "REVOKED", "name": "QR revocado", "description": null, "message": "QR no reconocido", "sort_order": 11, "active": true},
-    {"code": "EXPIRED", "name": "QR expirado", "description": null, "message": "El QR ha expirado. Solicita uno nuevo a tu empresa", "sort_order": 12, "active": true},
+    {"code": "REVOKED", "name": "QR reemplazado", "description": "El empleado generó otro código o la empresa invalidó este.", "message": "Este código QR ya fue reemplazado. Pide al empleado que muestre el código actual de su teléfono.", "sort_order": 11, "active": true},
+    {"code": "EXPIRED", "name": "QR vencido", "description": "El código dinámico superó su vigencia (o el tiempo para confirmar el rostro).", "message": "El código QR venció. Pide al empleado que muestre el código actualizado de su teléfono.", "sort_order": 12, "active": true},
     {"code": "OTHER_EMPLOYEE", "name": "QR de otro empleado", "description": null, "message": "QR no reconocido", "sort_order": 13, "active": true},
     {"code": "EMPLOYEE_INACTIVE", "name": "Empleado desactivado", "description": null, "message": "El empleado está desactivado", "sort_order": 14, "active": true},
     {"code": "SPOOF_DETECTED", "name": "Posible foto o pantalla", "description": "El anti-spoofing detectó una foto impresa, una pantalla o un video.", "message": "No se pudo confirmar que seas una persona frente a la cámara.", "sort_order": 15, "active": true},
@@ -61,7 +61,9 @@
     {"code": "REPLAY_DETECTED", "name": "Captura reutilizada", "description": "La captura ya se había recibido antes: es un reenvío de una captura guardada.", "message": "Esta captura ya se había usado antes. Toma una captura nueva frente a la cámara.", "sort_order": 18, "active": true},
     {"code": "CAPTURE_INCONSISTENT", "name": "Capturas de tomas distintas", "description": "Las capturas no salen de la misma cámara o el rostro cambió de tamaño o de lugar de forma imposible.", "message": "Las capturas no parecen de la misma toma. No cambies de cámara ni te alejes durante el proceso.", "sort_order": 19, "active": true},
     {"code": "VIRTUAL_CAMERA", "name": "Cámara virtual", "description": "La cámara usada es un programa que puede transmitir un video o una foto en lugar de la cámara real.", "message": "No se permiten cámaras virtuales. Usa la cámara del dispositivo.", "sort_order": 20, "active": true},
-    {"code": "CHALLENGE_TOO_FAST", "name": "Giro demasiado rápido", "description": "La captura del giro llegó antes de lo que tarda una persona en girar la cabeza.", "message": "El giro se capturó demasiado rápido. Sigue la indicación en pantalla e inténtalo de nuevo.", "sort_order": 21, "active": true}
+    {"code": "CHALLENGE_TOO_FAST", "name": "Giro demasiado rápido", "description": "La captura del giro llegó antes de lo que tarda una persona en girar la cabeza.", "message": "El giro se capturó demasiado rápido. Sigue la indicación en pantalla e inténtalo de nuevo.", "sort_order": 21, "active": true},
+    {"code": "ALREADY_USED", "name": "QR ya usado", "description": "Cada código dinámico sirve una sola vez: este ya se había escaneado.", "message": "Este código QR ya se usó y no vuelve a servir. Pide al empleado que muestre el código nuevo de su teléfono.", "sort_order": 22, "active": true},
+    {"code": "STATIC_QR", "name": "QR impreso (ya no válido)", "description": "Código fijo de la versión anterior (credencial impresa o descargada).", "message": "Los códigos QR impresos ya no son válidos. El empleado debe mostrar su código dinámico desde su teléfono.", "sort_order": 23, "active": true}
   ],
   "accessories": [
     {"code": "GLASSES", "name": "Lentes", "description": null, "phrase": "los lentes", "sort_order": 1, "active": true},

@@ -1,15 +1,4 @@
-from app.core.crypto import decrypt_bytes
-from app.core.database import SessionLocal
-from app.models import EmployeeQr
-from app.services.qr_service import QR_PREFIX
-from tests.conftest import approved_employee, create_employee, login
-
-
-def _qr_content(employee_id: int) -> str:
-    with SessionLocal() as db:
-        qr = db.query(EmployeeQr).filter_by(employee_id=employee_id, active=True).one()
-        return QR_PREFIX + decrypt_bytes(qr.token_encrypted).decode()
-
+from tests.conftest import create_employee, login
 
 # ---------------- Autenticación y roles ----------------
 
@@ -18,6 +7,8 @@ def test_login_and_me(client, company_headers):
     response = client.get("/api/users/me", headers=company_headers)
     assert response.status_code == 200
     assert response.json()["data"]["role"] == "COMPANY"
+    # La webapp muestra fechas y horas en la zona del negocio (hora del Centro), no la del dispositivo.
+    assert response.json()["data"]["timezone"] == "America/Mexico_City"
 
 
 def test_login_wrong_password(client):
@@ -38,19 +29,22 @@ def test_employee_cannot_access_admin(client, company_headers):
 
 
 def test_company_cannot_use_verification(client, company_headers):
-    response = client.post("/api/verification/qr", json={"qr_content": "x"}, headers=company_headers)
-    assert response.status_code == 403
+    files = [("images", ("f.jpg", b"face:juan", "image/jpeg"))]
+    assert client.post("/api/verification/face", files=files, headers=company_headers).status_code == 403
+    # El QR ya no se "verifica" desde la app del empleado: es dinámico y lo lee un validador.
+    assert client.post("/api/verification/qr", json={"qr_content": "x"}, headers=company_headers).status_code == 404
 
 
 # ---------------- Empleados ----------------
 
 
-def test_create_employee_with_qr(client, company_headers):
+def test_create_employee(client, company_headers):
     response = create_employee(client, company_headers)
     assert response.status_code == 201, response.text
     body = response.json()["data"]
     assert body["employee_number"] == "EMP-001"
-    assert body["has_face"] is False and body["has_active_qr"] is True
+    # Sin QR fijo: el empleado genera su QR dinámico en su teléfono cuando lo necesita.
+    assert body["has_face"] is False and "has_active_qr" not in body
     assert "password" not in body and "password_hash" not in body
 
 
@@ -94,44 +88,6 @@ def test_delete_employee(client, company_headers):
     emp = create_employee(client, company_headers).json()["data"]
     assert client.delete(f"/api/employees/{emp['id']}", headers=company_headers).status_code == 200
     assert client.get(f"/api/employees/{emp['id']}", headers=company_headers).status_code == 404
-
-
-# ---------------- QR ----------------
-
-
-def test_qr_flow(client, company_headers):
-    headers = approved_employee(client, company_headers)
-    emp = {"id": client.get("/api/users/me", headers=headers).json()["data"]["employee"]["id"]}
-
-    qr = client.get(f"/api/employees/{emp['id']}/qr", headers=company_headers)
-    assert qr.status_code == 200
-    assert qr.json()["data"]["image_base64"].startswith("data:image/png;base64,")
-
-    content = _qr_content(emp["id"])
-    token = content.removeprefix(QR_PREFIX)
-    assert len(token) >= 40 and "employee" not in content.lower()
-    ok = client.post("/api/verification/qr", json={"qr_content": content}, headers=headers)
-    assert ok.json()["data"]["verified"] is True
-
-    # Regenerar invalida el anterior.
-    client.post(f"/api/employees/{emp['id']}/qr/regenerate", headers=company_headers)
-    old = client.post("/api/verification/qr", json={"qr_content": content}, headers=headers)
-    assert old.json()["data"] == {**old.json()["data"], "verified": False, "message": "QR no reconocido"}
-    new = client.post("/api/verification/qr", json={"qr_content": _qr_content(emp["id"])}, headers=headers)
-    assert new.json()["data"]["verified"] is True
-
-    invalid = client.post("/api/verification/qr", json={"qr_content": "employee_id=1"}, headers=headers)
-    assert invalid.json()["message"] == "QR inválido"
-
-    history = client.get(f"/api/employees/{emp['id']}/verifications", headers=company_headers).json()["data"]
-    assert history["total"] == 4 and len(history["items"]) == 4
-
-
-def test_qr_of_other_employee_is_rejected(client, company_headers):
-    headers = approved_employee(client, company_headers)
-    other = create_employee(client, company_headers, number="EMP-002", email="ana@empresa.com").json()["data"]
-    response = client.post("/api/verification/qr", json={"qr_content": _qr_content(other["id"])}, headers=headers)
-    assert response.json()["data"]["verified"] is False
 
 
 def test_login_rate_limit(client):
