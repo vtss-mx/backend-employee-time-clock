@@ -3,6 +3,7 @@ from datetime import date, datetime
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 from app.models.enums import FaceStatus
+from app.schemas.common import Page
 from app.schemas.validators import (
     PhoneNumber,
     normalize_curp,
@@ -136,8 +137,5 @@ class EmployeeRead(BaseModel):
     updated_at: datetime
 
 
-class EmployeeList(BaseModel):
-    items: list[EmployeeRead]
-    total: int
-    page: int
-    size: int
+class EmployeeList(Page[EmployeeRead]):
+    """Página de empleados de la empresa."""

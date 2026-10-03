@@ -9,6 +9,7 @@ from app.core.database import SessionLocal
 from app.core.devices import classify_device
 from app.models import EmployeeQr
 from app.schemas.validators import curp_check_digit, normalize_rfc, rfc_matches_birth_date
+from app.schemas.validators import normalize_curp as normalize_curp_value
 from tests.conftest import (
     DESKTOP_UA,
     IPHONE_UA,
@@ -128,6 +129,22 @@ def test_invalid_rfc(raw, message):
 def test_rfc_matches_birth_date():
     assert rfc_matches_birth_date("PEGJ900515AB1", date(1990, 5, 15))
     assert not rfc_matches_birth_date("PEGJ900515AB1", date(1990, 5, 16))
+
+
+def test_birth_date_mismatch_says_which_date_each_document_has():
+    """El mensaje dice qué fecha indica el documento y cuál se capturó (para corregir la que esté mal)."""
+    from app.schemas.validators import curp_birth_date_error, rfc_birth_date_error
+
+    assert rfc_birth_date_error("TARS030901AB1", date(2003, 9, 1)) is None
+    assert rfc_birth_date_error("TARS030901AB1", date(2003, 9, 3)) == (
+        "El RFC indica nacimiento el 01/09/2003, pero la fecha de nacimiento es 03/09/2003"
+    )
+    assert curp_birth_date_error("HEGG560427MVZRRL04", date(1956, 4, 28)) == (
+        "La CURP indica nacimiento el 27/04/1956, pero la fecha de nacimiento es 28/04/1956"
+    )
+    assert "siglo" in (curp_birth_date_error("HEGG560427MVZRRL04", date(2056, 4, 27)) or "")
+    with pytest.raises(ValueError, match="se escribieron 17"):
+        normalize_curp_value("TARS030901HSRNZB1")
 
 
 def test_create_employee_requires_valid_unique_rfc(client, company_headers):

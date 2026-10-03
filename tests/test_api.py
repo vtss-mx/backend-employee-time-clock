@@ -124,7 +124,7 @@ def test_qr_flow(client, company_headers):
     assert invalid.json()["message"] == "QR inválido"
 
     history = client.get(f"/api/employees/{emp['id']}/verifications", headers=company_headers).json()["data"]
-    assert len(history) == 4
+    assert history["total"] == 4 and len(history["items"]) == 4
 
 
 def test_qr_of_other_employee_is_rejected(client, company_headers):

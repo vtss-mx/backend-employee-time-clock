@@ -140,6 +140,43 @@ class Settings(BaseSettings):
     FACE_LIVENESS_CONSISTENCY_THRESHOLD: float = Field(default=0.30, ge=0.0, le=1.0)
     FACE_CHALLENGE_TTL_SECONDS: int = Field(default=90, ge=15, le=600)
 
+    # --- Protección contra engaños: parámetros técnicos de los candados ---
+    # Cada empresa activa o desactiva cada candado en su política de verificación
+    # (tenancy.verification_policy); aquí solo se ajusta cómo mide cada uno.
+    # Diferencia mínima (niveles de gris 0-255) entre capturas de un mismo intento: una persona
+    # real nunca da dos fotogramas iguales (ruido del sensor, respiración); una foto fija sí.
+    FACE_STATIC_MIN_DIFFERENCE: float = Field(default=0.6, ge=0.0, le=50.0)
+    # Segundos mínimos entre el reto y la captura del giro: menos es imposible para una persona.
+    FACE_CHALLENGE_MIN_SECONDS: float = Field(default=0.8, ge=0.0, le=30.0)
+    # Días que se recuerda la huella de cada captura para rechazar su reenvío.
+    FACE_REPLAY_RETENTION_DAYS: int = Field(default=30, ge=1, le=365)
+    # Continuidad entre capturas frontales y la del giro (misma toma): cambio máximo del tamaño del
+    # rostro (proporción) y desplazamiento de su centro (en anchos de rostro).
+    FACE_CONTINUITY_MAX_SCALE: float = Field(default=1.8, ge=1.0, le=5.0)
+    FACE_CONTINUITY_MAX_SHIFT: float = Field(default=1.2, ge=0.1, le=5.0)
+    # Cambio máximo de luz (brillo medio del rostro, 0-255) entre la frontal y el giro: una imagen
+    # de otra toma suele venir con otra iluminación.
+    FACE_CONTINUITY_MAX_BRIGHTNESS_DELTA: float = Field(default=70.0, ge=5.0, le=255.0)
+    # Cámaras virtuales (programas que fingen ser una cámara para inyectar video), por su nombre.
+    FACE_BLOCKED_CAMERAS: Annotated[list[str], NoDecode] = [
+        "virtual",
+        "manycam",
+        "xsplit",
+        "snap camera",
+        "e2esoft",
+        "vcam",
+        "splitcam",
+        "camtwist",
+        "mmhmm",
+        "youcam",
+        "chromacam",
+        "droidcam",
+        "iriun",
+        "epoccam",
+        "camo",
+        "nvidia broadcast",
+    ]
+
     # --- Tolerancia a fallas ---
     # Conexiones persistentes: las de "overflow" se abren y cierran en cada uso (autenticación
     # SCRAM incluida), lo que bajo carga es mucho más lento que esperar una del pool.
@@ -185,6 +222,19 @@ class Settings(BaseSettings):
 
     # --- QR ---
     QR_TOKEN_EXPIRE_DAYS: int = Field(default=365, ge=0)  # 0 = sin vencimiento
+
+    # --- Ubicación de los validadores (inicio de sesión solo dentro del radio permitido) ---
+    # Precisión mínima exigida al GPS del dispositivo (m): con una lectura más imprecisa no se puede
+    # asegurar que esté dentro del radio y se pide activar la ubicación precisa.
+    VALIDATOR_LOCATION_MAX_ACCURACY_M: int = Field(default=200, ge=10, le=5000)
+    # Margen por la imprecisión del GPS (m): se descuenta de la distancia, hasta este máximo.
+    VALIDATOR_LOCATION_TOLERANCE_M: int = Field(default=50, ge=0, le=1000)
+
+    # --- Listados paginados ---
+    # Elementos por página si el cliente no indica `size`, y el máximo que acepta (el paginador
+    # de la webapp ofrece 10, 20, 30, 40 y 50).
+    PAGE_SIZE_DEFAULT: int = Field(default=10, ge=1, le=100)
+    PAGE_SIZE_MAX: int = Field(default=50, ge=1, le=100)
     # Catálogos (esquema catalog): segundos que cada proceso los conserva en memoria antes de releerlos.
     CATALOG_CACHE_SECONDS: float = Field(default=60, ge=0, le=3600)
 
@@ -208,6 +258,13 @@ class Settings(BaseSettings):
     # Administrador de la primera empresa.
     FIRST_COMPANY_EMAIL: str | None = None
     FIRST_COMPANY_PASSWORD: str | None = None
+
+    @field_validator("FACE_BLOCKED_CAMERAS", mode="before")
+    @classmethod
+    def _split_cameras(cls, value: object) -> object:
+        if isinstance(value, str):
+            return [name.strip().lower() for name in value.split(",") if name.strip()]
+        return value
 
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod
@@ -234,6 +291,8 @@ class Settings(BaseSettings):
     def _complete(self) -> "Settings":
         if self.API_WORKERS == 0:
             self.API_WORKERS = default_api_workers()
+        if self.PAGE_SIZE_DEFAULT > self.PAGE_SIZE_MAX:
+            raise ValueError("PAGE_SIZE_DEFAULT no puede ser mayor que PAGE_SIZE_MAX")
         if not self.DATABASE_URL:
             if not self.POSTGRES_PASSWORD:
                 raise ValueError("Define DATABASE_URL o POSTGRES_PASSWORD (y POSTGRES_HOST/DB/USER)")

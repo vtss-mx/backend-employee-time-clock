@@ -15,6 +15,7 @@ from app.core.passwords import hash_password
 from app.models import Company, SessionRevocationReason, User, UserRole
 from app.repositories.company_repository import CompanyRepository
 from app.repositories.user_repository import UserRepository
+from app.schemas.common import PageParams
 from app.schemas.company import (
     CompanyAdminCreate,
     CompanyAdminPasswordReset,
@@ -34,7 +35,7 @@ RFC_TAKEN = "Ya existe una empresa con ese RFC"
 EMAIL_TAKEN = "El correo ya está registrado en la plataforma"
 LAST_ADMIN = "La empresa debe conservar al menos un administrador activo"
 HAS_EMPLOYEES = "La empresa tiene empleados registrados: desactívala en lugar de eliminarla"
-_COMPANY_FIELDS = ("name", "legal_name", "rfc", "contact_email", "phone", "max_employees")
+_COMPANY_FIELDS = ("name", "legal_name", "rfc", "phone", "max_employees")
 
 AvailabilityField = Literal["rfc", "admin_email"]
 
@@ -53,12 +54,10 @@ class CompanyService:
             raise NotFoundError("Empresa no encontrada", code="COMPANY_NOT_FOUND")
         return company
 
-    def list_companies(self, *, search: str | None, active: bool | None, page: int, size: int) -> CompanyList:
-        items, total = self.companies.search(search=search, active=active, offset=(page - 1) * size, limit=size)
+    def list_companies(self, *, search: str | None, active: bool | None, page: PageParams) -> CompanyList:
+        items, total = self.companies.search(search=search, active=active, offset=page.offset, limit=page.size)
         counts = self.companies.counts(c.id for c in items)
-        return CompanyList(
-            items=[self._to_read(c, *counts.get(c.id, (0, 0))) for c in items], total=total, page=page, size=size
-        )
+        return CompanyList.of([self._to_read(c, *counts.get(c.id, (0, 0))) for c in items], total, page)
 
     def detail(self, company_id: int) -> CompanyDetail:
         company = self.get(company_id)

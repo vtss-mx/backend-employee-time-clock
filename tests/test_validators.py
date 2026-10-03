@@ -6,7 +6,7 @@ import pytest
 from app.core.database import SessionLocal
 from app.models import VerificationLog
 from app.services.face_gallery import face_galleries
-from tests.conftest import DESKTOP_UA, create_company, create_employee, login, submit_enrollment
+from tests.conftest import DESKTOP_UA, create_company, create_employee, login, submit_enrollment, turn_files
 from tests.test_api import _qr_content
 from tests.test_policy import set_policy
 
@@ -21,10 +21,26 @@ def _fresh_gallery():
     yield
 
 
-def create_validator(client, company_headers, *, mode="QR_OR_FACE", email="recepcion@empresa.com", name="Recepción"):
-    return client.post(
-        URL, json={"name": name, "email": email, "password": PASSWORD, "mode": mode}, headers=company_headers
-    )
+#: Domicilio de un acceso (Plaza Zaragoza, Hermosillo) con su punto en el mapa.
+ADDRESS = {
+    "street": "Calle Dr. Paliza",
+    "exterior_number": "71",
+    "interior_number": None,
+    "postal_code": "83000",
+    "country_code": "MX",
+    "state": "Sonora",
+    "municipality": "Hermosillo",
+    "city": "Hermosillo",
+    "latitude": 29.0729,
+    "longitude": -110.9559,
+}
+
+
+def create_validator(
+    client, company_headers, *, mode="QR_OR_FACE", email="recepcion@empresa.com", name="Recepción", **extra
+):
+    body = {"name": name, "email": email, "password": PASSWORD, "mode": mode, "address": ADDRESS, **extra}
+    return client.post(URL, json=body, headers=company_headers)
 
 
 def validator_headers(client, company_headers, **kwargs) -> dict[str, str]:
@@ -50,9 +66,8 @@ def identify_face(
     client, headers, person: str, *, kind: str = "face", turn_person: str | None = None, qr: str | None = None
 ):
     challenge = client.post("/api/face/challenge", headers=headers).json()["data"]
-    turn = f"{'turn-left' if challenge['action'] == 'TURN_LEFT' else 'turn-right'}:{turn_person or person}".encode()
     files = [("images", (f"c{i}.jpg", f"{kind}:{person}".encode(), "image/jpeg")) for i in range(3)]
-    files.append(("challenge_image", ("t.jpg", turn, "image/jpeg")))
+    files += turn_files(challenge, turn_person or person)
     data = {"challenge_id": challenge["challenge_id"], **({"qr_content": qr} if qr else {})}
     return client.post("/api/checkpoint/identify/face", data=data, files=files, headers=headers)
 
@@ -73,7 +88,7 @@ def test_company_manages_its_validators(client, company_headers, admin_headers):
     url = f"{URL}/{validator['id']}"
     updated = client.put(url, json={"mode": "QR_AND_FACE", "name": "  Acceso   norte "}, headers=company_headers)
     assert updated.json()["data"]["mode"] == "QR_AND_FACE" and updated.json()["data"]["name"] == "Acceso norte"
-    assert [v["name"] for v in client.get(URL, headers=company_headers).json()["data"]] == ["Acceso norte"]
+    assert [v["name"] for v in client.get(URL, headers=company_headers).json()["data"]["items"]] == ["Acceso norte"]
 
     # El validador entra; desactivarlo cierra su sesión; restablecer su contraseña también.
     headers = login(client, "recepcion@empresa.com", PASSWORD)
@@ -85,9 +100,10 @@ def test_company_manages_its_validators(client, company_headers, admin_headers):
     assert login(client, "recepcion@empresa.com", "Nueva12345")
 
     # Otra empresa no lo ve; un validador no administra validadores.
+    assert client.get(url, headers=company_headers).json()["data"]["address"]["city"] == "Hermosillo"
     create_company(client, admin_headers)
     other = login(client, "admin@panificadora.com", "Empresa1234")
-    assert client.get(url, headers=other).status_code in (404, 405)
+    assert client.get(url, headers=other).status_code == 404
     assert client.patch(f"{url}/status", json={"active": False}, headers=other).status_code == 404
     assert client.get(URL, headers=login(client, "recepcion@empresa.com", "Nueva12345")).status_code == 403
 
@@ -99,6 +115,7 @@ def test_company_manages_its_validators(client, company_headers, admin_headers):
 
 
 def test_validators_only_from_tablets_or_phones(client, company_headers):
+    set_policy(client, company_headers, validator_device_approval=False)  # aquí solo el tipo de dispositivo
     create_validator(client, company_headers)
     credentials = {"email": "recepcion@empresa.com", "password": PASSWORD}
     desktop = client.post("/api/auth/login", json=credentials, headers={"User-Agent": DESKTOP_UA})
@@ -168,7 +185,7 @@ def test_identify_by_face_among_all_employees(client, company_headers):
     recent = client.get("/api/checkpoint/recent", headers=headers).json()["data"]
     assert [event["success"] for event in recent] == [False, False, True]  # los más recientes primero
     assert recent[2]["employee_number"] == "EMP-002" and recent[0]["employee_name"] is None
-    listed = client.get(URL, headers=company_headers).json()["data"][0]
+    listed = client.get(URL, headers=company_headers).json()["data"]["items"][0]
     assert listed["identifications_today"] == 1
 
 

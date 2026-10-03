@@ -53,6 +53,10 @@ identificadores en inglés; docstrings, comentarios, mensajes y documentación e
   responde 404. Jamás se acepta `company_id` desde el cliente.
 - **Contrato de respuesta único**: `ok(data, mensaje, code=...)` y errores con `code` estable
   (`COMPANY_HAS_EMPLOYEES`, `EMAIL_TAKEN`...). El frontend depende de esos códigos.
+- **Listados paginados**: todo endpoint que lista recibe `page: Pagination` (`app/dependencies.py`:
+  `size` por omisión `PAGE_SIZE_DEFAULT` = 10, máximo `PAGE_SIZE_MAX` = 50), el repositorio usa
+  `paginate()` (`aggregates.py`) y la respuesta es un esquema que hereda de `Page[T]`
+  (`app/schemas/common.py`: `items`, `total`, `page`, `size`). Nunca listas sin límite.
 - **Sin duplicación**: antes de escribir una función, buscar si ya existe (servicios, repositorios,
   `app/core`, `aggregates.py`). Lógica repetida en dos sitios se extrae.
 
@@ -81,6 +85,16 @@ identificadores en inglés; docstrings, comentarios, mensajes y documentación e
 - Contraseñas con hash; tokens ES256; sesiones validadas en cada petición.
 - Secretos solo en `.env` (nunca en el código ni en el repositorio).
 - Datos biométricos cifrados; el ADMIN de la plataforma no ve empleados ni rostros.
+- **Toda captura facial** (registro, verificación, identificación) pasa por los candados de
+  `capture_guard` (cámara real, tiempo humano, toma única, sin fotos fijas ni reenvíos), por
+  `check_liveness` (giros en orden, anti-spoofing también en el giro) y por `attempt_guard`
+  (bloqueo). Un intento sospechoso es `SuspiciousCapture`: se registra en la bitácora con su motivo
+  antes de responder. Cada candado se activa por empresa en `verification_policy`; uno nuevo lleva
+  su interruptor, su motivo en `verification_reasons` y su mensaje en `face_errors`.
+- Reglas del inicio de sesión por cuenta (dispositivo permitido, ubicación del validador) se aplican
+  en `POST /auth/login` antes de crear la sesión (`ensure_device_allowed`, `ensure_device_authorized`,
+  `ensure_location_allowed`).
+  Cambiar una regla que la sesión abierta ya no cumple cierra sus sesiones con su motivo de catálogo.
 
 ## 6. Documentación
 

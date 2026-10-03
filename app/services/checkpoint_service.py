@@ -8,6 +8,8 @@ El validador identifica a CUALQUIER empleado de su empresa según su modo:
 Cada intento queda en la bitácora (attendance.verification_logs) con el validador que lo hizo.
 """
 
+from collections.abc import Sequence
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -20,17 +22,26 @@ from app.repositories.face_repository import FaceEmbeddingRepository
 from app.schemas.checkpoint import CheckpointEmployee, CheckpointEvent, CheckpointProfile
 from app.schemas.user import UserCompanyInfo
 from app.schemas.verification import FaceChallengeResponse, VerificationResult
+from app.services.attempt_guard import ensure_unlocked
+from app.services.capture_guard import ensure_real_camera, inspect_take
 from app.services.catalog_service import get_catalogs
 from app.services.face_gallery import face_galleries, identify
-from app.services.face_service import SPOOF_FLAG, FaceService, accessories_rejection, analyze_frames, face_rejection
+from app.services.face_service import (
+    SECURITY_REASONS,
+    SPOOF_FLAG,
+    FaceService,
+    SuspiciousCapture,
+    accessories_rejection,
+    analyze_frames,
+)
 from app.services.identity_core import (
     FACE_SUCCESS,
     QR_SUCCESS,
     IdentityLog,
+    check_liveness,
     ensure_frame_count,
     failed,
     issue_challenge,
-    liveness_failure,
     match_references,
     mean_confidence,
     reason_message,
@@ -126,21 +137,37 @@ class CheckpointService:
         images: list[bytes],
         *,
         challenge_id: str | None,
-        challenge_image: bytes | None,
+        challenge_images: Sequence[bytes],
         qr_content: str | None = None,
+        camera_label: str | None = None,
     ) -> VerificationResult:
-        """Rostro 1:N (FACE / QR_OR_FACE) o QR + rostro 1:1 (QR_AND_FACE)."""
+        """Rostro 1:N (FACE / QR_OR_FACE) o QR + rostro 1:1 (QR_AND_FACE).
+
+        Un validador con demasiados intentos sospechosos seguidos se bloquea temporalmente (429
+        FACE_LOCKED); con QR + rostro, también el empleado del QR tras varios fallos.
+        """
         method = VerificationMethod.QR_FACE if qr_content else VerificationMethod.FACE
         if not self._allows(method):
             if self._allows(VerificationMethod.QR_FACE):
                 raise UnprocessableError("Escanea primero el código QR del empleado", code="QR_REQUIRED")
             self._deny()
         ensure_frame_count(images)
-        challenge = challenge_store.require(
-            self.db, self.user.id, challenge_id, challenge_image, required=self.policy.liveness_required
-        )
-        frontal, headwear = self._analyze(pipeline, images)
-        failure = liveness_failure(pipeline, challenge, challenge_image, frontal)
+        ensure_unlocked(self.db, self.policy, actor_id=self.user.id, reasons=SECURITY_REASONS)
+        try:
+            ensure_real_camera(camera_label, self.policy)
+            challenge = challenge_store.require(
+                self.db, self.user.id, challenge_id, challenge_images, required=self.policy.liveness_required
+            )
+            frontal, headwear = self._analyze(pipeline, images)
+            face_policy = self.policy.face_policy(None)
+            liveness = check_liveness(pipeline, challenge, challenge_images, frontal, self.policy, face_policy)
+            if liveness.spoofed:
+                raise SuspiciousCapture("SPOOF_DETECTED")
+            inspect_take(self.db, self.company_id, frontal, liveness.turns, self.policy)
+        except SuspiciousCapture as exc:
+            self._record(None, method, False, None, exc.code)
+            raise
+        failure = liveness.failure
         if failure is not None:
             self._record(None, method, False, failure.score, failure.reason)
             return failed(method, failure.message)
@@ -180,6 +207,7 @@ class CheckpointService:
         if employee is None:
             self._record(None, method, False, None, reason)
             return failed(method, reason_message(reason))
+        ensure_unlocked(self.db, self.policy, employee_id=employee.id)  # alguien con el QR de otro probando rostros
         face_service = FaceService(self.db, pipeline)
         references = face_service.load_references(employee.id) or VerificationService(self.db).migrate_references(
             employee, face_service
@@ -207,7 +235,7 @@ class CheckpointService:
         if blocking:
             raise accessories_rejection(blocking)
         if SPOOF_FLAG in flags:
-            raise face_rejection("SPOOF_DETECTED")
+            raise SuspiciousCapture("SPOOF_DETECTED")
         return frontal, Accessory.HEADWEAR.value in flags
 
     @staticmethod

@@ -93,7 +93,7 @@ def normalize_rfc(value: str) -> str:
     if value in _GENERIC_RFCS:
         raise ValueError("Captura el RFC personal del empleado; el RFC genérico no es válido")
     if len(value) != RFC_LENGTH:
-        raise ValueError(f"El RFC de una persona física tiene {RFC_LENGTH} caracteres")
+        raise ValueError(f"El RFC de una persona física tiene {RFC_LENGTH} caracteres; se escribieron {len(value)}")
     match = _RFC_RE.match(value)
     if not match:
         raise ValueError("El RFC no tiene un formato válido (p. ej. PEGJ900515AB1)")
@@ -145,10 +145,6 @@ def normalize_company_name(value: str, field: str = "El nombre") -> str:
     return value
 
 
-RFC_BIRTH_DATE_MISMATCH = "El RFC no coincide con la fecha de nacimiento"
-CURP_BIRTH_DATE_MISMATCH = "La CURP no coincide con la fecha de nacimiento"
-
-
 def curp_check_digit(first17: str) -> str:
     """Dígito verificador de la CURP (algoritmo de RENAPO)."""
     total = sum(_CURP_ALPHABET.index(char) * (18 - i) for i, char in enumerate(first17))
@@ -160,7 +156,7 @@ def normalize_curp(value: str) -> str:
     if not value:
         raise ValueError("La CURP es obligatoria")
     if len(value) != CURP_LENGTH:
-        raise ValueError(f"La CURP tiene {CURP_LENGTH} caracteres")
+        raise ValueError(f"La CURP tiene {CURP_LENGTH} caracteres; se escribieron {len(value)}")
     match = _CURP_RE.match(value)
     if not match:
         raise ValueError("La CURP no tiene un formato válido (p. ej. HEGG560427MVZRRL04)")
@@ -174,8 +170,37 @@ def normalize_curp(value: str) -> str:
 
 def curp_matches_birth_date(curp: str, birth_date: date) -> bool:
     """Fecha aammdd y siglo: el carácter 17 es dígito si nació antes de 2000 y letra después."""
-    century_ok = curp[16].isdigit() == (birth_date.year < 2000)
-    return curp[4:10] == birth_date.strftime("%y%m%d") and century_ok
+    return curp_birth_date_error(curp, birth_date) is None
+
+
+def _document_date(yymmdd: str, birth_date: date) -> str:
+    """Fecha aammdd de un RFC o una CURP como dd/mm/aaaa (con el siglo de la fecha capturada)."""
+    return f"{yymmdd[4:6]}/{yymmdd[2:4]}/{str(birth_date.year)[:2]}{yymmdd[:2]}"
+
+
+def rfc_birth_date_error(rfc: str, birth_date: date) -> str | None:
+    """Qué fecha indica el RFC y cuál se capturó, para corregir la que esté mal."""
+    if rfc_matches_birth_date(rfc, birth_date):
+        return None
+    return (
+        f"El RFC indica nacimiento el {_document_date(rfc[4:10], birth_date)}, "
+        f"pero la fecha de nacimiento es {birth_date:%d/%m/%Y}"
+    )
+
+
+def curp_birth_date_error(curp: str, birth_date: date) -> str | None:
+    """Fecha (aammdd) y siglo (carácter 17) de la CURP contra la fecha de nacimiento capturada."""
+    if curp[4:10] != birth_date.strftime("%y%m%d"):
+        return (
+            f"La CURP indica nacimiento el {_document_date(curp[4:10], birth_date)}, "
+            f"pero la fecha de nacimiento es {birth_date:%d/%m/%Y}"
+        )
+    if curp[16].isdigit() != (birth_date.year < 2000):
+        return (
+            "La CURP no corresponde al siglo de la fecha de nacimiento: su carácter 17 es un número "
+            "para quienes nacieron antes de 2000 y una letra a partir de 2000"
+        )
+    return None
 
 
 def luhn_valid(digits: str) -> bool:

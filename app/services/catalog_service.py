@@ -18,8 +18,10 @@ from app.core.config import settings
 from app.core.database import SessionLocal
 from app.models import (
     CatalogAccessory,
+    CatalogAntispoofLevel,
     CatalogConfidenceLevel,
     CatalogCountry,
+    CatalogDeviceStatus,
     CatalogEnrollmentFlag,
     CatalogEnrollmentRejectionReason,
     CatalogEnrollmentStatus,
@@ -45,6 +47,7 @@ CATALOG_MODELS: dict[str, type[CatalogEntry]] = {
     "validator_modes": CatalogValidatorMode,
     "face_statuses": CatalogFaceStatus,
     "enrollment_statuses": CatalogEnrollmentStatus,
+    "device_statuses": CatalogDeviceStatus,
     "verification_reasons": CatalogVerificationReason,
     "accessories": CatalogAccessory,
     "liveness_actions": CatalogLivenessAction,
@@ -52,6 +55,7 @@ CATALOG_MODELS: dict[str, type[CatalogEntry]] = {
     "enrollment_rejection_reasons": CatalogEnrollmentRejectionReason,
     "reverification_reasons": CatalogReverificationReason,
     "confidence_levels": CatalogConfidenceLevel,
+    "antispoof_levels": CatalogAntispoofLevel,
     "session_revocation_reasons": CatalogSessionRevocationReason,
     "face_errors": CatalogFaceError,
     "enrollment_flags": CatalogEnrollmentFlag,

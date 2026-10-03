@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.models import Employee, User
 from app.models.employee import employee_search_text
+from app.repositories.aggregates import paginate
 
 UniqueDocument = Literal["rfc", "curp", "nss"]
 
@@ -65,11 +66,8 @@ class EmployeeRepository:
         if active is not None:
             stmt = stmt.where(Employee.active.is_(active))
 
-        total = self.db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
-        items = self.db.scalars(
-            stmt.order_by(Employee.last_name, Employee.first_name, Employee.id).offset(offset).limit(limit)
-        ).all()
-        return list(items), int(total)
+        order = (Employee.last_name, Employee.first_name, Employee.id)
+        return paginate(self.db, stmt, order, offset=offset, limit=limit)
 
     def add(self, employee: Employee) -> Employee:
         employee.company_id = self.company_id

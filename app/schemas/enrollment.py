@@ -3,6 +3,7 @@ from datetime import date, datetime
 from pydantic import BaseModel, Field, field_validator
 
 from app.models.enums import EnrollmentStatus, FaceStatus
+from app.schemas.common import Page
 
 
 class EnrollmentSubmitResponse(BaseModel):
@@ -29,6 +30,8 @@ class FaceEnrollmentRead(BaseModel):
     submitted_at: datetime
     reviewed_at: datetime | None = None
     reviewed_by: str | None = None
+    #: Registro asistido: correo del administrador que capturó el rostro en persona.
+    captured_by: str | None = None
     rejection_reason: str | None = None
 
 
@@ -37,11 +40,8 @@ class FaceEnrollmentDetail(FaceEnrollmentRead):
     photo: str | None = None
 
 
-class FaceEnrollmentList(BaseModel):
-    items: list[FaceEnrollmentRead]
-    total: int
-    page: int
-    size: int
+class FaceEnrollmentList(Page[FaceEnrollmentRead]):
+    """Página de registros faciales (bandeja de validación o historial)."""
 
 
 class EnrollmentRejectRequest(BaseModel):

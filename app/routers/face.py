@@ -26,6 +26,7 @@ from app.schemas.face import FaceCheckResponse
 from app.schemas.verification import FaceChallengeResponse
 from app.services.checkpoint_service import CheckpointService
 from app.services.face_service import analyze_frames
+from app.services.identity_core import issue_challenge
 from app.services.policy_service import PolicyService
 from app.services.verification_service import VerificationService
 
@@ -80,8 +81,9 @@ def check_face(
     summary="Obtener reto de prueba de vida (girar la cabeza)",
     description=(
         "Reto aleatorio de uso único (TURN_LEFT / TURN_RIGHT) que expira en "
-        "FACE_CHALLENGE_TTL_SECONDS. Se usa en el registro facial y en la verificación. "
-        "La dirección es desde el punto de vista del empleado."
+        "FACE_CHALLENGE_TTL_SECONDS. Se usa en el registro facial y en la verificación (del "
+        "empleado, del validador o de la empresa con el empleado presente). La dirección es desde "
+        "el punto de vista del empleado."
     ),
 )
 def face_challenge(user: CurrentUser, db: DbSession) -> ApiResponse[FaceChallengeResponse]:
@@ -90,6 +92,9 @@ def face_challenge(user: CurrentUser, db: DbSession) -> ApiResponse[FaceChalleng
     elif user.role == UserRole.EMPLOYEE:
         company_of(user)  # 409 si trabaja en varias empresas y aún no elige
         challenge = VerificationService(db).issue_face_challenge(user)
+    elif user.role == UserRole.COMPANY:
+        # La empresa opera la cámara con el empleado presente (registro asistido o verificación).
+        challenge = issue_challenge(db, user.id, PolicyService(db, company_of(user)).current())
     else:
         raise PermissionDeniedError()
     if not challenge.liveness_required:

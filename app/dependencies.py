@@ -3,7 +3,7 @@
 from collections.abc import Callable, Generator
 from typing import Annotated
 
-from fastapi import Depends, Request, UploadFile
+from fastapi import Depends, File, Form, Query, Request, UploadFile
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
@@ -28,6 +28,7 @@ from app.facial_recognition import (
 from app.facial_recognition.image_utils import ALLOWED_CONTENT_TYPES
 from app.middleware.rate_limit import enforce
 from app.models import Screen, User, UserRole
+from app.schemas.common import PageParams
 from app.services.auth_service import ensure_account_usable
 from app.services.catalog_service import get_catalogs
 from app.services.policy_service import ensure_device_allowed
@@ -43,6 +44,25 @@ _bearer = HTTPBearer(
 )
 
 DbSession = Annotated[Session, Depends(get_db)]
+
+
+def _page_params(
+    page: Annotated[int, Query(ge=1, description="Página (desde 1)")] = 1,
+    size: Annotated[
+        int, Query(ge=1, le=settings.PAGE_SIZE_MAX, description="Elementos por página")
+    ] = settings.PAGE_SIZE_DEFAULT,
+) -> PageParams:
+    return PageParams(page=page, size=size)
+
+
+#: Nombre de la cámara con que se capturó (el `label` de la pista de video): las cámaras virtuales
+#: (programas que inyectan video) se rechazan con 422 VIRTUAL_CAMERA.
+CameraLabel = Annotated[
+    str | None, Form(max_length=200, description="Nombre de la cámara usada (las cámaras virtuales se rechazan)")
+]
+
+#: `page` y `size` de todo listado paginado: mismos límites y valor por omisión en toda la API.
+Pagination = Annotated[PageParams, Depends(_page_params)]
 
 
 def get_current_user(
@@ -224,6 +244,20 @@ def read_image_uploads(files: list[UploadFile], *, max_files: int) -> list[bytes
     if len(files) > max_files:
         raise UnprocessableError(f"Máximo {max_files} imágenes por solicitud", code="TOO_MANY_IMAGES")
     return [read_image_upload(f) for f in files]
+
+
+#: Una captura con la cabeza girada por cada giro del reto, en orden (el campo se repite).
+ChallengeImages = Annotated[
+    list[UploadFile] | None,
+    File(description="Captura con la cabeza girada por cada giro del reto, en orden (`challenge_image` repetido)"),
+]
+#: Giros que puede pedir un reto (verification_policy.liveness_steps).
+MAX_CHALLENGE_STEPS = 2
+
+
+def read_challenge_images(files: list[UploadFile] | None) -> list[bytes]:
+    """Capturas de los giros del reto (ninguna si no se envió el reto)."""
+    return read_image_uploads(files, max_files=MAX_CHALLENGE_STEPS) if files else []
 
 
 def face_check_rate_limit(user: CurrentUser) -> None:

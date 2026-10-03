@@ -1,16 +1,19 @@
 """Retos de prueba de vida (liveness) emitidos por el servidor.
 
 Flujo:
-1. El EMPLOYEE solicita un reto: el servidor elige al azar TURN_LEFT o TURN_RIGHT.
-2. El cliente captura frames frontales y un frame con la cabeza girada.
+1. Quien opera la cámara solicita un reto: el servidor elige al azar uno o dos giros
+   (TURN_LEFT / TURN_RIGHT), según la política de la empresa.
+2. El cliente captura frames frontales y uno con la cabeza girada por cada giro, en orden
+   (entre giros la persona vuelve al frente).
 3. Al verificar, el reto se consume (uso único), debe pertenecer al usuario y no
-   haber expirado. Un video o foto preparado de antemano no conoce la dirección.
+   haber expirado. Un video o foto preparado de antemano no conoce la secuencia.
 
 Almacenamiento en PostgreSQL (tabla `face_challenges`): compartido entre todos los procesos
 de la API, por lo que se puede escalar horizontalmente sin Redis.
 """
 
 import secrets
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
@@ -28,17 +31,28 @@ from app.services.face_service import face_rejection
 class Challenge:
     id: str
     user_id: int
-    direction: TurnDirection
+    #: Giros en orden (uno o dos).
+    directions: tuple[TurnDirection, ...]
     expires_at: datetime
+
+    @property
+    def direction(self) -> TurnDirection:
+        return self.directions[0]
+
+    @property
+    def issued_at(self) -> datetime:
+        """Cuándo se emitió (para exigir el tiempo humano mínimo de respuesta)."""
+        return as_utc(self.expires_at) - timedelta(seconds=settings.FACE_CHALLENGE_TTL_SECONDS)
 
 
 class ChallengeStore:
-    def issue(self, db: Session, user_id: int) -> Challenge:
+    def issue(self, db: Session, user_id: int, steps: int = 1) -> Challenge:
         now = datetime.now(UTC)
+        options = [d.value for d in TurnDirection]
         challenge = Challenge(
             id=secrets.token_urlsafe(24),
             user_id=user_id,
-            direction=TurnDirection(secrets.choice([d.value for d in TurnDirection])),
+            directions=tuple(TurnDirection(secrets.choice(options)) for _ in range(max(1, min(steps, 2)))),
             expires_at=now + timedelta(seconds=settings.FACE_CHALLENGE_TTL_SECONDS),
         )
         # Un solo reto vigente por usuario + limpieza de expirados (índice en expires_at).
@@ -47,7 +61,8 @@ class ChallengeStore:
             FaceChallenge(
                 id=challenge.id,
                 user_id=user_id,
-                direction=challenge.direction.value,
+                direction=challenge.directions[0].value,
+                second_direction=challenge.directions[1].value if len(challenge.directions) > 1 else None,
                 expires_at=challenge.expires_at,
             )
         )
@@ -59,36 +74,39 @@ class ChallengeStore:
         row = db.execute(
             delete(FaceChallenge)
             .where(FaceChallenge.id == challenge_id)
-            .returning(FaceChallenge.user_id, FaceChallenge.direction, FaceChallenge.expires_at)
+            .returning(
+                FaceChallenge.user_id, FaceChallenge.direction, FaceChallenge.second_direction, FaceChallenge.expires_at
+            )
         ).first()
         db.commit()
         if row is None or row.user_id != user_id or as_utc(row.expires_at) <= datetime.now(UTC):
             return None
-        return Challenge(
-            id=challenge_id, user_id=row.user_id, direction=TurnDirection(row.direction), expires_at=row.expires_at
-        )
+        directions = tuple(TurnDirection(d) for d in (row.direction, row.second_direction) if d)
+        return Challenge(id=challenge_id, user_id=row.user_id, directions=directions, expires_at=row.expires_at)
 
     def require(
         self,
         db: Session,
         user_id: int,
         challenge_id: str | None,
-        challenge_image: bytes | None,
+        challenge_images: Sequence[bytes],
         *,
         required: bool,
     ) -> Challenge | None:
         """Consume el reto obligatorio de prueba de vida (None si la política no lo exige).
 
-        422 LIVENESS_REQUIRED si falta el reto o su captura; 422 CHALLENGE_INVALID si expiró,
-        ya se usó o pertenece a otro usuario.
+        422 LIVENESS_REQUIRED si falta el reto o una captura por giro; 422 CHALLENGE_INVALID si
+        expiró, ya se usó o pertenece a otro usuario.
         """
         if not required:
             return None
-        if not challenge_id or challenge_image is None:
+        if not challenge_id or not challenge_images:
             raise face_rejection("LIVENESS_REQUIRED")
         challenge = self.consume(db, challenge_id, user_id)
         if challenge is None:
             raise face_rejection("CHALLENGE_INVALID")
+        if len(challenge_images) != len(challenge.directions):
+            raise face_rejection("LIVENESS_REQUIRED")  # falta (o sobra) la captura de algún giro
         return challenge
 
 

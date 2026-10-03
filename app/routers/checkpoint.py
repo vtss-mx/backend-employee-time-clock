@@ -6,11 +6,13 @@ from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile
 
 from app.core.responses import ApiResponse, ok
 from app.dependencies import (
+    CameraLabel,
+    ChallengeImages,
     DbSession,
     Pipeline,
     ValidatorUser,
     checkpoint_rate_limit,
-    read_image_upload,
+    read_challenge_images,
     read_image_uploads,
     request_meta,
     require_screen,
@@ -106,14 +108,16 @@ def identify_by_face(
     pipeline: Pipeline,
     images: Annotated[list[UploadFile], File(description="Capturas frontales (JPEG/PNG/WEBP)")],
     challenge_id: Annotated[str | None, Form(max_length=100)] = None,
-    challenge_image: Annotated[UploadFile | None, File(description="Captura con la cabeza girada")] = None,
+    challenge_image: ChallengeImages = None,
     qr_content: Annotated[str | None, Form(max_length=512)] = None,
+    camera_label: CameraLabel = None,
 ) -> ApiResponse[VerificationResult]:
     result = checkpoint.identify_face(
         pipeline,
         read_image_uploads(images, max_files=3),
         challenge_id=challenge_id,
-        challenge_image=read_image_upload(challenge_image) if challenge_image is not None else None,
+        challenge_images=read_challenge_images(challenge_image),
         qr_content=qr_content or None,
+        camera_label=camera_label,
     )
     return _identified(result)

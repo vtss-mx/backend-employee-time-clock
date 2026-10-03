@@ -16,15 +16,15 @@ from sqlalchemy.orm import Session
 
 from app.core.exceptions import PermissionDeniedError
 from app.models import Screen, User
-from app.schemas.validators import normalize_email, normalize_phone
+from app.schemas.validators import normalize_phone
 from app.services.availability_service import FIELDS as EMPLOYEE_FIELDS
 from app.services.availability_service import Availability, AvailabilityService
 from app.services.availability_service import Field as EmployeeField
 from app.services.catalog_service import get_catalogs
 from app.services.company_service import CompanyService
 
-#: (BD, usuario, valor, id excluido al editar) → resultado.
-Checker = Callable[[Session, User, str, int | None], Availability]
+#: (BD, usuario, valor, id excluido al editar, valor relacionado) → resultado.
+Checker = Callable[[Session, User, str, int | None, str | None], Availability]
 
 
 @dataclass(frozen=True)
@@ -37,11 +37,12 @@ class LiveField:
 def _employee(field: EmployeeField) -> Checker:
     """Datos del empleado: únicos en su empresa (correo y teléfono, en la plataforma)."""
 
-    def check(db: Session, user: User, value: str, exclude_id: int | None) -> Availability:
+    def check(db: Session, user: User, value: str, exclude_id: int | None, related: str | None) -> Availability:
         company_id = user.company_id
         if company_id is None:  # la pantalla de empleados solo la tiene quien opera una empresa
             raise PermissionDeniedError("Esta validación corresponde a una empresa", code="COMPANY_REQUIRED")
-        return AvailabilityService(db, company_id).check(field, value, exclude_employee_id=exclude_id)
+        service = AvailabilityService(db, company_id)
+        return service.check(field, value, exclude_employee_id=exclude_id, related=related)
 
     return check
 
@@ -49,7 +50,7 @@ def _employee(field: EmployeeField) -> Checker:
 def _company(field: str, kind: str) -> Checker:
     """RFC de empresa (único) o correo de una cuenta nueva (único en la plataforma)."""
 
-    def check(db: Session, _user: User, value: str, exclude_id: int | None) -> Availability:
+    def check(db: Session, _user: User, value: str, exclude_id: int | None, _related: str | None) -> Availability:
         result = CompanyService(db).availability("rfc" if kind == "rfc" else "admin_email", value, exclude_id)
         return replace(result, field=field)
 
@@ -57,9 +58,9 @@ def _company(field: str, kind: str) -> Checker:
 
 
 def _format_only(field: str, normalize: Callable[[str], str], empty: str, valid: str) -> Checker:
-    """Datos de contacto (no únicos): solo el formato, con la misma regla que al guardar."""
+    """Datos que no son únicos (teléfono de la empresa): solo el formato, con la misma regla que al guardar."""
 
-    def check(_db: Session, _user: User, value: str, _exclude_id: int | None) -> Availability:
+    def check(_db: Session, _user: User, value: str, _exclude_id: int | None, _related: str | None) -> Availability:
         raw = (value or "").strip()
         if not raw:
             return Availability(field, value, None, False, False, "EMPTY", empty)
@@ -77,10 +78,6 @@ FIELDS: dict[str, LiveField] = {
     "validator_email": LiveField((Screen.COMPANY_VALIDATORS,), _company("validator_email", "email")),
     "company_rfc": LiveField((Screen.ADMIN_COMPANIES,), _company("company_rfc", "rfc")),
     "company_admin_email": LiveField((Screen.ADMIN_COMPANIES,), _company("company_admin_email", "email")),
-    "company_contact_email": LiveField(
-        (Screen.ADMIN_COMPANIES,),
-        _format_only("company_contact_email", normalize_email, "El correo es obligatorio", "Correo válido"),
-    ),
     "company_phone": LiveField(
         (Screen.ADMIN_COMPANIES,),
         _format_only("company_phone", normalize_phone, "El teléfono es obligatorio", "Teléfono válido"),
@@ -94,9 +91,15 @@ def fields_for(user: User, db: Session | None = None) -> list[str]:
     return [name for name, spec in FIELDS.items() if catalogs.grants(user.role.value, spec.screens)]
 
 
-def validate_field(db: Session, user: User, field: str, value: str, exclude_id: int | None = None) -> Availability:
-    """Valida `value` como `field`; 403 si el campo no existe o el rol no tiene su pantalla."""
+def validate_field(
+    db: Session, user: User, field: str, value: str, exclude_id: int | None = None, related: str | None = None
+) -> Availability:
+    """Valida `value` como `field`; 403 si el campo no existe o el rol no tiene su pantalla.
+
+    `related`: otro valor del mismo formulario que la regla necesita (el correo al validar el
+    teléfono de un empleado nuevo: si la persona ya trabaja en otra empresa, deben ser de ella).
+    """
     spec = FIELDS.get(field)
     if spec is None or not get_catalogs(db).grants(user.role.value, spec.screens):
         raise PermissionDeniedError("No puedes validar este campo", code="FIELD_NOT_ALLOWED")
-    return spec.check(db, user, value, exclude_id)
+    return spec.check(db, user, value, exclude_id, related)

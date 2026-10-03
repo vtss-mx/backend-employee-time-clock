@@ -1,15 +1,18 @@
 """Pruebas con SQLite y un pipeline facial falso (no requiere modelos ONNX)."""
 
+import base64
 import hashlib
 import os
 import tempfile
+import uuid
 from dataclasses import replace
 
 import numpy as np
 import pytest
 from cryptography.fernet import Fernet
-from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
 
 _tmpdir = tempfile.mkdtemp()
 os.environ.update(
@@ -31,6 +34,8 @@ os.environ.update(
         "FIRST_COMPANY_PASSWORD": "",
         "FACE_MATCH_THRESHOLD": "0.38",
         "FACE_MODELS_AUTO_DOWNLOAD": "false",
+        # Las pruebas responden al reto al instante; test_capture_security lo vuelve a exigir.
+        "FACE_CHALLENGE_MIN_SECONDS": "0",
     }
 )
 
@@ -42,6 +47,7 @@ from app.facial_recognition import FaceAnalysis, FaceValidationError, TurnDirect
 from app.facial_recognition.pipeline import DEFAULT_POLICY, Accessory, FacePolicy, accessories_error  # noqa: E402
 from app.main import app  # noqa: E402
 from app.middleware.rate_limit import limiter  # noqa: E402
+from app.models import DeviceStatus, ValidatorDevice  # noqa: E402
 from app.models.catalog_seed import create_schema  # noqa: E402
 from app.services.bootstrap import create_admin_user, create_company_user  # noqa: E402
 from app.services.catalog_service import clear_catalog_cache  # noqa: E402
@@ -70,12 +76,32 @@ def _analysis(name: str) -> FaceAnalysis:
     )
 
 
+def _parse(image_bytes: bytes) -> tuple[str, str]:
+    """(tipo, persona) de una imagen simulada; lo que sigue a "#" identifica el fotograma."""
+    kind, _, rest = image_bytes.decode(errors="ignore").partition(":")
+    return kind, rest.split("#")[0]
+
+
+def _traits(image_bytes: bytes, kind: str) -> dict:
+    """Huella y tamaño de la captura simulada.
+
+    Cada captura es única (como el ruido del sensor de una cámara real) salvo que traiga "#<id>":
+    entonces su huella es la de su contenido, para simular fotos fijas y reenvíos. `wide:` simula
+    una captura de otra resolución (otra cámara o un archivo).
+    """
+    digest = hashlib.sha256(image_bytes).hexdigest() if b"#" in image_bytes else uuid.uuid4().hex
+    return {"capture_digest": digest, "image_size": (1280, 720) if kind == "wide" else (640, 480)}
+
+
 class FakePipeline:
     """Imágenes simuladas como texto:
-    b"face:<persona>"           captura frontal válida
+    b"face:<persona>"           captura frontal válida (b"wide:<persona>": de otra resolución)
     b"glasses:<persona>"        con lentes      b"hat:<persona>"  con gorra
+    b"spoof:<persona>"          foto o pantalla frente a la cámara
+    b"exif:<persona>"           archivo con metadatos de cámara (no es una captura de la app)
     b"noface" / b"multi"        sin rostro / varias personas
-    b"turn-left:<persona>"      cabeza girada a la izquierda (b"turn-right:..." derecha)
+    b"turn-left:<persona>"      cabeza girada a la izquierda (b"turn-right:..." derecha); con
+                                "spoof-" delante es una pantalla y con "-moved" el rostro saltó de lugar
     """
 
     model_name = "fake-model"
@@ -88,21 +114,34 @@ class FakePipeline:
             raise FaceValidationError("NO_FACE")
         if text == "multi":
             raise FaceValidationError("MULTIPLE_FACES")
-        kind, _, name = text.partition(":")
+        kind, name = _parse(image_bytes)
+        if kind == "exif" and policy.reject_foreign_images:
+            raise FaceValidationError("IMAGE_NOT_FROM_CAMERA")
         detected = {"glasses": Accessory.GLASSES, "mask": Accessory.MASK, "hat": Accessory.HEADWEAR}.get(kind)
         found = (detected,) if detected is not None and policy.blocks(detected) else ()
         if found and enforce_accessories:
             raise accessories_error(found)
-        # b"spoof:<persona>" simula una foto/pantalla frente a la cámara.
         real = (0.01 if kind == "spoof" else 0.98) if policy.anti_spoofing else None
-        return replace(_analysis(name), accessories_found=found, real_probability=real)
+        return replace(_analysis(name), accessories_found=found, real_probability=real, **_traits(image_bytes, kind))
 
-    def analyze_turn(self, image_bytes: bytes, direction: TurnDirection) -> FaceAnalysis:
-        kind, _, name = image_bytes.decode(errors="ignore").partition(":")
+    def analyze_turn(
+        self, image_bytes: bytes, direction: TurnDirection, *, policy: FacePolicy = DEFAULT_POLICY
+    ) -> FaceAnalysis:
+        kind, name = _parse(image_bytes)
+        spoofed, moved = kind.startswith("spoof-"), kind.endswith("-moved")
+        kind = kind.removeprefix("spoof-").removesuffix("-moved")
+        if kind == "exif" and policy.reject_foreign_images:
+            raise FaceValidationError("IMAGE_NOT_FROM_CAMERA")
         expected = "turn-left" if direction == TurnDirection.LEFT else "turn-right"
         if kind != expected:
             raise FaceValidationError("LIVENESS_TURN_NOT_DETECTED")
-        return _analysis(name)
+        real = (0.01 if spoofed else 0.98) if policy.anti_spoofing else None
+        return replace(
+            _analysis(name),
+            face_box=(600, 400, 100, 100) if moved else (0, 0, 100, 100),
+            real_probability=real,
+            **_traits(image_bytes, kind),
+        )
 
 
 @pytest.fixture(autouse=True)
@@ -137,8 +176,37 @@ def client():
     app.dependency_overrides.clear()
 
 
+#: Llave del dispositivo de pruebas (como la que genera la webapp con WebCrypto, no exportable).
+TEST_DEVICE_KEY = ec.generate_private_key(ec.SECP256R1())
+
+
+def device_proof(nonce: str, key: ec.EllipticCurvePrivateKey = TEST_DEVICE_KEY, name: str = "Safari · iPadOS") -> dict:
+    """Prueba de posesión del dispositivo: llave pública (SPKI) y firma r||s del reto, en base64."""
+    public = key.public_key().public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)
+    r, s = decode_dss_signature(key.sign(nonce.encode(), ec.ECDSA(hashes.SHA256())))
+    raw = r.to_bytes(32, "big") + s.to_bytes(32, "big")
+    return {
+        "public_key": base64.b64encode(public).decode(),
+        "nonce": nonce,
+        "signature": base64.b64encode(raw).decode(),
+        "name": name,
+    }
+
+
 def login(client: TestClient, email: str, password: str) -> dict[str, str]:
-    response = client.post("/api/auth/login", json={"email": email, "password": password})
+    """Inicia sesión. Un validador firma el reto con el dispositivo de pruebas, que se da por
+    autorizado por su empresa (las pruebas de dispositivos recorren ese flujo completo)."""
+    body = {"email": email, "password": password}
+    response = client.post("/api/auth/login", json=body)
+    if response.status_code == 403 and response.json()["code"] == "DEVICE_PROOF_REQUIRED":
+        body["device"] = device_proof(response.json()["errors"][0]["details"]["nonce"])
+        response = client.post("/api/auth/login", json=body)
+        if response.status_code == 403 and response.json()["code"] == "DEVICE_PENDING_APPROVAL":
+            with SessionLocal() as db:
+                device = db.get(ValidatorDevice, response.json()["errors"][0]["details"]["device_id"])
+                device.status = DeviceStatus.APPROVED
+                db.commit()
+            response = client.post("/api/auth/login", json=body)
     assert response.status_code == 200, response.text
     return {"Authorization": f"Bearer {response.json()['data']['access_token']}"}
 
@@ -160,7 +228,6 @@ def create_company(client, admin_headers, *, rfc="PNO120315AB1", admin_email="ad
         "name": "Panificadora del Norte",
         "legal_name": "Panificadora del Norte, S.A. de C.V.",
         "rfc": rfc,
-        "contact_email": "contacto@panificadora.com",
         "phone": "6621234567",
         "admin_email": admin_email,
         "admin_password": "Empresa1234",
@@ -228,11 +295,24 @@ def nss_for(number: str) -> str:
     return next(base + d for d in "0123456789" if luhn_valid(base + d))
 
 
+def turn_files(challenge: dict, person: str = "juan", *, image: str = "turn:{person}", wrong: bool = False) -> list:
+    """Una captura con la cabeza girada por cada giro del reto, en orden.
+
+    `image` es la captura simulada con "turn" en lugar del lado (p. ej. "spoof-turn:{person}");
+    `wrong=True` gira al lado contrario del pedido.
+    """
+    files = []
+    for i, action in enumerate(challenge["actions"] or [challenge["action"]]):
+        left = (action == "TURN_LEFT") != wrong
+        content = image.format(person=person).replace("turn", "turn-left" if left else "turn-right", 1)
+        files.append(("challenge_image", (f"t{i}.jpg", content.encode(), "image/jpeg")))
+    return files
+
+
 def submit_enrollment(client, headers, *, frontal=(b"face:juan", b"face:juan", b"face:juan"), turn_person="juan"):
     challenge = client.post("/api/face/challenge", headers=headers).json()["data"]
-    turn = f"{'turn-left' if challenge['action'] == 'TURN_LEFT' else 'turn-right'}:{turn_person}".encode()
     files = [("images", (f"f{i}.jpg", f, "image/jpeg")) for i, f in enumerate(frontal)]
-    files.append(("challenge_image", ("t.jpg", turn, "image/jpeg")))
+    files += turn_files(challenge, turn_person)
     return client.post(
         "/api/enrollment/face", data={"challenge_id": challenge["challenge_id"]}, files=files, headers=headers
     )

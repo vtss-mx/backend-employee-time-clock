@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.models import AuthSession, Company, Employee, SessionRevocationReason, User, UserRole
 from app.models.company import company_search_text
-from app.repositories.aggregates import group_counts
+from app.repositories.aggregates import group_counts, paginate
 
 
 class CompanyRepository:
@@ -36,9 +36,7 @@ class CompanyRepository:
             stmt = stmt.where(company_search_text().contains(term, autoescape=True))
         if active is not None:
             stmt = stmt.where(Company.active.is_(active))
-        total = self.db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
-        items = self.db.scalars(stmt.order_by(func.lower(Company.name), Company.id).offset(offset).limit(limit)).all()
-        return list(items), int(total)
+        return paginate(self.db, stmt, (func.lower(Company.name), Company.id), offset=offset, limit=limit)
 
     def counts(self, company_ids: Iterable[int]) -> dict[int, tuple[int, int]]:
         """(empleados, administradores) por empresa: dos GROUP BY para toda la página, sin N+1."""

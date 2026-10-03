@@ -1,11 +1,15 @@
-"""Verificación de identidad del EMPLOYEE autenticado (rostro o QR).
+"""Verificación de identidad 1:1 (rostro o QR).
 
-Ambos métodos son verificaciones 1:1: se comprueba que la evidencia presentada
-(rostro o QR) corresponde a la cuenta que inició sesión. Cada intento queda
-registrado en `verification_logs`. Las reglas comunes viven en identity_core.
+- El EMPLOYEE autenticado se verifica a sí mismo: la evidencia (rostro o QR) debe corresponder a
+  la cuenta que inició sesión.
+- La COMPANY verifica en persona a uno de sus empleados: su rostro contra el registro aprobado.
+
+Cada intento queda en `verification_logs` (con quién lo hizo). Las reglas comunes viven en
+identity_core.
 """
 
 import logging
+from collections.abc import Sequence
 
 import numpy as np
 from sqlalchemy.orm import Session
@@ -17,16 +21,18 @@ from app.facial_recognition import FacePipeline
 from app.models import Employee, EnrollmentStatus, FaceStatus, User, VerificationMethod
 from app.repositories.enrollment_repository import FaceEnrollmentRepository
 from app.schemas.verification import FaceChallengeResponse, VerificationResult
+from app.services.attempt_guard import ensure_unlocked
+from app.services.capture_guard import ensure_real_camera, inspect_take
 from app.services.catalog_service import get_catalogs
-from app.services.face_service import FaceService
+from app.services.face_service import FaceService, SuspiciousCapture
 from app.services.identity_core import (
     FACE_SUCCESS,
     QR_SUCCESS,
     IdentityLog,
+    check_liveness,
     ensure_frame_count,
     failed,
     issue_challenge,
-    liveness_failure,
     match_references,
     mean_confidence,
     reason_message,
@@ -58,7 +64,8 @@ class VerificationService:
         pipeline: FacePipeline,
         *,
         challenge_id: str | None = None,
-        challenge_image: bytes | None = None,
+        challenge_images: Sequence[bytes] = (),
+        camera_label: str | None = None,
     ) -> VerificationResult:
         """Verificación 1:1 del empleado autenticado.
 
@@ -67,25 +74,89 @@ class VerificationService:
         3. Frame del reto: la cabeza girada en la dirección solicitada y misma persona.
         4. Cada frame frontal debe alcanzar la confianza de la empresa contra sus muestras.
         """
-        employee = self._employee_of(user)
+        return self.verify_employee_face(
+            self._employee_of(user),
+            user,
+            frontal_images,
+            pipeline,
+            challenge_id=challenge_id,
+            challenge_images=challenge_images,
+            camera_label=camera_label,
+        )
+
+    def verify_in_person(
+        self,
+        employee: Employee,
+        operator: User,
+        frontal_images: list[bytes],
+        pipeline: FacePipeline,
+        *,
+        challenge_id: str | None = None,
+        challenge_images: Sequence[bytes] = (),
+        camera_label: str | None = None,
+    ) -> VerificationResult:
+        """La empresa verifica la identidad de un empleado presente: su rostro contra su registro aprobado."""
+        if not employee.active:
+            raise ConflictError("El empleado está inactivo", code="EMPLOYEE_INACTIVE")
+        if employee.face_status != FaceStatus.APPROVED:
+            raise ConflictError(
+                "El empleado aún no tiene un rostro aprobado: regístralo primero", code="FACE_NOT_APPROVED"
+            )
+        return self.verify_employee_face(
+            employee,
+            operator,
+            frontal_images,
+            pipeline,
+            challenge_id=challenge_id,
+            challenge_images=challenge_images,
+            camera_label=camera_label,
+        )
+
+    def verify_employee_face(
+        self,
+        employee: Employee,
+        actor: User,
+        frontal_images: list[bytes],
+        pipeline: FacePipeline,
+        *,
+        challenge_id: str | None,
+        challenge_images: Sequence[bytes],
+        camera_label: str | None = None,
+    ) -> VerificationResult:
+        """Rostro de `employee` contra sus muestras; `actor` opera la cámara (su reto y su bitácora).
+
+        Demasiados fallos seguidos del empleado bloquean temporalmente (429 FACE_LOCKED). Un intento
+        sospechoso (pantalla, foto fija, reenvío, cámara virtual...) se registra y responde 422.
+        """
         ensure_frame_count(frontal_images)
         policy = PolicyService(self.db, employee.company_id).current()
+        ensure_unlocked(self.db, policy, employee_id=employee.id)
         face_service = FaceService(self.db, pipeline)
         references = face_service.load_references(employee.id) or self.migrate_references(employee, face_service)
         if not references:
             raise ConflictError(get_catalogs().face_error_message("FACE_NOT_REGISTERED"), code="FACE_NOT_REGISTERED")
 
-        challenge = challenge_store.require(
-            self.db, user.id, challenge_id, challenge_image, required=policy.liveness_required
-        )
+        try:
+            ensure_real_camera(camera_label, policy)
+            challenge = challenge_store.require(
+                self.db, actor.id, challenge_id, challenge_images, required=policy.liveness_required
+            )
+            # Errores de calidad/accesorios -> 422 (no cuentan como intento fallido).
+            face_policy = policy.face_policy(employee)
+            frontal, _ = face_service.analyze_frames(frontal_images, policy=face_policy)
+            liveness = check_liveness(pipeline, challenge, challenge_images, frontal, policy, face_policy)
+            if liveness.spoofed:
+                raise SuspiciousCapture("SPOOF_DETECTED")
+            inspect_take(self.db, employee.company_id, frontal, liveness.turns, policy)
+        except SuspiciousCapture as exc:
+            logger.warning("Intento sospechoso (empleado %s, operador %s): %s", employee.id, actor.id, exc.code)
+            self._record(employee, actor, VerificationMethod.FACE, False, None, exc.code)
+            raise
 
-        # Errores de calidad/accesorios/suplantación -> 422 (no cuentan como intento fallido).
-        frontal, _ = face_service.analyze_frames(frontal_images, policy=policy.face_policy(employee))
-
-        failure = liveness_failure(pipeline, challenge, challenge_image, frontal)
+        failure = liveness.failure
         if failure is not None:
             logger.info("Prueba de vida no superada (empleado %s): %s", employee.id, failure.reason)
-            self._record(employee, user, VerificationMethod.FACE, False, failure.score, failure.reason)
+            self._record(employee, actor, VerificationMethod.FACE, False, failure.score, failure.reason)
             return failed(VerificationMethod.FACE, failure.message)
 
         required = required_similarity(policy)
@@ -93,7 +164,7 @@ class VerificationService:
         matched = min(similarities) >= required
         score = mean_confidence(similarities)
 
-        self._record(employee, user, VerificationMethod.FACE, matched, score, None if matched else "NO_MATCH")
+        self._record(employee, actor, VerificationMethod.FACE, matched, score, None if matched else "NO_MATCH")
         if not matched:
             return failed(VerificationMethod.FACE, reason_message("NO_MATCH"))
         if len(references) < settings.FACE_MAX_SAMPLES_PER_EMPLOYEE and challenge is not None:

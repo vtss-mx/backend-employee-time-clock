@@ -32,6 +32,9 @@ def validate(
     field: Annotated[str, Query(max_length=40, description="Campo (p. ej. email, phone, company_rfc)")],
     value: Annotated[str, Query(max_length=255)] = "",
     exclude_id: Annotated[int | None, Query(description="Al editar: id del registro (su valor no cuenta)")] = None,
+    related: Annotated[
+        str | None, Query(max_length=255, description="Valor relacionado (el correo, al validar el teléfono)")
+    ] = None,
 ) -> ApiResponse[dict]:
-    result = validate_field(db, user, field, value, exclude_id)
+    result = validate_field(db, user, field, value, exclude_id, related)
     return ok(result.as_dict(), result.message, code=result.code)

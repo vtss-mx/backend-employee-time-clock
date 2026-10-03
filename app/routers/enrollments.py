@@ -6,13 +6,16 @@ from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 
 from app.core.responses import ApiResponse, ok
 from app.dependencies import (
+    CameraLabel,
+    ChallengeImages,
     CompanyScope,
     CompanyUser,
     DbSession,
     EmployeeUser,
+    Pagination,
     Pipeline,
     company_of,
-    read_image_upload,
+    read_challenge_images,
     read_image_uploads,
     require_screen,
     verification_rate_limit,
@@ -54,7 +57,7 @@ def submit_enrollment(
     pipeline: Pipeline,
     images: Annotated[list[UploadFile], File(description="Capturas frontales")],
     challenge_id: Annotated[str | None, Form(max_length=100)] = None,
-    challenge_image: Annotated[UploadFile | None, File(description="Captura con la cabeza girada")] = None,
+    challenge_image: ChallengeImages = None,
     accessory_review: Annotated[
         bool,
         Form(
@@ -64,11 +67,18 @@ def submit_enrollment(
             )
         ),
     ] = False,
+    camera_label: CameraLabel = None,
 ) -> ApiResponse[EnrollmentSubmitResponse]:
     frontal = read_image_uploads(images, max_files=5)
-    turn = read_image_upload(challenge_image) if challenge_image is not None else None
+    turns = read_challenge_images(challenge_image)
     result = EnrollmentService(db, company_of(user)).submit(
-        user, frontal, pipeline, challenge_id=challenge_id, challenge_image=turn, accessory_review=accessory_review
+        user,
+        frontal,
+        pipeline,
+        challenge_id=challenge_id,
+        challenge_images=turns,
+        accessory_review=accessory_review,
+        camera_label=camera_label,
     )
     return ok(
         result,
@@ -87,11 +97,10 @@ def submit_enrollment(
 def list_enrollments(
     company: CompanyScope,
     db: DbSession,
+    page: Pagination,
     status: Annotated[EnrollmentStatus | None, Query(description="Por defecto: PENDING")] = EnrollmentStatus.PENDING,
-    page: Annotated[int, Query(ge=1)] = 1,
-    size: Annotated[int, Query(ge=1, le=100)] = 20,
 ) -> ApiResponse[FaceEnrollmentList]:
-    result = EnrollmentService(db, company).list_enrollments(status=status, page=page, size=size)
+    result = EnrollmentService(db, company).list_enrollments(status=status, page=page)
     return ok(result, f"{result.total} registro(s) facial(es)", code="ENROLLMENTS_LISTED")
 
 

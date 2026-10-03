@@ -30,6 +30,31 @@ def face_rejection(code: str, details: Mapping[str, Any] | None = None, prefix: 
     return UnprocessableError(message, code=code, details=dict(details) if details else None)
 
 
+#: Rechazos que indican un intento de engaño (no un problema de calidad de la captura): además de
+#: responder 422, se registran en la bitácora con su motivo y cuentan para el bloqueo temporal.
+SECURITY_REASONS = (
+    "SPOOF_DETECTED",
+    "IMAGE_NOT_FROM_CAMERA",
+    "STATIC_CAPTURE",
+    "REPLAY_DETECTED",
+    "CAPTURE_INCONSISTENT",
+    "VIRTUAL_CAMERA",
+    "CHALLENGE_TOO_FAST",
+)
+
+
+class SuspiciousCapture(UnprocessableError):
+    """422 de una captura que parece un intento de engaño (foto, pantalla, reenvío, inyección...).
+
+    Quien atiende la petición la registra en la bitácora (motivo = `code`) antes de responder.
+    """
+
+    def __init__(self, code: str, details: Mapping[str, Any] | None = None) -> None:
+        super().__init__(
+            get_catalogs().face_error_message(code, details), code=code, details=dict(details) if details else None
+        )
+
+
 def accessories_rejection(found: Sequence[Accessory | str], prefix: str = "") -> UnprocessableError:
     """422 "Quítate los lentes para continuar": los nombres salen del catálogo de accesorios
     (el motor facial corre en otros procesos, sin base de datos, y solo informa los códigos)."""
@@ -43,6 +68,8 @@ def _run(fn: Callable[[], FaceAnalysis], prefix: str = "") -> FaceAnalysis:
     try:
         return fn()
     except FaceValidationError as exc:
+        if exc.code in SECURITY_REASONS:  # p. ej. una imagen con metadatos de cámara (no es de la app)
+            raise SuspiciousCapture(exc.code, exc.details) from exc
         if exc.code == "ACCESSORIES_DETECTED":
             raise accessories_rejection((exc.details or {}).get("accessories", []), prefix) from exc
         raise face_rejection(exc.code, exc.details, prefix) from exc
@@ -61,12 +88,15 @@ def _run(fn: Callable[[], FaceAnalysis], prefix: str = "") -> FaceAnalysis:
 SPOOF_FLAG = "SPOOF"
 
 
-def spoof_consensus(analyses: list[FaceAnalysis]) -> bool:
-    """La MAYORÍA estricta de las capturas parece una foto/pantalla (probabilidad real muy baja)."""
-    suspicious = sum(
-        a.real_probability is not None and a.real_probability < settings.FACE_ANTISPOOF_THRESHOLD for a in analyses
-    )
-    return suspicious * 2 > len(analyses)
+def looks_spoofed(analysis: FaceAnalysis, policy: FacePolicy) -> bool:
+    """Esta captura parece una foto, una pantalla o un video (según el nivel de la empresa)."""
+    return analysis.real_probability is not None and analysis.real_probability < policy.spoof_threshold
+
+
+def spoof_consensus(analyses: list[FaceAnalysis], policy: FacePolicy) -> bool:
+    """Las capturas parecen foto/pantalla: la mayoría estricta o, en el nivel máximo, una sola."""
+    suspicious = sum(looks_spoofed(a, policy) for a in analyses)
+    return suspicious > 0 if policy.spoof_any_frame else suspicious * 2 > len(analyses)
 
 
 def analyze_frames(
@@ -93,7 +123,7 @@ def analyze_frames(
 
     analyses = [_run(partial(analyze, img), f"Foto {i}: " if many else "") for i, img in enumerate(images, start=1)]
     found = accessory_consensus([a.accessories_found for a in analyses])
-    spoof = check_spoof and spoof_consensus(analyses)
+    spoof = check_spoof and spoof_consensus(analyses, policy)
     if spoof:
         logger.info("Anti-spoofing: probabilidades de rostro real %s", [a.real_probability for a in analyses])
     flags = tuple(a.value for a in found) + ((SPOOF_FLAG,) if spoof else ())
@@ -102,7 +132,7 @@ def analyze_frames(
     if found:
         raise accessories_rejection(found)
     if spoof:
-        raise face_rejection("SPOOF_DETECTED")
+        raise SuspiciousCapture("SPOOF_DETECTED")
     return analyses, flags
 
 
@@ -179,7 +209,14 @@ class FaceService:
         Al cambiar de motor (p. ej. SFace → fusión) los empleados aprobados no tienen que volver
         a registrarse: su foto de referencia (cifrada) ya fue validada por COMPANY.
         """
-        permissive = FacePolicy(block_glasses=False, block_headwear=False, block_mask=False, anti_spoofing=False)
+        # La foto de referencia ya fue validada (y es interna): sin accesorios, anti-spoofing ni EXIF.
+        permissive = FacePolicy(
+            block_glasses=False,
+            block_headwear=False,
+            block_mask=False,
+            anti_spoofing=False,
+            reject_foreign_images=False,
+        )
         try:
             analysis = self.pipeline.analyze_frontal(photo, policy=permissive, enforce_accessories=False)
         except (FaceValidationError, cv2.error, ValueError) as exc:

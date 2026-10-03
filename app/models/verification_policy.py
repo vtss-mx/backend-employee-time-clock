@@ -1,6 +1,18 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Numeric, func, text, true
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    Numeric,
+    SmallInteger,
+    String,
+    func,
+    text,
+    true,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -22,6 +34,10 @@ class VerificationPolicy(Base):
             postgresql_where=text("updated_by_id IS NOT NULL"),
             sqlite_where=text("updated_by_id IS NOT NULL"),
         ),
+        Index("ix_verification_policy_anti_spoofing_level", "anti_spoofing_level"),
+        CheckConstraint("liveness_steps BETWEEN 1 AND 2", name="liveness_steps"),
+        CheckConstraint("lockout_max_failures BETWEEN 3 AND 20", name="lockout_max_failures"),
+        CheckConstraint("lockout_minutes BETWEEN 1 AND 1440", name="lockout_minutes"),
         {"schema": TENANCY},
     )
 
@@ -48,6 +64,32 @@ class VerificationPolicy(Base):
     employee_mobile_only: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true(), nullable=False)
     # Los validadores de identidad solo operan desde una tableta o un teléfono (no computadoras).
     validator_mobile_only: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true(), nullable=False)
+
+    # --- Candados contra engaños: cada empresa decide (todos activos por defecto) ---
+    #: Sensibilidad del anti-spoofing (catalog.antispoof_levels).
+    anti_spoofing_level: Mapped[str] = mapped_column(
+        String(30),
+        ForeignKey(f"{CATALOG}.antispoof_levels.code"),
+        default="STANDARD",
+        server_default="STANDARD",
+        nullable=False,
+    )
+    #: Giros aleatorios de la prueba de vida (1 o 2): con dos, un video grabado debe acertar la secuencia.
+    liveness_steps: Mapped[int] = mapped_column(SmallInteger, default=2, server_default=text("2"), nullable=False)
+    block_virtual_cameras: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true(), nullable=False)
+    reject_foreign_images: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true(), nullable=False)
+    detect_static_captures: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true(), nullable=False)
+    detect_replays: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true(), nullable=False)
+    check_capture_continuity: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true(), nullable=False)
+    enforce_human_timing: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true(), nullable=False)
+    detect_duplicate_faces: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true(), nullable=False)
+    lockout_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true(), nullable=False)
+    #: Cada dispositivo de un validador debe autorizarlo la empresa antes de operar.
+    validator_device_approval: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=true(), nullable=False
+    )
+    lockout_max_failures: Mapped[int] = mapped_column(SmallInteger, default=5, server_default=text("5"), nullable=False)
+    lockout_minutes: Mapped[int] = mapped_column(SmallInteger, default=15, server_default=text("15"), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )

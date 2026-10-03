@@ -27,6 +27,8 @@ from app.schemas.auth import (
 from app.schemas.common import ErrorResponse
 from app.schemas.user import UserRead
 from app.services.auth_service import AuthService, default_company_id
+from app.services.device_service import ensure_device_authorized
+from app.services.location_service import ensure_location_allowed
 from app.services.navigation_service import user_read
 from app.services.policy_service import ensure_device_allowed
 from app.services.remembered_account_service import RememberedAccountService
@@ -96,6 +98,10 @@ def login(
     # Antes de crear la sesión: desde un dispositivo no permitido no se emite ningún token.
     ensure_device_allowed(db, user, request.headers)
     ip, user_agent = request_meta(request)
+    # Validador: solo desde un dispositivo que su empresa autorizó (firma el reto con su llave).
+    ensure_device_authorized(db, user, payload.device, ip=ip, user_agent=user_agent)
+    # Validador que requiere ubicación: solo dentro del radio de su domicilio.
+    ensure_location_allowed(user, payload.location)
     issued = SessionService(db).create(user, ip=ip, user_agent=user_agent, persistent=payload.remember)
     _set_refresh_cookie(response, request, issued, issued.refresh_token or "")
     accounts = RememberedAccountService(db)

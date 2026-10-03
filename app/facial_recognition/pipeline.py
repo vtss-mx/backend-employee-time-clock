@@ -8,6 +8,7 @@ analyze_turn (prueba de vida):
     imagen → detección → una sola persona → giro en la dirección del reto → embedding
 """
 
+import hashlib
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -58,6 +59,12 @@ class FacePolicy:
     block_headwear: bool = True
     block_mask: bool = True
     anti_spoofing: bool = True
+    #: Rechazar imágenes con metadatos de cámara o de edición (no son capturas en vivo).
+    reject_foreign_images: bool = True
+    #: Anti-spoofing: probabilidad de rostro real por debajo de la cual una captura es sospechosa, y
+    #: si basta una sola captura sospechosa (si no, decide la mayoría).
+    spoof_threshold: float = 0.05
+    spoof_any_frame: bool = False
 
     def blocks(self, accessory: "Accessory") -> bool:
         return {
@@ -114,6 +121,33 @@ class FaceAnalysis:
     accessories_found: tuple[Accessory, ...] = ()
     #: Probabilidad de rostro real (anti-spoofing). None si está desactivado.
     real_probability: float | None = None
+    #: Huella de la captura (SHA-256 de sus píxeles): detecta capturas repetidas o reenviadas.
+    capture_digest: str | None = None
+    #: Rostro alineado en miniatura (32x32, gris): detecta fotogramas idénticos de una foto fija.
+    face_thumb: np.ndarray | None = None
+    #: Ancho y alto de la imagen recibida (todas las capturas de una toma salen de la misma cámara).
+    image_size: tuple[int, int] | None = None
+
+
+#: Lado de la miniatura del rostro para comparar fotogramas.
+THUMB_SIDE = 32
+
+
+@dataclass(frozen=True)
+class CaptureTraits:
+    digest: str
+    thumb: np.ndarray
+    size: tuple[int, int]
+
+
+def capture_traits(image: np.ndarray, aligned: np.ndarray) -> CaptureTraits:
+    """Huella, miniatura y tamaño de una captura (para las comprobaciones contra engaños)."""
+    gray = cv2.cvtColor(aligned, cv2.COLOR_BGR2GRAY)
+    return CaptureTraits(
+        digest=hashlib.sha256(image.tobytes()).hexdigest(),
+        thumb=cv2.resize(gray, (THUMB_SIDE, THUMB_SIDE), interpolation=cv2.INTER_AREA).astype(np.float32),
+        size=(int(image.shape[1]), int(image.shape[0])),
+    )
 
 
 class FacePipeline:
@@ -144,7 +178,7 @@ class FacePipeline:
         `accessories_found` para decidir por consenso entre varias capturas.
         """
 
-        image = self._decode(image_bytes)
+        image = self._decode(image_bytes, policy)
         face = self._single_face(image, min_score=self.t.min_detection_score)
         self._check_framing(image, face)
 
@@ -170,7 +204,8 @@ class FacePipeline:
         scores, skin, found = self._detect_accessories(image, face, policy=policy)
         if found and enforce_accessories:
             raise accessories_error(found)
-        real = self.antispoof.real_probability(image, face) if self.antispoof and policy.anti_spoofing else None
+        real = self._real_probability(image, face, policy)
+        traits = capture_traits(image, aligned)
 
         return FaceAnalysis(
             embedding=self.engine.represent(image, face, aligned),
@@ -184,13 +219,21 @@ class FacePipeline:
             lower_face_skin=skin,
             accessories_found=found,
             real_probability=real,
+            capture_digest=traits.digest,
+            face_thumb=traits.thumb,
+            image_size=traits.size,
         )
 
     # ------------------------------------------------------------------ liveness
 
-    def analyze_turn(self, image_bytes: bytes, direction: TurnDirection) -> FaceAnalysis:
-        """Frame del reto de prueba de vida: la cabeza debe estar girada hacia `direction`."""
-        image = self._decode(image_bytes)
+    def analyze_turn(
+        self, image_bytes: bytes, direction: TurnDirection, *, policy: FacePolicy = DEFAULT_POLICY
+    ) -> FaceAnalysis:
+        """Frame del reto de prueba de vida: la cabeza debe estar girada hacia `direction`.
+
+        También pasa por el anti-spoofing: un video reproducido en una pantalla puede mostrar el
+        giro, pero no deja de ser una pantalla."""
+        image = self._decode(image_bytes, policy)
         # Un rostro girado obtiene menor puntuación en el detector: se usa el umbral secundario.
         face = self._single_face(image, min_score=self.t.secondary_detection_score)
         self._check_framing(image, face)
@@ -200,6 +243,7 @@ class FacePipeline:
                 "LIVENESS_TURN_NOT_DETECTED", {"yaw_ratio": pose.yaw_ratio, "expected": direction.value}
             )
         aligned = self.engine.align(image, face)
+        traits = capture_traits(image, aligned)
         return FaceAnalysis(
             embedding=self.engine.represent(image, face, aligned),
             detection_score=face.score,
@@ -208,15 +252,23 @@ class FacePipeline:
             brightness=float(cv2.cvtColor(aligned, cv2.COLOR_BGR2GRAY).mean()),
             face_box=(face.x, face.y, face.width, face.height),
             pose=pose,
+            real_probability=self._real_probability(image, face, policy),
+            capture_digest=traits.digest,
+            face_thumb=traits.thumb,
+            image_size=traits.size,
         )
 
     # ------------------------------------------------------------------ helpers
 
-    def _decode(self, image_bytes: bytes) -> np.ndarray:
+    def _real_probability(self, image: np.ndarray, face: DetectedFace, policy: FacePolicy) -> float | None:
+        return self.antispoof.real_probability(image, face) if self.antispoof and policy.anti_spoofing else None
+
+    def _decode(self, image_bytes: bytes, policy: FacePolicy) -> np.ndarray:
         return decode_image(
             image_bytes,
             min_dimension=self.t.min_image_dimension,
             max_dimension=self.t.max_image_dimension,
+            reject_foreign=policy.reject_foreign_images,
         )
 
     def _single_face(self, image: np.ndarray, *, min_score: float) -> DetectedFace:

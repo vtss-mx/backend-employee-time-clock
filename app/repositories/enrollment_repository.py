@@ -1,7 +1,8 @@
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import EnrollmentStatus, FaceEnrollment
+from app.repositories.aggregates import paginate
 
 
 class FaceEnrollmentRepository:
@@ -33,16 +34,13 @@ class FaceEnrollmentRepository:
         stmt = select(FaceEnrollment).where(FaceEnrollment.company_id == self.company_id)
         if status is not None:
             stmt = stmt.where(FaceEnrollment.status == status)
-        total = self.db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
-        # Pendientes: los más antiguos primero (cola de revisión); resto: los más recientes.
-        # Pendientes: el más antiguo primero; resto: el más reciente. El desempate por id va en
-        # la misma dirección para que el índice (status, submitted_at, id) entregue el orden.
+        # Pendientes: el más antiguo primero (cola de revisión); resto: el más reciente. El desempate
+        # por id va en la misma dirección para que el índice (status, submitted_at, id) entregue el orden.
         if status == EnrollmentStatus.PENDING:
             order = (FaceEnrollment.submitted_at.asc(), FaceEnrollment.id.asc())
         else:
             order = (FaceEnrollment.submitted_at.desc(), FaceEnrollment.id.desc())
-        items = self.db.scalars(stmt.order_by(*order).offset(offset).limit(limit)).unique().all()
-        return list(items), int(total)
+        return paginate(self.db, stmt, order, offset=offset, limit=limit)
 
     def pending_for_employee(self, employee_id: int) -> list[FaceEnrollment]:
         return list(

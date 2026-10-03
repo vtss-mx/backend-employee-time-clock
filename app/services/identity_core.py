@@ -17,13 +17,15 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.exceptions import UnprocessableError
-from app.facial_recognition import FaceAnalysis, FacePipeline, FaceValidationError
+from app.facial_recognition import FaceAnalysis, FacePipeline, FacePolicy, FaceValidationError
 from app.facial_recognition.calibration import match_confidence, similarity_for_confidence
 from app.facial_recognition.matcher import best_match, cosine_similarity
 from app.models import Employee, VerificationLog, VerificationMethod
 from app.repositories.verification_repository import VerificationLogRepository
 from app.schemas.verification import FaceChallengeResponse, VerificationResult
+from app.services.capture_guard import ensure_human_timing, spoofed
 from app.services.catalog_service import get_catalogs
+from app.services.face_service import SECURITY_REASONS, SuspiciousCapture
 from app.services.liveness_service import Challenge, challenge_store
 from app.services.policy_service import PolicySnapshot
 
@@ -61,15 +63,19 @@ def ensure_frame_count(images: Sequence[bytes]) -> None:
 
 
 def issue_challenge(db: Session, user_id: int, policy: PolicySnapshot) -> FaceChallengeResponse:
-    """Reto de prueba de vida (girar la cabeza) de uso único para el usuario autenticado."""
+    """Reto de prueba de vida (uno o dos giros, según la empresa) de uso único para quien lo pide."""
     if not policy.liveness_required:
         return FaceChallengeResponse(liveness_required=False)
-    challenge = challenge_store.issue(db, user_id)
+    challenge = challenge_store.issue(db, user_id, steps=policy.liveness_steps)
+    catalogs = get_catalogs(db)
+    instructions = [catalogs.liveness_instruction(d.value) for d in challenge.directions]
     return FaceChallengeResponse(
         liveness_required=True,
         challenge_id=challenge.id,
         action=challenge.direction,
-        instruction=get_catalogs(db).liveness_instruction(challenge.direction.value),
+        instruction=instructions[0],
+        actions=list(challenge.directions),
+        instructions=instructions,
         min_yaw_ratio=settings.FACE_LIVENESS_MIN_YAW_RATIO,
         expires_in=settings.FACE_CHALLENGE_TTL_SECONDS,
     )
@@ -93,24 +99,48 @@ class LivenessFailure:
         return reason_message(self.reason)
 
 
-def liveness_failure(
+@dataclass(frozen=True)
+class LivenessCheck:
+    """Resultado de la prueba de vida: el fallo (si lo hubo) y las capturas de los giros analizadas."""
+
+    failure: LivenessFailure | None = None
+    turns: tuple[FaceAnalysis, ...] = ()
+    #: Algún giro (junto con alguna frontal) parece una foto, pantalla o video (según el nivel).
+    spoofed: bool = False
+
+
+def check_liveness(
     pipeline: FacePipeline,
     challenge: Challenge | None,
-    challenge_image: bytes | None,
+    challenge_images: Sequence[bytes],
     frontal: Sequence[FaceAnalysis],
-) -> LivenessFailure | None:
-    """La captura del reto debe mostrar el giro pedido y ser la misma persona de las frontales."""
-    if challenge is None or challenge_image is None:
-        return None
-    try:
-        turned = pipeline.analyze_turn(challenge_image, challenge.direction)
-    except FaceValidationError as exc:
-        turn_missing = exc.code == "LIVENESS_TURN_NOT_DETECTED"
-        return LivenessFailure("LIVENESS_FAILED", capture_error=None if turn_missing else exc)
-    consistency = max(cosine_similarity(turned.embedding, f.embedding) for f in frontal)
-    if consistency < settings.FACE_LIVENESS_CONSISTENCY_THRESHOLD:
-        return LivenessFailure("LIVENESS_MISMATCH", round(consistency, 4))
-    return None
+    policy: PolicySnapshot,
+    face_policy: FacePolicy,
+) -> LivenessCheck:
+    """Las capturas del reto deben llegar a tiempo humano, mostrar cada giro pedido en orden, no ser
+    una pantalla y ser la misma persona de las frontales.
+
+    Lanza SuspiciousCapture si llegaron demasiado rápido o una imagen no es de la cámara; lo demás
+    (sin giro, otra persona) es un fallo de la prueba de vida que se registra como tal.
+    """
+    if challenge is None or not challenge_images:
+        return LivenessCheck()
+    ensure_human_timing(challenge, policy)
+    turns: list[FaceAnalysis] = []
+    for direction, image in zip(challenge.directions, challenge_images, strict=True):
+        try:
+            turned = pipeline.analyze_turn(image, direction, policy=face_policy)
+        except FaceValidationError as exc:
+            if exc.code in SECURITY_REASONS:
+                raise SuspiciousCapture(exc.code, exc.details) from exc
+            turn_missing = exc.code == "LIVENESS_TURN_NOT_DETECTED"
+            failure = LivenessFailure("LIVENESS_FAILED", capture_error=None if turn_missing else exc)
+            return LivenessCheck(failure, tuple(turns))
+        turns.append(turned)
+        consistency = max(cosine_similarity(turned.embedding, f.embedding) for f in frontal)
+        if consistency < settings.FACE_LIVENESS_CONSISTENCY_THRESHOLD:
+            return LivenessCheck(LivenessFailure("LIVENESS_MISMATCH", round(consistency, 4)), tuple(turns))
+    return LivenessCheck(turns=tuple(turns), spoofed=spoofed(frontal, turns, face_policy))
 
 
 def failed(method: VerificationMethod, message: str) -> VerificationResult:

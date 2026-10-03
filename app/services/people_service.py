@@ -29,12 +29,14 @@ LINKABLE_EMAIL = (
     "Esta persona ya tiene cuenta en Employee Time Clock: se agregará a tu empresa con su misma cuenta y contraseña."
 )
 LINKABLE_PHONE = "Este teléfono pertenece a una cuenta existente: el correo debe ser el de esa misma persona."
+PHONE_MATCHES = "El teléfono coincide con la cuenta de esta persona: se vinculará a tu empresa."
 SHARED_ACCOUNT = (
     "La cuenta de esta persona también pertenece a otra empresa: su correo, su teléfono y su contraseña "
     "no se pueden cambiar desde aquí."
 )
 
-Match = Literal["AVAILABLE", "LINKABLE", "TAKEN"]
+#: MISMATCH: el teléfono no es el de la cuenta del correo escrito (no se puede vincular).
+Match = Literal["AVAILABLE", "LINKABLE", "TAKEN", "MISMATCH"]
 
 
 @dataclass(frozen=True)
@@ -55,6 +57,16 @@ class PeopleService:
     def check_phone(self, phone: str, *, exclude_user_id: int | None = None) -> AccountCheck:
         owner = self.users.get_by_phone(phone)
         return self._check(owner, exclude_user_id, LINKABLE_PHONE, taken=PHONE_TAKEN, here=PHONE_TAKEN)
+
+    def check_phone_for(self, phone: str, email: str) -> AccountCheck | None:
+        """Teléfono junto con el correo escrito (alta): ambos deben ser de la misma persona para
+        vincularla, con la misma regla que al guardar. None si el conflicto es del correo (lo
+        informa su propio campo) y basta la verificación normal del teléfono."""
+        try:
+            account = self.account_to_link(email, phone)
+        except ConflictError as exc:
+            return AccountCheck("MISMATCH", exc.message) if exc.field == "phone" else None
+        return AccountCheck("LINKABLE", PHONE_MATCHES) if account else AccountCheck("AVAILABLE")
 
     def account_to_link(self, email: str, phone: str) -> User | None:
         """Cuenta existente a vincular como empleado de esta empresa, o None si es una persona nueva.

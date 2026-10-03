@@ -7,9 +7,10 @@ para correlacionar pregunta y respuesta.
     → {"type": "auth", "token": "<access token JWT>"}            (primer mensaje, ≤ 10 s)
     ← code WS_AUTHENTICATED
 
-    → {"type": "validate", "id": "a1b2c3d4", "field": "email", "value": "ana@x.com",
-       "excludeId": 7}                                              (excludeId al editar)
-    ← code AVAILABLE | LINKABLE | TAKEN | VALID | INVALID_FORMAT | EMPTY, data = resultado
+    → {"type": "validate", "id": "a1b2c3d4", "field": "phone", "value": "+526621234567",
+       "excludeId": 7, "related": "ana@x.com"}     (excludeId al editar; related: el correo
+                                                    escrito, al validar el teléfono de un alta)
+    ← code AVAILABLE | LINKABLE | TAKEN | MISMATCH | VALID | INVALID_FORMAT | EMPTY, data = resultado
       (403 FIELD_NOT_ALLOWED si el rol no tiene la pantalla que usa el campo)
 
 Los campos y sus permisos viven en app/services/live_validation.py (los mismos que el respaldo
@@ -82,10 +83,10 @@ def _authenticate(token: str) -> _Client:
     return _Client(user_id=user.id, session_id=str(payload["sid"]), expires_at=float(payload["exp"]), fields=fields)
 
 
-def _validate(client: _Client, field: str, value: str, exclude_id: int | None) -> dict[str, Any]:
+def _validate(client: _Client, field: str, value: str, exclude_id: int | None, related: str | None) -> dict[str, Any]:
     with SessionLocal() as db:
         user = SessionService(db).validate(client.session_id, client.user_id).user  # cerrar sesión corta el canal
-        return validate_field(db, user, field, value, exclude_id).as_dict()
+        return validate_field(db, user, field, value, exclude_id, related).as_dict()
 
 
 class _RateLimiter:
@@ -167,8 +168,10 @@ async def _handle(ws: WebSocket, client: _Client, message: dict[str, Any] | None
         await ws.send_json(_envelope(403, "FIELD_NOT_ALLOWED", "No puedes validar este campo", trace_id=trace_id))
         return
     exclude_id = exclude if isinstance(exclude, int) and not isinstance(exclude, bool) else None
+    related = message.get("related")
+    related_value = related[:255] if isinstance(related, str) else None
     try:
-        result = await run_in_threadpool(_validate, client, field, value, exclude_id)
+        result = await run_in_threadpool(_validate, client, field, value, exclude_id, related_value)
     except AuthenticationError as exc:
         await ws.send_json(_envelope(401, exc.code, exc.message, trace_id=trace_id))
         raise _Closed(4401) from exc

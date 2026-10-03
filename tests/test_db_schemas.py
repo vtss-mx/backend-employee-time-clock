@@ -10,8 +10,14 @@ from app.models.catalog_seed import load_catalog_seed
 EXPECTED = {
     AUTH: {"users", "auth_sessions", "remembered_accounts", "rate_limit_counters"},
     TENANCY: {"companies", "verification_policy"},
-    WORKFORCE: {"employees", "employee_qr_codes", "validators"},
-    BIOMETRICS: {"face_enrollments", "face_enrollment_flags", "face_embeddings", "face_challenges"},
+    WORKFORCE: {"employees", "employee_qr_codes", "validators", "validator_devices"},
+    BIOMETRICS: {
+        "face_enrollments",
+        "face_enrollment_flags",
+        "face_embeddings",
+        "face_challenges",
+        "capture_fingerprints",
+    },
     ATTENDANCE: {"verification_logs"},
     # Cada tabla del catálogo tiene sus registros en alembic/seed/catalogs.json (y viceversa).
     CATALOG: set(load_catalog_seed()),

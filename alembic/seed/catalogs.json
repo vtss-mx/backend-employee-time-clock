@@ -34,6 +34,12 @@
     {"code": "APPROVED", "name": "Aceptado", "description": "La empresa aceptó el registro facial.", "tone": "success", "sort_order": 2, "active": true},
     {"code": "REJECTED", "name": "Rechazado", "description": "La empresa rechazó el registro facial.", "tone": "danger", "sort_order": 3, "active": true}
   ],
+  "device_statuses": [
+    {"code": "PENDING", "name": "Por autorizar", "description": "El validador inició sesión en este dispositivo y espera la autorización de la empresa.", "tone": "warning", "sort_order": 1, "active": true},
+    {"code": "APPROVED", "name": "Autorizado", "description": "La empresa autorizó el dispositivo: el validador puede operar en él.", "tone": "success", "sort_order": 2, "active": true},
+    {"code": "REJECTED", "name": "Rechazado", "description": "La empresa no autorizó el dispositivo.", "tone": "danger", "sort_order": 3, "active": true},
+    {"code": "REVOKED", "name": "Revocado", "description": "La empresa retiró la autorización: sus sesiones se cerraron.", "tone": "muted", "sort_order": 4, "active": true}
+  ],
   "verification_reasons": [
     {"code": "NO_MATCH", "name": "Rostro no coincide", "description": null, "message": "Rostro no reconocido", "sort_order": 1, "active": true},
     {"code": "LIVENESS_FAILED", "name": "Prueba de vida no superada", "description": null, "message": "No fue posible verificar tu identidad: no se detectó el giro de cabeza solicitado", "sort_order": 2, "active": true},
@@ -48,7 +54,14 @@
     {"code": "REVOKED", "name": "QR revocado", "description": null, "message": "QR no reconocido", "sort_order": 11, "active": true},
     {"code": "EXPIRED", "name": "QR expirado", "description": null, "message": "El QR ha expirado. Solicita uno nuevo a tu empresa", "sort_order": 12, "active": true},
     {"code": "OTHER_EMPLOYEE", "name": "QR de otro empleado", "description": null, "message": "QR no reconocido", "sort_order": 13, "active": true},
-    {"code": "EMPLOYEE_INACTIVE", "name": "Empleado desactivado", "description": null, "message": "El empleado está desactivado", "sort_order": 14, "active": true}
+    {"code": "EMPLOYEE_INACTIVE", "name": "Empleado desactivado", "description": null, "message": "El empleado está desactivado", "sort_order": 14, "active": true},
+    {"code": "SPOOF_DETECTED", "name": "Posible foto o pantalla", "description": "El anti-spoofing detectó una foto impresa, una pantalla o un video.", "message": "No se pudo confirmar que seas una persona frente a la cámara.", "sort_order": 15, "active": true},
+    {"code": "IMAGE_NOT_FROM_CAMERA", "name": "Imagen que no es de la cámara", "description": "La imagen trae metadatos de una cámara o de un editor: es un archivo subido, no una captura en vivo.", "message": "La imagen no proviene de la cámara de la aplicación. Toma la captura en vivo frente a la cámara.", "sort_order": 16, "active": true},
+    {"code": "STATIC_CAPTURE", "name": "Foto fija", "description": "Las capturas del intento son idénticas: una persona real nunca da dos fotogramas iguales.", "message": "Las capturas son idénticas, como si fueran una foto fija. Colócate frente a la cámara e inténtalo de nuevo.", "sort_order": 17, "active": true},
+    {"code": "REPLAY_DETECTED", "name": "Captura reutilizada", "description": "La captura ya se había recibido antes: es un reenvío de una captura guardada.", "message": "Esta captura ya se había usado antes. Toma una captura nueva frente a la cámara.", "sort_order": 18, "active": true},
+    {"code": "CAPTURE_INCONSISTENT", "name": "Capturas de tomas distintas", "description": "Las capturas no salen de la misma cámara o el rostro cambió de tamaño o de lugar de forma imposible.", "message": "Las capturas no parecen de la misma toma. No cambies de cámara ni te alejes durante el proceso.", "sort_order": 19, "active": true},
+    {"code": "VIRTUAL_CAMERA", "name": "Cámara virtual", "description": "La cámara usada es un programa que puede transmitir un video o una foto en lugar de la cámara real.", "message": "No se permiten cámaras virtuales. Usa la cámara del dispositivo.", "sort_order": 20, "active": true},
+    {"code": "CHALLENGE_TOO_FAST", "name": "Giro demasiado rápido", "description": "La captura del giro llegó antes de lo que tarda una persona en girar la cabeza.", "message": "El giro se capturó demasiado rápido. Sigue la indicación en pantalla e inténtalo de nuevo.", "sort_order": 21, "active": true}
   ],
   "accessories": [
     {"code": "GLASSES", "name": "Lentes", "description": null, "phrase": "los lentes", "sort_order": 1, "active": true},
@@ -341,6 +354,11 @@
     {"code": "99", "name": "Estricto", "description": null, "false_accept_rate": 0.0, "rejection_rate": 2.4, "similarity": 0.471, "value": 0.99, "sort_order": 99, "active": true},
     {"code": "100", "name": "Máximo", "description": null, "false_accept_rate": 0.0, "rejection_rate": 24.3, "similarity": 0.653, "value": 0.99999, "sort_order": 100, "active": true}
   ],
+  "antispoof_levels": [
+    {"code": "STANDARD", "name": "Estándar", "description": "Rechaza cuando la mayoría de las capturas parecen una foto, una pantalla o un video. Recomendado para la mayoría de las cámaras.", "threshold": 0.05, "any_frame": false, "sort_order": 1, "active": true},
+    {"code": "HIGH", "name": "Alto", "description": "Más sensible: rechaza ante indicios moderados de foto o pantalla. Con poca luz o cámaras de baja calidad puede pedir repetir la captura.", "threshold": 0.3, "any_frame": false, "sort_order": 2, "active": true},
+    {"code": "MAXIMUM", "name": "Máximo", "description": "Basta con que una sola captura parezca una foto o una pantalla para rechazar. Exige buena luz y una cámara de calidad.", "threshold": 0.5, "any_frame": true, "sort_order": 3, "active": true}
+  ],
   "session_revocation_reasons": [
     {"code": "LOGOUT", "name": "Cierre de sesión", "description": "La persona cerró su sesión.", "message": "Tu sesión ya no es válida. Inicia sesión nuevamente.", "sort_order": 1, "active": true},
     {"code": "LOGOUT_ALL", "name": "Cierre en todos los dispositivos", "description": "La persona cerró sesión en todos sus dispositivos.", "message": "Tu sesión ya no es válida. Inicia sesión nuevamente.", "sort_order": 2, "active": true},
@@ -351,7 +369,9 @@
     {"code": "COMPANY_DEACTIVATED", "name": "Empresa desactivada", "description": "La empresa se desactivó: se cierran las sesiones de su personal.", "message": "Tu sesión ya no es válida. Inicia sesión nuevamente.", "sort_order": 7, "active": true},
     {"code": "EMPLOYEE_REMOVED", "name": "Baja de la empresa", "description": "La persona dejó de ser empleada de esa empresa.", "message": "Tu sesión ya no es válida. Inicia sesión nuevamente.", "sort_order": 8, "active": true},
     {"code": "SIGNED_IN_ELSEWHERE", "name": "Sesión en otro dispositivo", "description": "Un inicio de sesión nuevo desplazó a este (una sola sesión activa por persona).", "message": "Se inició sesión con tu cuenta en otro dispositivo. Por seguridad, solo puedes tener una sesión activa a la vez.", "sort_order": 9, "active": true},
-    {"code": "REFRESH_REUSE_DETECTED", "name": "Posible robo de sesión", "description": "Se presentó un token de renovación ya usado: se asume robo y se cierra la sesión.", "message": "Tu sesión ya no es válida. Inicia sesión nuevamente.", "sort_order": 10, "active": true}
+    {"code": "REFRESH_REUSE_DETECTED", "name": "Posible robo de sesión", "description": "Se presentó un token de renovación ya usado: se asume robo y se cierra la sesión.", "message": "Tu sesión ya no es válida. Inicia sesión nuevamente.", "sort_order": 10, "active": true},
+    {"code": "LOCATION_POLICY_CHANGED", "name": "Cambio de ubicación permitida", "description": "La empresa exigió o cambió la ubicación desde la que opera el validador.", "message": "La empresa cambió la ubicación desde la que puedes operar. Inicia sesión de nuevo en ese lugar.", "sort_order": 11, "active": true},
+    {"code": "DEVICE_REVOKED", "name": "Dispositivo revocado", "description": "La empresa retiró la autorización del dispositivo del validador.", "message": "La empresa retiró la autorización de este dispositivo. Pide que lo autoricen de nuevo para operar.", "sort_order": 12, "active": true}
   ],
   "face_errors": [
     {"code": "EMPTY_IMAGE", "name": "Sin imagen", "description": null, "message": "No se recibió ninguna imagen", "retryable": true, "sort_order": 1, "active": true},
@@ -380,13 +400,22 @@
     {"code": "FACE_NOT_REGISTERED", "name": "Sin registro facial", "description": "El empleado intenta verificarse sin tener su rostro registrado.", "message": "No tienes información facial registrada. Contacta a tu empresa.", "retryable": false, "sort_order": 24, "active": true},
     {"code": "FACE_SERVICE_BUSY", "name": "Motor facial ocupado", "description": null, "message": "Hay muchas solicitudes de reconocimiento en este momento. Intenta en unos segundos.", "retryable": true, "sort_order": 25, "active": true},
     {"code": "FACE_SERVICE_UNAVAILABLE", "name": "Motor facial no disponible", "description": null, "message": "El reconocimiento facial no está disponible temporalmente. Puedes identificarte con QR.", "retryable": false, "sort_order": 26, "active": true},
-    {"code": "FACE_PROCESSING_ERROR", "name": "Error del motor facial", "description": null, "message": "No fue posible procesar el rostro en este momento. Intenta nuevamente.", "retryable": true, "sort_order": 27, "active": true}
+    {"code": "FACE_PROCESSING_ERROR", "name": "Error del motor facial", "description": null, "message": "No fue posible procesar el rostro en este momento. Intenta nuevamente.", "retryable": true, "sort_order": 27, "active": true},
+    {"code": "IMAGE_NOT_FROM_CAMERA", "name": "Imagen que no es de la cámara", "description": "La imagen trae metadatos de una cámara o de un editor: es un archivo subido, no una captura en vivo.", "message": "La imagen no proviene de la cámara de la aplicación. Toma la captura en vivo frente a la cámara.", "retryable": true, "sort_order": 28, "active": true},
+    {"code": "STATIC_CAPTURE", "name": "Foto fija", "description": "Las capturas del intento son idénticas: una persona real nunca da dos fotogramas iguales.", "message": "Las capturas son idénticas, como si fueran una foto fija. Colócate frente a la cámara e inténtalo de nuevo.", "retryable": true, "sort_order": 29, "active": true},
+    {"code": "REPLAY_DETECTED", "name": "Captura reutilizada", "description": "La captura ya se había recibido antes: es un reenvío de una captura guardada.", "message": "Esta captura ya se había usado antes. Toma una captura nueva frente a la cámara.", "retryable": true, "sort_order": 30, "active": true},
+    {"code": "CAPTURE_INCONSISTENT", "name": "Capturas de tomas distintas", "description": "Las capturas no salen de la misma cámara o el rostro cambió de tamaño o de lugar de forma imposible.", "message": "Las capturas no parecen de la misma toma. No cambies de cámara ni te alejes durante el proceso.", "retryable": true, "sort_order": 31, "active": true},
+    {"code": "VIRTUAL_CAMERA", "name": "Cámara virtual", "description": "La cámara usada es un programa que puede transmitir un video o una foto en lugar de la cámara real.", "message": "No se permiten cámaras virtuales. Usa la cámara del dispositivo.", "retryable": true, "sort_order": 32, "active": true},
+    {"code": "CHALLENGE_TOO_FAST", "name": "Giro demasiado rápido", "description": "La captura del giro llegó antes de lo que tarda una persona en girar la cabeza.", "message": "El giro se capturó demasiado rápido. Sigue la indicación en pantalla e inténtalo de nuevo.", "retryable": true, "sort_order": 33, "active": true},
+    {"code": "FACE_ALREADY_REGISTERED", "name": "Rostro ya registrado", "description": "El rostro ya está registrado como otro empleado de la empresa.", "message": "Este rostro ya está registrado como otro empleado de la empresa.", "retryable": false, "sort_order": 34, "active": true},
+    {"code": "FACE_LOCKED", "name": "Bloqueo por intentos", "description": "Demasiados intentos fallidos o sospechosos seguidos.", "message": "Demasiados intentos fallidos. Por seguridad, espera {minutes} min para volver a intentarlo.", "retryable": false, "sort_order": 35, "active": true}
   ],
   "enrollment_flags": [
     {"code": "GLASSES", "name": "Posibles lentes", "description": "El sistema detectó posibles lentes y el empleado indicó que no los usa.", "sort_order": 1, "active": true},
     {"code": "HEADWEAR", "name": "Posible gorra o sombrero", "description": "El sistema detectó una posible gorra o sombrero y el empleado indicó que no la usa.", "sort_order": 2, "active": true},
     {"code": "MASK", "name": "Posible cubrebocas", "description": "El sistema detectó un posible cubrebocas y el empleado indicó que no lo usa.", "sort_order": 3, "active": true},
-    {"code": "SPOOF", "name": "Posible foto o pantalla", "description": "El anti-spoofing sugiere que las capturas podrían ser de una foto o una pantalla.", "sort_order": 4, "active": true}
+    {"code": "SPOOF", "name": "Posible foto o pantalla", "description": "El anti-spoofing sugiere que las capturas podrían ser de una foto o una pantalla.", "sort_order": 4, "active": true},
+    {"code": "DUPLICATE_FACE", "name": "Rostro ya registrado en otro empleado", "description": "El rostro se parece al registro aprobado de otro empleado de la empresa: confirma que no sea la misma persona con dos cuentas.", "sort_order": 5, "active": true}
   ],
   "screens": [
     {"code": "ADMIN_DASHBOARD", "name": "Panel", "description": "Indicadores de la plataforma y empresas recientes.", "sort_order": 1, "active": true, "path": "/admin/dashboard", "short_name": null, "icon": "LayoutDashboard", "badge": null},

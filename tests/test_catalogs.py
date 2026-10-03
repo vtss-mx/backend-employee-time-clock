@@ -23,7 +23,8 @@ from app.models import (
     VerificationMethod,
 )
 from app.services.catalog_service import clear_catalog_cache, get_catalogs
-from app.services.face_service import SPOOF_FLAG
+from app.services.enrollment_service import DUPLICATE_FLAG
+from app.services.face_service import SECURITY_REASONS, SPOOF_FLAG
 from tests.conftest import COMPANY_EMAIL, COMPANY_PASSWORD, create_employee, login, submit_enrollment
 from tests.test_validators import validator_headers
 
@@ -33,7 +34,7 @@ APP_DIR = Path(__file__).resolve().parents[1] / "app"
 REASONS = {
     "INVALID_FORMAT", "NOT_FOUND", "OTHER_COMPANY", "REVOKED", "EXPIRED", "OTHER_EMPLOYEE", "EMPLOYEE_INACTIVE",
     "NO_MATCH", "LIVENESS_FAILED", "LIVENESS_MISMATCH", "FACE_NOT_REGISTERED", "EMPTY_GALLERY", "AMBIGUOUS_MATCH",
-    "INCONSISTENT_MATCH",
+    "INCONSISTENT_MATCH", *SECURITY_REASONS,
 }  # fmt: skip
 
 
@@ -64,7 +65,7 @@ def test_catalogs_require_a_session(client, company_headers):
     assert data["accessories"][0] == {**data["accessories"][0], "code": "GLASSES", "phrase": "los lentes"}
     errors = {e["code"]: e for e in data["face_errors"]}
     assert errors["NO_FACE"]["retryable"] is True and errors["FACE_NOT_REGISTERED"]["retryable"] is False
-    assert [f["code"] for f in data["enrollment_flags"]] == ["GLASSES", "HEADWEAR", "MASK", "SPOOF"]
+    assert [f["code"] for f in data["enrollment_flags"]] == ["GLASSES", "HEADWEAR", "MASK", "SPOOF", "DUPLICATE_FACE"]
 
 
 def test_code_and_catalogs_name_the_same_values():
@@ -78,13 +79,13 @@ def test_code_and_catalogs_name_the_same_values():
     assert _codes("liveness_actions") == {d.value for d in TurnDirection}
     assert _codes("verification_reasons") == REASONS
     assert _codes("session_revocation_reasons") == {r.value for r in SessionRevocationReason}
-    assert _codes("enrollment_flags") == {a.value for a in Accessory} | {SPOOF_FLAG}
+    assert _codes("enrollment_flags") == {a.value for a in Accessory} | {SPOOF_FLAG, DUPLICATE_FLAG}
     assert _codes("screens") == {s.value for s in Screen}
 
 
 def test_every_face_error_the_api_raises_has_its_message_in_the_catalog():
     """El motor facial y los servicios solo usan códigos: su mensaje debe existir en face_errors."""
-    used = re.compile(r'(?:FaceValidationError|face_rejection|face_error_message)\(\s*"([A-Z_]+)"')
+    used = re.compile(r'(?:FaceValidationError|face_rejection|face_error_message|SuspiciousCapture)\(\s*"([A-Z_]+)"')
     raised = {code for path in APP_DIR.rglob("*.py") for code in used.findall(path.read_text(encoding="utf-8"))}
     # El giro no detectado es interno: la API lo informa como LIVENESS_FAILED.
     assert raised - {"LIVENESS_TURN_NOT_DETECTED"} <= _codes("face_errors")

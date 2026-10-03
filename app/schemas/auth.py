@@ -6,11 +6,34 @@ from app.schemas.user import UserRead
 from app.schemas.validators import validate_password_strength
 
 
+class DeviceLocation(BaseModel):
+    """Ubicación del dispositivo al iniciar sesión (la del navegador: GPS, Wi-Fi o red celular)."""
+
+    latitude: float = Field(ge=-90, le=90)
+    longitude: float = Field(ge=-180, le=180)
+    accuracy: float | None = Field(default=None, ge=0, le=100_000, description="Precisión (m), radio de 68 %")
+
+
+class DeviceProof(BaseModel):
+    """Prueba de posesión del dispositivo (validadores): su llave pública y la firma del reto."""
+
+    public_key: str = Field(min_length=40, max_length=300, description="Llave pública ECDSA P-256 (SPKI DER, base64)")
+    nonce: str = Field(min_length=10, max_length=200, description="Reto recibido en 403 DEVICE_PROOF_REQUIRED")
+    signature: str = Field(
+        min_length=40, max_length=200, description="Firma ECDSA P-256/SHA-256 del reto (r||s, base64)"
+    )
+    name: str | None = Field(default=None, max_length=120, description="Nombre del dispositivo (navegador y sistema)")
+
+
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str = Field(min_length=1, max_length=128)
     #: "Recordar mi cuenta": mantener la sesión al cerrar el navegador (sin superar las 12 h).
     remember: bool = False
+    #: Solo la piden los validadores que requieren ubicación (responden 403 `LOCATION_REQUIRED` sin ella).
+    location: DeviceLocation | None = None
+    #: Solo la piden los validadores de empresas que autorizan dispositivos (403 `DEVICE_PROOF_REQUIRED`).
+    device: DeviceProof | None = None
 
     @field_validator("email")
     @classmethod

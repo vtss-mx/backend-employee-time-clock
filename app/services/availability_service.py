@@ -69,7 +69,11 @@ class AvailabilityService:
         self.employees = EmployeeRepository(db, company_id)
         self.people = PeopleService(db, company_id)
 
-    def check(self, field: Field, value: str, *, exclude_employee_id: int | None = None) -> Availability:
+    def check(
+        self, field: Field, value: str, *, exclude_employee_id: int | None = None, related: str | None = None
+    ) -> Availability:
+        """`related`: al validar el teléfono en un alta, el correo escrito (deben ser de la misma
+        persona si ya trabaja en otra empresa)."""
         raw = (value or "").strip()
         if not raw:
             return Availability(field, value, None, False, False, "EMPTY", _EMPTY[field])
@@ -78,9 +82,10 @@ class AvailabilityService:
         except ValueError as exc:
             return Availability(field, value, None, False, False, "INVALID_FORMAT", str(exc))
         if field in ("email", "phone"):
-            check = self._account_check(field, normalized, exclude_employee_id)
+            check = self._account_check(field, normalized, exclude_employee_id, related)
             message = check.message or _AVAILABLE[field]
-            return Availability(field, value, normalized, True, check.match != "TAKEN", check.match, message)
+            usable = check.match in ("AVAILABLE", "LINKABLE")
+            return Availability(field, value, normalized, True, usable, check.match, message)
         taken = self._exists(field, normalized, exclude_employee_id)
         code = "TAKEN" if taken else "AVAILABLE"
         message = _TAKEN[field] if taken else _AVAILABLE[field]
@@ -105,10 +110,23 @@ class AvailabilityService:
             return self.employees.number_exists(value, exclude_id=exclude_employee_id)
         return self.employees.unique_exists(cast(UniqueDocument, field), value, exclude_id=exclude_employee_id)
 
-    def _account_check(self, field: Field, value: str, exclude_employee_id: int | None) -> AccountCheck:
+    def _account_check(
+        self, field: Field, value: str, exclude_employee_id: int | None, related: str | None = None
+    ) -> AccountCheck:
         """Correo y teléfono son de la persona: únicos en la plataforma (o vinculables)."""
+        paired = self._phone_with_email(value, related) if field == "phone" and exclude_employee_id is None else None
+        if paired is not None:
+            return paired
         exclude = self.employees.get_by_id(exclude_employee_id) if exclude_employee_id else None
         exclude_user_id = exclude.user_id if exclude else None
         if field == "email":
             return self.people.check_email(value, exclude_user_id=exclude_user_id)
         return self.people.check_phone(value, exclude_user_id=exclude_user_id)
+
+    def _phone_with_email(self, phone: str, email: str | None) -> AccountCheck | None:
+        """Con un correo válido escrito, el teléfono se valida junto con él (persona en varias empresas)."""
+        try:
+            normalized_email = normalize_email(email or "")
+        except ValueError:
+            return None
+        return self.people.check_phone_for(phone, normalized_email)

@@ -4,7 +4,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models import Validator, VerificationLog
-from app.repositories.aggregates import group_counts
+from app.repositories.aggregates import group_counts, paginate
 
 
 class ValidatorRepository:
@@ -14,14 +14,9 @@ class ValidatorRepository:
         self.db = db
         self.company_id = company_id
 
-    def list_all(self) -> list[Validator]:
-        return list(
-            self.db.scalars(
-                select(Validator)
-                .where(Validator.company_id == self.company_id)
-                .order_by(func.lower(Validator.name), Validator.id)
-            )
-        )
+    def page(self, *, offset: int, limit: int) -> tuple[list[Validator], int]:
+        stmt = select(Validator).where(Validator.company_id == self.company_id)
+        return paginate(self.db, stmt, (func.lower(Validator.name), Validator.id), offset=offset, limit=limit)
 
     def get(self, validator_id: int) -> Validator | None:
         validator = self.db.get(Validator, validator_id)

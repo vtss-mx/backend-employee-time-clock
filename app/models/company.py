@@ -25,7 +25,6 @@ class Company(TimestampMixin, Base):
     name: Mapped[str] = mapped_column(String(150), nullable=False)  # nombre comercial
     legal_name: Mapped[str | None] = mapped_column(String(200))  # razón social
     rfc: Mapped[str | None] = mapped_column(String(13), unique=True, index=True)
-    contact_email: Mapped[str | None] = mapped_column(String(255))
     phone: Mapped[str | None] = mapped_column(String(16))  # E.164: +<lada><número>
     active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true(), nullable=False)
     #: Límite de empleados del plan (None = sin límite).

@@ -54,6 +54,19 @@ class SessionRevocationReason(StrEnum):
     SIGNED_IN_ELSEWHERE = "SIGNED_IN_ELSEWHERE"
     #: Se presentó un refresh token ya rotado: se asume robo.
     REFRESH_REUSE_DETECTED = "REFRESH_REUSE_DETECTED"
+    #: La empresa exigió o cambió la ubicación del validador: debe volver a entrar en ese lugar.
+    LOCATION_POLICY_CHANGED = "LOCATION_POLICY_CHANGED"
+    #: La empresa revocó o rechazó el dispositivo del validador.
+    DEVICE_REVOKED = "DEVICE_REVOKED"
+
+
+class DeviceStatus(StrEnum):
+    """Estado de un dispositivo de validador (catalog.device_statuses)."""
+
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+    REVOKED = "REVOKED"
 
 
 class EnrollmentStatus(StrEnum):

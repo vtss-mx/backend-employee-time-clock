@@ -9,7 +9,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, Query, status
 
 from app.core.responses import ApiResponse, ok
-from app.dependencies import AdminUser, DbSession, require_screen
+from app.dependencies import AdminUser, DbSession, Pagination, require_screen
 from app.models import Screen
 from app.schemas.common import ErrorResponse
 from app.schemas.company import (
@@ -58,12 +58,11 @@ def platform_stats(_: AdminUser, db: DbSession) -> ApiResponse[PlatformStats]:
 def list_companies(
     _: AdminUser,
     db: DbSession,
+    page: Pagination,
     search: Annotated[str | None, Query(max_length=100, description="Nombre, razón social o RFC")] = None,
     active: Annotated[bool | None, Query(description="Filtrar por estado")] = None,
-    page: Annotated[int, Query(ge=1)] = 1,
-    size: Annotated[int, Query(ge=1, le=100)] = 20,
 ) -> ApiResponse[CompanyList]:
-    result = CompanyService(db).list_companies(search=search, active=active, page=page, size=size)
+    result = CompanyService(db).list_companies(search=search, active=active, page=page)
     return ok(result, f"{result.total} empresa(s) encontrada(s)", code="COMPANIES_LISTED")
 
 

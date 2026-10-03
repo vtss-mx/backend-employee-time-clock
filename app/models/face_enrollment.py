@@ -56,6 +56,13 @@ class FaceEnrollment(Base):
         # Destino de la FK compuesta de los embeddings: registro y empleado van juntos.
         UniqueConstraint("id", "employee_id", name="uq_face_enrollments_id_employee"),
         CheckConstraint("samples > 0", name="samples_positive"),
+        # FK con ON DELETE SET NULL (quién capturó en persona): evita recorrer la tabla al borrar un usuario.
+        Index(
+            "ix_face_enrollments_captured_by_id",
+            "captured_by_id",
+            postgresql_where=text("captured_by_id IS NOT NULL"),
+            sqlite_where=text("captured_by_id IS NOT NULL"),
+        ),
         {"schema": BIOMETRICS},
     )
 
@@ -78,6 +85,9 @@ class FaceEnrollment(Base):
     submitted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     reviewed_by_id: Mapped[int | None] = mapped_column(ForeignKey(f"{AUTH}.users.id", ondelete="SET NULL"))
+    #: Registro asistido: el administrador de la empresa que capturó el rostro en persona (queda
+    #: aprobado al momento). None = el empleado se registró solo y la empresa lo revisó después.
+    captured_by_id: Mapped[int | None] = mapped_column(ForeignKey(f"{AUTH}.users.id", ondelete="SET NULL"))
     rejection_reason: Mapped[str | None] = mapped_column(String(500))
 
     employee: Mapped["Employee"] = relationship(foreign_keys=[employee_id], lazy="joined")

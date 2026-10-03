@@ -14,14 +14,13 @@ from app.repositories.face_repository import FaceEmbeddingRepository
 from app.repositories.qr_repository import EmployeeQrRepository
 from app.repositories.user_repository import UserRepository
 from app.repositories.verification_repository import VerificationLogRepository
+from app.schemas.common import PageParams
 from app.schemas.employee import EmployeeCreate, EmployeeList, EmployeeRead, EmployeeUpdate
 from app.schemas.validators import (
-    CURP_BIRTH_DATE_MISMATCH,
-    RFC_BIRTH_DATE_MISMATCH,
-    curp_matches_birth_date,
-    rfc_matches_birth_date,
+    curp_birth_date_error,
+    rfc_birth_date_error,
 )
-from app.schemas.verification import VerificationLogRead
+from app.schemas.verification import VerificationLogList, VerificationLogRead
 from app.services.availability_service import CURP_TAKEN, NSS_TAKEN, NUMBER_TAKEN, RFC_TAKEN
 from app.services.people_service import SHARED_ACCOUNT, PeopleService
 from app.services.qr_service import QrService
@@ -71,16 +70,13 @@ class EmployeeService:
             raise NotFoundError("Empleado no encontrado", code="EMPLOYEE_NOT_FOUND")
         return employee
 
-    def list_employees(self, *, search: str | None, active: bool | None, page: int, size: int) -> EmployeeList:
-        items, total = self.employees.search(search=search, active=active, offset=(page - 1) * size, limit=size)
+    def list_employees(self, *, search: str | None, active: bool | None, page: PageParams) -> EmployeeList:
+        items, total = self.employees.search(search=search, active=active, offset=page.offset, limit=page.size)
         ids = [e.id for e in items]
         face_counts = self.faces.count_active_by_employee(ids)
         with_qr = self.qrs.employees_with_active_qr(ids)
-        return EmployeeList(
-            items=[self._to_read(e, face_counts.get(e.id, 0), e.id in with_qr) for e in items],
-            total=total,
-            page=page,
-            size=size,
+        return EmployeeList.of(
+            [self._to_read(e, face_counts.get(e.id, 0), e.id in with_qr) for e in items], total, page
         )
 
     def read(self, employee: Employee) -> EmployeeRead:
@@ -93,10 +89,12 @@ class EmployeeService:
         data.latest_enrollment_id = latest.id if latest else None
         return data
 
-    def history(self, employee_id: int, limit: int) -> list[VerificationLogRead]:
+    def history(self, employee_id: int, page: PageParams) -> VerificationLogList:
         self.get(employee_id)
-        logs = VerificationLogRepository(self.db).list_for_employee(employee_id, limit)
-        return [VerificationLogRead.model_validate(log) for log in logs]
+        logs, total = VerificationLogRepository(self.db).page_for_employee(
+            employee_id, offset=page.offset, limit=page.size
+        )
+        return VerificationLogList.of([VerificationLogRead.model_validate(log) for log in logs], total, page)
 
     # ---------- Comandos ----------
 
@@ -273,10 +271,12 @@ class EmployeeService:
     @staticmethod
     def _ensure_documents_match(rfc: str | None, curp: str | None, birth_date: date) -> None:
         """RFC y CURP llevan la fecha de nacimiento: deben coincidir con la registrada."""
-        if rfc and not rfc_matches_birth_date(rfc, birth_date):
-            raise UnprocessableError(RFC_BIRTH_DATE_MISMATCH, code="RFC_BIRTH_DATE_MISMATCH", field="rfc")
-        if curp and not curp_matches_birth_date(curp, birth_date):
-            raise UnprocessableError(CURP_BIRTH_DATE_MISMATCH, code="CURP_BIRTH_DATE_MISMATCH", field="curp")
+        rfc_error = rfc_birth_date_error(rfc, birth_date) if rfc else None
+        if rfc_error:
+            raise UnprocessableError(rfc_error, code="RFC_BIRTH_DATE_MISMATCH", field="rfc")
+        curp_error = curp_birth_date_error(curp, birth_date) if curp else None
+        if curp_error:
+            raise UnprocessableError(curp_error, code="CURP_BIRTH_DATE_MISMATCH", field="curp")
 
     @staticmethod
     def _to_read(employee: Employee, face_count: int, has_qr: bool) -> EmployeeRead:

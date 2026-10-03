@@ -49,6 +49,9 @@ def test_create_company_with_its_first_admin(client, admin_headers):
     assert [a["email"] for a in company["admins"]] == ["admin@panificadora.com"]
     assert company["admin_count"] == 1 and company["employee_count"] == 0
 
+    # Un solo correo: el de la empresa es el de sus administradores (no hay correo de contacto aparte).
+    assert "contact_email" not in company
+
     # Su administrador entra y la empresa nace con la política de verificación segura.
     headers = login(client, "admin@panificadora.com", "Empresa1234")
     policy = client.get("/api/settings/verification", headers=headers).json()["data"]
@@ -82,8 +85,6 @@ def test_availability_for_company_forms(client, admin_headers):
     assert check("company_admin_email", "nuevo@empresa.com") == "AVAILABLE"
     assert check("company_admin_email", "") == "EMPTY"
     # Datos de contacto (no únicos): solo el formato, con la misma regla que al guardar.
-    assert check("company_contact_email", "contacto@pan.com") == "VALID"
-    assert check("company_contact_email", "no-es-correo") == "INVALID_FORMAT"
     assert check("company_phone", "662 123 4567") == "VALID"
     assert check("company_phone", "123") == "INVALID_FORMAT"
 

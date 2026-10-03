@@ -9,7 +9,7 @@ import threading
 import time
 from collections import OrderedDict
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field, fields
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -46,6 +46,23 @@ class PolicySnapshot:
     employee_mobile_only: bool = True
     validator_mobile_only: bool = True
     min_confidence: float = 0.99999
+    # --- Candados contra engaños ---
+    anti_spoofing_level: str = "STANDARD"
+    liveness_steps: int = 2
+    block_virtual_cameras: bool = True
+    reject_foreign_images: bool = True
+    detect_static_captures: bool = True
+    detect_replays: bool = True
+    check_capture_continuity: bool = True
+    enforce_human_timing: bool = True
+    detect_duplicate_faces: bool = True
+    lockout_enabled: bool = True
+    lockout_max_failures: int = 5
+    lockout_minutes: int = 15
+    validator_device_approval: bool = True
+    #: Del nivel de anti-spoofing (catálogo): umbral y si basta una captura sospechosa.
+    antispoof_threshold: float = field(default=0.05, compare=False)
+    antispoof_any_frame: bool = field(default=False, compare=False)
 
     def face_policy(self, employee: Employee | None = None) -> FacePolicy:
         """Política facial efectiva para un empleado (aplica su excepción de prenda de cabeza)."""
@@ -55,6 +72,9 @@ class PolicySnapshot:
             block_headwear=self.block_headwear and not exempt,
             block_mask=self.block_mask,
             anti_spoofing=self.anti_spoofing,
+            reject_foreign_images=self.reject_foreign_images,
+            spoof_threshold=self.antispoof_threshold,
+            spoof_any_frame=self.antispoof_any_frame,
         )
 
     @property
@@ -62,21 +82,20 @@ class PolicySnapshot:
         return settings.FACE_LIVENESS_ENABLED and self.liveness_challenge
 
 
+#: Columnas de la política (lo demás de PolicySnapshot se deriva del catálogo).
+POLICY_COLUMNS = tuple(f.name for f in fields(PolicySnapshot) if f.compare)
+
+
 _cache: OrderedDict[int, tuple[float, PolicySnapshot]] = OrderedDict()
 _lock = threading.Lock()
 
 
 def _snapshot(row: VerificationPolicy) -> PolicySnapshot:
+    level = get_catalogs().get("antispoof_levels", row.anti_spoofing_level)
     return PolicySnapshot(
-        block_glasses=row.block_glasses,
-        block_headwear=row.block_headwear,
-        block_mask=row.block_mask,
-        liveness_challenge=row.liveness_challenge,
-        anti_spoofing=row.anti_spoofing,
-        qr_enabled=row.qr_enabled,
-        employee_mobile_only=row.employee_mobile_only,
-        validator_mobile_only=row.validator_mobile_only,
-        min_confidence=row.min_confidence,
+        **{name: getattr(row, name) for name in POLICY_COLUMNS},
+        antispoof_threshold=float(level["threshold"]) if level else settings.FACE_ANTISPOOF_THRESHOLD,
+        antispoof_any_frame=bool(level["any_frame"]) if level else False,
     )
 
 
@@ -97,7 +116,8 @@ class PolicyService:
     def _row(self) -> VerificationPolicy:
         row = self.db.scalar(select(VerificationPolicy).where(VerificationPolicy.company_id == self.company_id))
         if row is None:  # empresa sin política aún: valores seguros por defecto
-            row = VerificationPolicy(company_id=self.company_id, **PolicySnapshot().__dict__)
+            defaults = PolicySnapshot()
+            row = VerificationPolicy(company_id=self.company_id, **{n: getattr(defaults, n) for n in POLICY_COLUMNS})
             self.db.add(row)
             self.db.flush()
         return row
@@ -141,8 +161,16 @@ class PolicyService:
                     field="min_confidence",
                 )
             changes["min_confidence"] = level["value"]
-        for field, value in changes.items():
-            setattr(row, field, value)
+        if "anti_spoofing_level" in changes and not get_catalogs(self.db).is_active(
+            "antispoof_levels", changes["anti_spoofing_level"]
+        ):
+            raise UnprocessableError(
+                "Elige uno de los niveles de anti-spoofing disponibles",
+                code="INVALID_ANTISPOOF_LEVEL",
+                field="anti_spoofing_level",
+            )
+        for name, value in changes.items():
+            setattr(row, name, value)
         row.updated_by_id = user.id
         self.db.commit()
         clear_policy_cache(self.company_id)

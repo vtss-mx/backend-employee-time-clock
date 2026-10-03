@@ -78,6 +78,16 @@ def identify(gallery: Gallery, probes: Sequence[np.ndarray], *, required: float,
     return Identification(winners[0], similarities)
 
 
+def duplicate_of(gallery: Gallery, probes: Sequence[np.ndarray], *, exclude: int, required: float) -> int | None:
+    """Otro empleado de la galería con ESTE rostro (todas las capturas lo señalan con la confianza
+    exigida), o None. Detecta a una misma persona registrándose en dos cuentas."""
+    others = gallery.labels != exclude
+    if not others.any():
+        return None
+    filtered = Gallery(gallery.fingerprint, gallery.labels[others], gallery.matrix[others])
+    return identify(filtered, probes, required=required, margin=0.0).employee_id
+
+
 class FaceGalleryCache:
     """Galerías por empresa en memoria (LRU), validadas contra la huella de la BD en cada uso."""
 

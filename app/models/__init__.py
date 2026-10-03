@@ -1,10 +1,13 @@
 """Modelos ORM: deben coincidir con las migraciones de Alembic (lo verifica scripts/quality.sh)."""
 
 from app.models.auth_session import AuthSession, RateLimitCounter
+from app.models.capture_fingerprint import CaptureFingerprint
 from app.models.catalog import (
     CatalogAccessory,
+    CatalogAntispoofLevel,
     CatalogConfidenceLevel,
     CatalogCountry,
+    CatalogDeviceStatus,
     CatalogEnrollmentFlag,
     CatalogEnrollmentRejectionReason,
     CatalogEnrollmentStatus,
@@ -25,6 +28,7 @@ from app.models.company import Company
 from app.models.employee import Employee
 from app.models.employee_qr import EmployeeQr
 from app.models.enums import (
+    DeviceStatus,
     EnrollmentStatus,
     FaceStatus,
     Screen,
@@ -39,14 +43,18 @@ from app.models.face_enrollment import FaceEnrollment, FaceEnrollmentFlag
 from app.models.remembered_account import RememberedAccount
 from app.models.user import User
 from app.models.validator import Validator
+from app.models.validator_device import ValidatorDevice
 from app.models.verification_log import VerificationLog
 from app.models.verification_policy import VerificationPolicy
 
 __all__ = [
     "AuthSession",
+    "CaptureFingerprint",
     "CatalogAccessory",
+    "CatalogAntispoofLevel",
     "CatalogConfidenceLevel",
     "CatalogCountry",
+    "CatalogDeviceStatus",
     "CatalogEnrollmentFlag",
     "CatalogEnrollmentRejectionReason",
     "CatalogEnrollmentStatus",
@@ -61,6 +69,7 @@ __all__ = [
     "CatalogVerificationMethod",
     "CatalogVerificationReason",
     "Company",
+    "DeviceStatus",
     "Employee",
     "EmployeeQr",
     "EnrollmentStatus",
@@ -77,6 +86,7 @@ __all__ = [
     "User",
     "UserRole",
     "Validator",
+    "ValidatorDevice",
     "ValidatorMode",
     "ValidatorModeMethod",
     "VerificationLog",

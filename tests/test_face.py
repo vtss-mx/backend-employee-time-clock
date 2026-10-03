@@ -1,17 +1,13 @@
 """Auto-registro facial, validación por COMPANY, accesorios, prueba de vida y verificación."""
 
-from tests.conftest import approved_employee, create_employee, login, submit_enrollment
+from tests.conftest import approved_employee, create_employee, login, submit_enrollment, turn_files
 
 
 def _verify(client, headers, *, frontal=(b"face:juan", b"face:juan"), turn_person="juan", wrong_turn=False):
     challenge = client.post("/api/face/challenge", headers=headers).json()["data"]
     assert challenge["liveness_required"] is True
-    action = challenge["action"]
-    if wrong_turn:
-        action = "TURN_RIGHT" if action == "TURN_LEFT" else "TURN_LEFT"
-    turn = f"{'turn-left' if action == 'TURN_LEFT' else 'turn-right'}:{turn_person}".encode()
     files = [("images", (f"c{i}.jpg", f, "image/jpeg")) for i, f in enumerate(frontal)]
-    files.append(("challenge_image", ("t.jpg", turn, "image/jpeg")))
+    files += turn_files(challenge, turn_person, wrong=wrong_turn)
     return client.post(
         "/api/verification/face", data={"challenge_id": challenge["challenge_id"]}, files=files, headers=headers
     )
@@ -150,8 +146,7 @@ def test_liveness_wrong_direction_swapped_face_and_replay(client, company_header
     files = [("images", ("c.jpg", b"face:juan", "image/jpeg"))]
     assert client.post("/api/verification/face", files=files, headers=headers).json()["code"] == "LIVENESS_REQUIRED"
     challenge = client.post("/api/face/challenge", headers=headers).json()["data"]
-    turn = b"turn-left:juan" if challenge["action"] == "TURN_LEFT" else b"turn-right:juan"
-    files.append(("challenge_image", ("t.jpg", turn, "image/jpeg")))
+    files += turn_files(challenge)
     data = {"challenge_id": challenge["challenge_id"]}
     assert (
         client.post("/api/verification/face", data=data, files=files, headers=headers).json()["data"]["verified"]
@@ -212,9 +207,8 @@ def test_enrollment_accessory_review_flags_for_admin(client, company_headers):
     assert submit_enrollment(client, headers, frontal=frontal).json()["code"] == "ACCESSORIES_DETECTED"
 
     challenge = client.post("/api/face/challenge", headers=headers).json()["data"]
-    turn = f"{'turn-left' if challenge['action'] == 'TURN_LEFT' else 'turn-right'}:juan".encode()
     files = [("images", (f"f{i}.jpg", f, "image/jpeg")) for i, f in enumerate(frontal)]
-    files.append(("challenge_image", ("t.jpg", turn, "image/jpeg")))
+    files += turn_files(challenge)
     data = {"challenge_id": challenge["challenge_id"], "accessory_review": "true"}
     submitted = client.post("/api/enrollment/face", data=data, files=files, headers=headers)
     assert submitted.status_code == 201, submitted.text

@@ -81,6 +81,12 @@ class CatalogEnrollmentStatus(ToneMixin, CatalogEntry, Base):
     __tablename__ = "enrollment_statuses"
 
 
+class CatalogDeviceStatus(ToneMixin, CatalogEntry, Base):
+    """Estados de un dispositivo de validador: pendiente, autorizado, rechazado o revocado."""
+
+    __tablename__ = "device_statuses"
+
+
 class CatalogVerificationReason(CatalogEntry, Base):
     """Motivos de un intento fallido (bitácora); `message` es lo que se le muestra a la persona."""
 
@@ -142,6 +148,19 @@ class CatalogConfidenceLevel(CatalogEntry, Base):
     similarity: Mapped[float] = mapped_column(Numeric(5, 3, asdecimal=False), nullable=False)
     false_accept_rate: Mapped[float] = mapped_column(Numeric(6, 3, asdecimal=False), nullable=False)
     rejection_rate: Mapped[float] = mapped_column(Numeric(5, 1, asdecimal=False), nullable=False)
+
+
+class CatalogAntispoofLevel(CatalogEntry, Base):
+    """Niveles de sensibilidad del anti-spoofing que la empresa puede exigir.
+
+    `threshold`: probabilidad de rostro real por debajo de la cual una captura parece una foto, una
+    pantalla o un video. `any_frame`: basta una sola captura sospechosa (si no, decide la mayoría).
+    """
+
+    __tablename__ = "antispoof_levels"
+
+    threshold: Mapped[float] = mapped_column(Numeric(4, 3, asdecimal=False), nullable=False)
+    any_frame: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false(), nullable=False)
 
 
 class CatalogSessionRevocationReason(CatalogEntry, Base):

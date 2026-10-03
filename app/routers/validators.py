@@ -5,16 +5,21 @@ from typing import Any
 from fastapi import APIRouter, Depends, status
 
 from app.core.responses import ApiResponse, ok
-from app.dependencies import CompanyScope, DbSession, require_screen
+from app.dependencies import CompanyScope, CompanyUser, DbSession, Pagination, require_screen
 from app.models import Screen
 from app.schemas.common import ErrorResponse
 from app.schemas.validator import (
+    DeviceStatusUpdate,
     ValidatorCreate,
+    ValidatorDeviceList,
+    ValidatorDeviceRead,
+    ValidatorList,
     ValidatorPasswordReset,
     ValidatorRead,
     ValidatorStatusUpdate,
     ValidatorUpdate,
 )
+from app.services.device_service import DeviceService
 from app.services.validator_service import ValidatorService
 
 router = APIRouter(
@@ -30,10 +35,18 @@ router = APIRouter(
 NOT_FOUND: dict[int | str, dict[str, Any]] = {404: {"model": ErrorResponse, "description": "Validador no encontrado"}}
 
 
-@router.get("", response_model=ApiResponse[list[ValidatorRead]], summary="Validadores de la empresa")
-def list_validators(company: CompanyScope, db: DbSession) -> ApiResponse[list[ValidatorRead]]:
-    items = ValidatorService(db, company).list_validators()
-    return ok(items, f"{len(items)} validador(es)", code="VALIDATORS_LISTED")
+@router.get("", response_model=ApiResponse[ValidatorList], summary="Validadores de la empresa (paginado)")
+def list_validators(company: CompanyScope, db: DbSession, page: Pagination) -> ApiResponse[ValidatorList]:
+    result = ValidatorService(db, company).list_validators(page)
+    return ok(result, f"{result.total} validador(es)", code="VALIDATORS_LISTED")
+
+
+@router.get(
+    "/{validator_id}", response_model=ApiResponse[ValidatorRead], summary="Detalle de un validador", responses=NOT_FOUND
+)
+def get_validator(validator_id: int, company: CompanyScope, db: DbSession) -> ApiResponse[ValidatorRead]:
+    service = ValidatorService(db, company)
+    return ok(service.read(service.get(validator_id)), "Validador encontrado", code="VALIDATOR_FOUND")
 
 
 @router.post(
@@ -43,9 +56,14 @@ def list_validators(company: CompanyScope, db: DbSession) -> ApiResponse[list[Va
     summary="Dar de alta un validador de identidad",
     description=(
         "Crea la cuenta (correo único en la plataforma) con la que el validador inicia sesión en una "
-        "tableta o un teléfono, y su modo: `QR`, `FACE`, `QR_OR_FACE` o `QR_AND_FACE`."
+        "tableta o un teléfono, su modo (`QR`, `FACE`, `QR_OR_FACE` o `QR_AND_FACE`), el domicilio del "
+        "acceso donde opera y, opcionalmente, **requiere ubicación**: solo inicia sesión a no más de "
+        "`location_radius_m` metros del punto del domicilio (422 `LOCATION_POINT_REQUIRED` sin punto)."
     ),
-    responses={409: {"model": ErrorResponse, "description": "Correo ya registrado"}},
+    responses={
+        409: {"model": ErrorResponse, "description": "Correo ya registrado"},
+        422: {"model": ErrorResponse, "description": "Datos inválidos o ubicación incompleta"},
+    },
 )
 def create_validator(payload: ValidatorCreate, company: CompanyScope, db: DbSession) -> ApiResponse[ValidatorRead]:
     service = ValidatorService(db, company)
@@ -54,7 +72,11 @@ def create_validator(payload: ValidatorCreate, company: CompanyScope, db: DbSess
 
 
 @router.put(
-    "/{validator_id}", response_model=ApiResponse[ValidatorRead], summary="Editar nombre o modo", responses=NOT_FOUND
+    "/{validator_id}",
+    response_model=ApiResponse[ValidatorRead],
+    summary="Editar nombre, modo, domicilio o ubicación exigida",
+    description="Exigir ubicación o cambiar su punto o radio cierra las sesiones abiertas del validador.",
+    responses=NOT_FOUND,
 )
 def update_validator(
     validator_id: int, payload: ValidatorUpdate, company: CompanyScope, db: DbSession
@@ -100,3 +122,45 @@ def reset_validator_password(
 def delete_validator(validator_id: int, company: CompanyScope, db: DbSession) -> ApiResponse[None]:
     ValidatorService(db, company).delete(validator_id)
     return ok(None, "Validador eliminado", code="VALIDATOR_DELETED")
+
+
+# ---------------- Dispositivos ----------------
+
+DEVICE_NOT_FOUND: dict[int | str, dict[str, Any]] = {404: {"model": ErrorResponse, "description": "No encontrado"}}
+
+
+@router.get(
+    "/{validator_id}/devices",
+    response_model=ApiResponse[ValidatorDeviceList],
+    summary="Dispositivos del validador (los por autorizar primero)",
+    responses=DEVICE_NOT_FOUND,
+)
+def list_devices(
+    validator_id: int, company: CompanyScope, db: DbSession, page: Pagination
+) -> ApiResponse[ValidatorDeviceList]:
+    ValidatorService(db, company).get(validator_id)
+    result = DeviceService(db, company).list(validator_id, page)
+    return ok(result, f"{result.total} dispositivo(s)", code="DEVICES_LISTED")
+
+
+@router.patch(
+    "/{validator_id}/devices/{device_id}/status",
+    response_model=ApiResponse[ValidatorDeviceRead],
+    summary="Autorizar, rechazar o revocar un dispositivo",
+    description=(
+        "`APPROVED` autoriza (desde cualquier estado), `REJECTED` rechaza uno por autorizar y `REVOKED` "
+        "retira la autorización de uno autorizado (cierra las sesiones del validador). Otro cambio: 409."
+    ),
+    responses={**DEVICE_NOT_FOUND, 409: {"model": ErrorResponse, "description": "Cambio no permitido"}},
+)
+def set_device_status(
+    validator_id: int,
+    device_id: int,
+    payload: DeviceStatusUpdate,
+    operator: CompanyUser,
+    company: CompanyScope,
+    db: DbSession,
+) -> ApiResponse[ValidatorDeviceRead]:
+    ValidatorService(db, company).get(validator_id)
+    device = DeviceService(db, company).set_status(validator_id, device_id, payload.status, operator)
+    return ok(device, "Dispositivo actualizado", code="DEVICE_STATUS_UPDATED")

@@ -1,11 +1,28 @@
-"""Administración de empleados. Todos los endpoints requieren rol COMPANY."""
+"""Administración de empleados. Todos los endpoints requieren rol COMPANY.
+
+Incluye el rostro en persona: la empresa registra o verifica el rostro del empleado presente con
+su propia cámara (registro asistido y verificación 1:1).
+"""
 
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile, status
 
 from app.core.responses import ApiResponse, ok
-from app.dependencies import CompanyScope, DbSession, require_screen
+from app.dependencies import (
+    CameraLabel,
+    ChallengeImages,
+    CompanyScope,
+    CompanyUser,
+    DbSession,
+    Pagination,
+    Pipeline,
+    read_challenge_images,
+    read_image_uploads,
+    request_meta,
+    require_screen,
+    verification_rate_limit,
+)
 from app.models import Screen
 from app.schemas.common import ErrorResponse
 from app.schemas.employee import (
@@ -16,10 +33,13 @@ from app.schemas.employee import (
     EmployeeUpdate,
     IdentityReverifyRequest,
 )
+from app.schemas.enrollment import EnrollmentSubmitResponse
 from app.schemas.qr import EmployeeQrRead
-from app.schemas.verification import VerificationLogRead
+from app.schemas.verification import VerificationLogList, VerificationResult
 from app.services.employee_service import EmployeeService
+from app.services.enrollment_service import EnrollmentService
 from app.services.qr_service import QrService
+from app.services.verification_service import VerificationService
 
 router = APIRouter(
     prefix="/employees",
@@ -42,12 +62,11 @@ NOT_FOUND: dict[int | str, dict[str, Any]] = {404: {"model": ErrorResponse, "des
 def list_employees(
     company: CompanyScope,
     db: DbSession,
+    page: Pagination,
     search: Annotated[str | None, Query(max_length=100, description="Nombre, número o correo")] = None,
     active: Annotated[bool | None, Query(description="Filtrar por estado")] = None,
-    page: Annotated[int, Query(ge=1)] = 1,
-    size: Annotated[int, Query(ge=1, le=100)] = 20,
 ) -> ApiResponse[EmployeeList]:
-    result = EmployeeService(db, company).list_employees(search=search, active=active, page=page, size=size)
+    result = EmployeeService(db, company).list_employees(search=search, active=active, page=page)
     return ok(result, f"{result.total} empleado(s) encontrado(s)", code="EMPLOYEES_LISTED")
 
 
@@ -156,6 +175,91 @@ def reset_face(
     )
 
 
+# ---------------- Rostro en persona ----------------
+
+IN_PERSON = [Depends(require_screen(Screen.COMPANY_EMPLOYEES)), Depends(verification_rate_limit)]
+FrontalImages = Annotated[list[UploadFile], File(description="Capturas frontales del empleado")]
+ChallengeId = Annotated[str | None, Form(max_length=100, description="Reto de `/api/face/challenge`")]
+
+
+@router.post(
+    "/{employee_id}/face/enroll",
+    response_model=ApiResponse[EnrollmentSubmitResponse],
+    status_code=status.HTTP_201_CREATED,
+    summary="Registrar el rostro del empleado en persona (queda aprobado)",
+    description=(
+        "Registro asistido: la empresa captura el rostro del empleado presente con su cámara. "
+        "Multipart con `images` (1 a 5 capturas frontales) y, si la prueba de vida está activa, "
+        "`challenge_id` (de `/api/face/challenge`, pedido por la empresa) + `challenge_image`. "
+        "Mismas validaciones que el autoregistro; la sospecha de foto o pantalla bloquea. Queda "
+        "aprobado al momento y reemplaza cualquier registro anterior."
+    ),
+    responses={**NOT_FOUND, 409: {"model": ErrorResponse}, 422: {"model": ErrorResponse}},
+    dependencies=IN_PERSON,
+)
+def enroll_face_in_person(
+    employee_id: int,
+    operator: CompanyUser,
+    company: CompanyScope,
+    db: DbSession,
+    pipeline: Pipeline,
+    images: FrontalImages,
+    challenge_id: ChallengeId = None,
+    challenge_image: ChallengeImages = None,
+    camera_label: CameraLabel = None,
+) -> ApiResponse[EnrollmentSubmitResponse]:
+    employee = EmployeeService(db, company).get(employee_id)
+    result = EnrollmentService(db, company).enroll_in_person(
+        employee,
+        operator,
+        read_image_uploads(images, max_files=5),
+        pipeline,
+        challenge_id=challenge_id,
+        challenge_images=read_challenge_images(challenge_image),
+        camera_label=camera_label,
+    )
+    return ok(result, result.message, code="FACE_ENROLLED_IN_PERSON", status_code=201)
+
+
+@router.post(
+    "/{employee_id}/face/verify",
+    response_model=ApiResponse[VerificationResult],
+    summary="Verificar en persona la identidad del empleado (rostro 1:1)",
+    description=(
+        "La empresa captura el rostro del empleado presente y se compara con su registro aprobado, "
+        "con la confianza que exige la empresa y prueba de vida. `verified` indica el resultado; "
+        "el intento queda en la bitácora del empleado a nombre de quien lo verificó."
+    ),
+    responses={**NOT_FOUND, 409: {"model": ErrorResponse}, 422: {"model": ErrorResponse}},
+    dependencies=IN_PERSON,
+)
+def verify_face_in_person(
+    employee_id: int,
+    request: Request,
+    operator: CompanyUser,
+    company: CompanyScope,
+    db: DbSession,
+    pipeline: Pipeline,
+    images: FrontalImages,
+    challenge_id: ChallengeId = None,
+    challenge_image: ChallengeImages = None,
+    camera_label: CameraLabel = None,
+) -> ApiResponse[VerificationResult]:
+    employee = EmployeeService(db, company).get(employee_id)
+    ip, user_agent = request_meta(request)
+    result = VerificationService(db, ip=ip, user_agent=user_agent).verify_in_person(
+        employee,
+        operator,
+        read_image_uploads(images, max_files=3),
+        pipeline,
+        challenge_id=challenge_id,
+        challenge_images=read_challenge_images(challenge_image),
+        camera_label=camera_label,
+    )
+    code = "IDENTITY_VERIFIED" if result.verified else "IDENTITY_NOT_VERIFIED"
+    return ok(result, result.message, code=code)
+
+
 # ---------------- QR ----------------
 
 
@@ -207,16 +311,13 @@ def revoke_qr(employee_id: int, company: CompanyScope, db: DbSession) -> ApiResp
 
 @router.get(
     "/{employee_id}/verifications",
-    response_model=ApiResponse[list[VerificationLogRead]],
-    summary="Últimos intentos de verificación",
+    response_model=ApiResponse[VerificationLogList],
+    summary="Bitácora de verificaciones (paginada, la más reciente primero)",
     responses=NOT_FOUND,
     dependencies=[Depends(require_screen(Screen.COMPANY_EMPLOYEES))],
 )
 def verification_history(
-    employee_id: int,
-    company: CompanyScope,
-    db: DbSession,
-    limit: Annotated[int, Query(ge=1, le=100)] = 20,
-) -> ApiResponse[list[VerificationLogRead]]:
-    logs = EmployeeService(db, company).history(employee_id, limit)
-    return ok(logs, f"{len(logs)} intento(s) de verificación", code="VERIFICATIONS_LISTED")
+    employee_id: int, company: CompanyScope, db: DbSession, page: Pagination
+) -> ApiResponse[VerificationLogList]:
+    logs = EmployeeService(db, company).history(employee_id, page)
+    return ok(logs, f"{logs.total} intento(s) de verificación", code="VERIFICATIONS_LISTED")

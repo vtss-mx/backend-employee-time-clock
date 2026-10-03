@@ -80,6 +80,39 @@ def test_email_and_phone_are_unique_per_person(client, admin_headers, company_he
     assert check(other, "phone", "+52 662 765 4321") == "AVAILABLE"
 
 
+def test_phone_is_validated_live_together_with_the_email(client, admin_headers, company_headers):
+    """Persona que ya trabaja en otra empresa: el teléfono se valida en vivo junto con el correo
+    escrito (deben ser de la misma cuenta), con la misma regla que al guardar."""
+    create_employee(client, company_headers)
+    create_company(client, admin_headers)
+    other = login(client, "admin@panificadora.com", "Empresa1234")
+
+    def check(phone, email):
+        params = {"field": "phone", "value": phone, "related": email}
+        return client.get("/api/validation", params=params, headers=other).json()["data"]
+
+    same = check(PHONE, EMAIL)
+    assert same["code"] == "LINKABLE" and same["available"] is True and "coincide" in same["message"]
+    wrong_phone = check("+52 662 765 4321", EMAIL)  # su correo con otro teléfono
+    assert wrong_phone["code"] == "MISMATCH" and wrong_phone["available"] is False
+    someone_elses = check(PHONE, "otra@persona.com")  # persona nueva con el teléfono de otra
+    assert someone_elses["code"] == "MISMATCH" and not someone_elses["available"]
+    assert check("+52 662 765 4321", "nueva@persona.com")["code"] == "AVAILABLE"
+    # Sin correo válido (aún no se escribe), el teléfono se valida solo.
+    assert check(PHONE, "")["code"] == "LINKABLE"
+    # El conflicto del correo (administrador) lo informa su propio campo; el teléfono, el suyo.
+    assert check("+52 662 765 4321", COMPANY_EMAIL)["code"] == "AVAILABLE"
+
+    # Mismo resultado por el canal en tiempo real.
+    token = other["Authorization"].removeprefix("Bearer ")
+    with client.websocket_connect("/api/ws/validation") as socket:
+        socket.send_json({"type": "auth", "token": token})
+        assert socket.receive_json()["code"] == "WS_AUTHENTICATED"
+        message = {"type": "validate", "id": "phone-0001", "field": "phone", "value": "+526627654321"}
+        socket.send_json({**message, "related": EMAIL})
+        assert socket.receive_json()["code"] == "MISMATCH"
+
+
 def test_new_person_requires_a_password(client, company_headers):
     body = {
         "first_name": "Ana",

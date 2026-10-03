@@ -56,17 +56,26 @@ class ConfidenceLevelItem(CatalogItem):
     rejection_rate: float
 
 
+class AntispoofLevelItem(CatalogItem):
+    #: Probabilidad de rostro real por debajo de la cual una captura parece foto, pantalla o video.
+    threshold: float
+    #: Basta una sola captura sospechosa para rechazar (si no, decide la mayoría).
+    any_frame: bool
+
+
 class CatalogsRead(BaseModel):
     roles: list[CatalogItem]
     verification_methods: list[CatalogItem]
     validator_modes: list[ValidatorModeItem]
     face_statuses: list[FaceStatusItem]
     enrollment_statuses: list[StatusItem]
+    device_statuses: list[StatusItem]
     verification_reasons: list[ReasonItem]
     accessories: list[AccessoryItem]
     countries: list[CountryItem]
     enrollment_rejection_reasons: list[CatalogItem]
     reverification_reasons: list[CatalogItem]
     confidence_levels: list[ConfidenceLevelItem]
+    antispoof_levels: list[AntispoofLevelItem]
     face_errors: list[FaceErrorItem]
     enrollment_flags: list[CatalogItem]
