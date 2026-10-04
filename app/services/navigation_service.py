@@ -7,13 +7,15 @@ Dos capas, ambas en el backend:
   actual del usuario. P. ej. el empleado ve "Registro facial" hasta que registra su rostro, "Mi
   código QR" solo con su identidad aprobada y "Cambiar de empresa" solo si trabaja en varias.
 
-El inicio de cada usuario es su primera pantalla disponible (según el orden del catálogo).
+El menú se agrupa en módulos (catalog.menu_modules; cada pantalla va en uno, catalog.menu_module_screens).
+El inicio de cada usuario es su primera pantalla disponible (según el orden de los módulos y de las
+pantallas).
 """
 
 from collections.abc import Callable
 
 from app.models import FaceStatus, Screen, User
-from app.schemas.user import ScreenRead, UserRead
+from app.schemas.user import MenuModuleRead, ScreenRead, UserRead
 from app.services.catalog_service import Catalogs, get_catalogs
 
 _ENROLLMENT = {FaceStatus.NOT_ENROLLED, FaceStatus.REJECTED}
@@ -33,6 +35,8 @@ AVAILABILITY: dict[Screen, Callable[[User], bool]] = {
     Screen.EMPLOYEE_ENROLL: lambda user: _in_company(user) and _face_status(user) in _ENROLLMENT,
     Screen.EMPLOYEE_PENDING: lambda user: _face_status(user) == FaceStatus.PENDING_REVIEW,
     Screen.EMPLOYEE_VERIFY: lambda user: _face_status(user) == FaceStatus.APPROVED,
+    # Cada registro de asistencia se confirma con su rostro: solo con el registro facial aprobado.
+    Screen.EMPLOYEE_ATTENDANCE: lambda user: _face_status(user) == FaceStatus.APPROVED,
     Screen.EMPLOYEE_QR: lambda user: _face_status(user) == FaceStatus.APPROVED,
     Screen.EMPLOYEE_SELECT_COMPANY: lambda user: len(user.employees) > 1,
     # Integraciones (API): solo si el ADMIN le dio acceso a la empresa.
@@ -41,13 +45,28 @@ AVAILABILITY: dict[Screen, Callable[[User], bool]] = {
 
 
 def screens_for(user: User, catalogs: Catalogs | None = None) -> list[ScreenRead]:
-    """Pantallas activas que el rol tiene y que aplican al estado del usuario, en orden."""
+    """Pantallas activas que el rol tiene y que aplican al estado del usuario, agrupadas por módulo
+    del menú (en el orden de los módulos y, dentro de cada uno, en el de las pantallas)."""
     catalogs = catalogs or get_catalogs()
     granted = catalogs.role_screens.get(user.role.value, frozenset())
-    return [
-        ScreenRead.model_validate(row)
+    module_order = {row["code"]: index for index, row in enumerate(catalogs.entries["menu_modules"])}
+    screens = [
+        ScreenRead.model_validate({**row, "module": catalogs.screen_modules.get(row["code"])})
         for row in catalogs.entries["screens"]
         if row["active"] and row["code"] in granted and AVAILABILITY.get(Screen(row["code"]), _always)(user)
+    ]
+    # sorted() es estable: dentro de un módulo se conserva el orden de las pantallas.
+    return sorted(screens, key=lambda screen: module_order.get(screen.module or "", len(module_order)))
+
+
+def modules_for(screens: list[ScreenRead], catalogs: Catalogs | None = None) -> list[MenuModuleRead]:
+    """Los módulos activos que usan esas pantallas, en el orden del catálogo."""
+    catalogs = catalogs or get_catalogs()
+    used = {screen.module for screen in screens}
+    return [
+        MenuModuleRead.model_validate(row)
+        for row in catalogs.entries["menu_modules"]
+        if row["active"] and row["code"] in used
     ]
 
 
@@ -56,5 +75,10 @@ def _always(_: User) -> bool:
 
 
 def user_read(user: User) -> UserRead:
-    """El usuario como lo recibe el frontend (login, renovación, /users/me): con sus pantallas."""
-    return UserRead.model_validate(user).model_copy(update={"screens": screens_for(user)})
+    """El usuario como lo recibe el frontend (login, renovación, /users/me): con sus pantallas y los
+    módulos del menú que las agrupan."""
+    catalogs = get_catalogs()
+    screens = screens_for(user, catalogs)
+    return UserRead.model_validate(user).model_copy(
+        update={"screens": screens, "modules": modules_for(screens, catalogs)}
+    )

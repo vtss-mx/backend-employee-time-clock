@@ -24,8 +24,10 @@ entraría más fácil), así que una captura solo enseña si cumple todas estas 
 Selección: cada identificación exitosa suma utilidad a la muestra que más se pareció (`matches`,
 `last_matched_at`), sea aprobada o aprendida. Con los lugares llenos (FACE_LEARNING_MAX_SAMPLES) la
 muestra aprendida que lleva más tiempo sin servir deja su lugar a la nueva: sobreviven las que
-ayudan a reconocer. La empresa puede olvidar lo aprendido de un empleado si duda de alguna
-identificación (`EmployeeService.forget_learned_face`): vuelve a su registro aprobado.
+ayudan a reconocer. Todo esto lo administra el ADMIN de la plataforma (la empresa no ve ni configura
+el aprendizaje): lo activa en la política de cada empresa, consulta su evolución y olvida lo
+aprendido de un empleado si duda de alguna identificación (`CompanyService.forget_learned_face`):
+vuelve a su registro aprobado.
 """
 
 import logging

@@ -4,8 +4,12 @@ analyze_frontal (registro y verificación):
     imagen → detección → una sola persona → tamaño/encuadre → pose frontal
     → iluminación/nitidez → accesorios (lentes, gorra, cubrebocas) → embedding
 
-analyze_turn (prueba de vida):
-    imagen → detección → una sola persona → giro en la dirección del reto → embedding
+analyze_step (prueba de vida):
+    imagen → detección → una sola persona → el movimiento del reto (girar, mirar arriba o abajo,
+    acercarse) medido contra las frontales → embedding
+
+analyze_flash (reto fotométrico):
+    imagen → detección → una sola persona → cromaticidad del rostro y del fondo (photometry)
 """
 
 import hashlib
@@ -23,7 +27,8 @@ from app.facial_recognition.engine import DetectedFace, FaceEngine
 from app.facial_recognition.errors import FaceValidationError
 from app.facial_recognition.image_utils import decode_image
 from app.facial_recognition.occlusion import lower_face_skin_ratio
-from app.facial_recognition.pose import HeadPose, TurnDirection, estimate_pose
+from app.facial_recognition.photometry import FlashSample, flash_sample
+from app.facial_recognition.pose import HeadPose, LivenessAction, StepTarget, estimate_pose, step_measure
 
 
 class Accessory(StrEnum):
@@ -53,7 +58,7 @@ def accessory_consensus(per_frame: Sequence[Sequence[Accessory]]) -> tuple[Acces
 
 @dataclass(frozen=True)
 class FacePolicy:
-    """Qué exige la empresa en cada captura (configurable por COMPANY desde el frontend)."""
+    """Qué exige la empresa en cada captura (lo configura el ADMIN de la plataforma en su política)."""
 
     block_glasses: bool = True
     block_headwear: bool = True
@@ -65,6 +70,9 @@ class FacePolicy:
     #: si basta una sola captura sospechosa (si no, decide la mayoría).
     spoof_threshold: float = 0.05
     spoof_any_frame: bool = False
+    #: Calidad mínima de una captura frontal (0 = sin mínimo; ISO/IEC 29794-5: una imagen pobre
+    #: compara mal y facilita los engaños).
+    min_quality: float = 0.0
 
     def blocks(self, accessory: Accessory) -> bool:
         return {
@@ -102,7 +110,6 @@ class QualityThresholds:
     mask_max_skin_ratio: float = 0.55
     # Si la piel no se puede medir (frente cubierta), CLIP debe estar casi seguro.
     mask_strict_threshold: float = 0.90
-    liveness_min_yaw_ratio: float = 0.18
 
 
 @dataclass(frozen=True)
@@ -127,6 +134,18 @@ class FaceAnalysis:
     face_thumb: np.ndarray | None = None
     #: Ancho y alto de la imagen recibida (todas las capturas de una toma salen de la misma cámara).
     image_size: tuple[int, int] | None = None
+    #: Paso del reto: cuánto se movió en el sentido pedido (pose.step_measure).
+    step_value: float | None = None
+
+
+@dataclass(frozen=True)
+class FlashCapture:
+    """Fotograma del destello de colores: solo lo necesario para medir la respuesta y la toma."""
+
+    sample: FlashSample
+    face_box: tuple[int, int, int, int]
+    image_size: tuple[int, int]
+    capture_digest: str
 
 
 #: Lado de la miniatura del rostro para comparar fotogramas.
@@ -204,13 +223,16 @@ class FacePipeline:
         scores, skin, found = self._detect_accessories(image, face, policy=policy)
         if found and enforce_accessories:
             raise accessories_error(found)
+        quality = self._quality_score(face.score, sharpness, brightness)
+        if quality < policy.min_quality:
+            raise FaceValidationError("LOW_QUALITY", {"quality": quality, "required": policy.min_quality})
         real = self._real_probability(image, face, policy)
         traits = capture_traits(image, aligned)
 
         return FaceAnalysis(
             embedding=self.engine.represent(image, face, aligned),
             detection_score=face.score,
-            quality_score=self._quality_score(face.score, sharpness, brightness),
+            quality_score=quality,
             sharpness=sharpness,
             brightness=brightness,
             face_box=(face.x, face.y, face.width, face.height),
@@ -226,22 +248,23 @@ class FacePipeline:
 
     # ------------------------------------------------------------------ liveness
 
-    def analyze_turn(
-        self, image_bytes: bytes, direction: TurnDirection, *, policy: FacePolicy = DEFAULT_POLICY
+    def analyze_step(
+        self, image_bytes: bytes, action: LivenessAction, target: StepTarget, *, policy: FacePolicy = DEFAULT_POLICY
     ) -> FaceAnalysis:
-        """Frame del reto de prueba de vida: la cabeza debe estar girada hacia `direction`.
+        """Captura de un paso del reto: la persona hizo el movimiento pedido (girar, mirar arriba o abajo,
+        acercarse), medido contra sus capturas frontales de la misma toma.
 
         También pasa por el anti-spoofing: un video reproducido en una pantalla puede mostrar el
-        giro, pero no deja de ser una pantalla."""
+        movimiento, pero no deja de ser una pantalla."""
         image = self._decode(image_bytes, policy)
-        # Un rostro girado obtiene menor puntuación en el detector: se usa el umbral secundario.
+        # Un rostro girado o inclinado obtiene menor puntuación en el detector: se usa el umbral secundario.
         face = self._single_face(image, min_score=self.t.secondary_detection_score)
         self._check_framing(image, face)
         pose = estimate_pose(face.landmarks)
-        if not pose.turned(direction, self.t.liveness_min_yaw_ratio):
-            raise FaceValidationError(
-                "LIVENESS_TURN_NOT_DETECTED", {"yaw_ratio": pose.yaw_ratio, "expected": direction.value}
-            )
+        measured = step_measure(action, pose, face.width, target)
+        if measured < target.required(action):
+            details = {"measured": round(measured, 4), "required": target.required(action), "expected": action.value}
+            raise FaceValidationError("LIVENESS_STEP_NOT_DETECTED", details)
         aligned = self.engine.align(image, face)
         traits = capture_traits(image, aligned)
         return FaceAnalysis(
@@ -256,6 +279,21 @@ class FacePipeline:
             capture_digest=traits.digest,
             face_thumb=traits.thumb,
             image_size=traits.size,
+            step_value=round(measured, 4),
+        )
+
+    def analyze_flash(self, image_bytes: bytes, *, policy: FacePolicy = DEFAULT_POLICY) -> FlashCapture:
+        """Fotograma del destello de colores: una sola persona en el encuadre y su cromaticidad (sin
+        embedding ni anti-spoofing: el color cambia la imagen a propósito)."""
+        image = self._decode(image_bytes, policy)
+        face = self._single_face(image, min_score=self.t.secondary_detection_score)
+        self._check_framing(image, face)
+        box = (face.x, face.y, face.width, face.height)
+        return FlashCapture(
+            sample=flash_sample(image, box),
+            face_box=box,
+            image_size=(int(image.shape[1]), int(image.shape[0])),
+            capture_digest=hashlib.sha256(image.tobytes()).hexdigest(),
         )
 
     # ------------------------------------------------------------------ helpers

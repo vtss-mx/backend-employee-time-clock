@@ -23,8 +23,13 @@ from app.models import (
     CatalogAntispoofLevel,
     CatalogApiKeyStatus,
     CatalogApiScope,
+    CatalogAssignmentState,
+    CatalogAttendanceAction,
+    CatalogAttendanceEditReason,
+    CatalogBoardState,
     CatalogConfidenceLevel,
     CatalogCountry,
+    CatalogDayOffType,
     CatalogDeviceStatus,
     CatalogEnrollmentFlag,
     CatalogEnrollmentRejectionReason,
@@ -33,14 +38,20 @@ from app.models import (
     CatalogErrorStatus,
     CatalogFaceError,
     CatalogFaceStatus,
+    CatalogFlashMode,
     CatalogLivenessAction,
+    CatalogMenuModule,
     CatalogReverificationReason,
     CatalogRole,
     CatalogScreen,
     CatalogSessionRevocationReason,
+    CatalogShiftRequestStatus,
     CatalogValidatorMode,
     CatalogVerificationMethod,
     CatalogVerificationReason,
+    CatalogWorkMode,
+    CatalogWorkSessionStatus,
+    MenuModuleScreen,
     RoleScreen,
     ValidatorModeMethod,
 )
@@ -58,6 +69,14 @@ CATALOG_MODELS: dict[str, type[CatalogEntry]] = {
     "api_key_statuses": CatalogApiKeyStatus,
     "error_statuses": CatalogErrorStatus,
     "error_severities": CatalogErrorSeverity,
+    "work_modes": CatalogWorkMode,
+    "attendance_actions": CatalogAttendanceAction,
+    "work_session_statuses": CatalogWorkSessionStatus,
+    "shift_request_statuses": CatalogShiftRequestStatus,
+    "board_states": CatalogBoardState,
+    "assignment_states": CatalogAssignmentState,
+    "day_off_types": CatalogDayOffType,
+    "attendance_edit_reasons": CatalogAttendanceEditReason,
     "verification_reasons": CatalogVerificationReason,
     "accessories": CatalogAccessory,
     "liveness_actions": CatalogLivenessAction,
@@ -66,10 +85,12 @@ CATALOG_MODELS: dict[str, type[CatalogEntry]] = {
     "reverification_reasons": CatalogReverificationReason,
     "confidence_levels": CatalogConfidenceLevel,
     "antispoof_levels": CatalogAntispoofLevel,
+    "flash_modes": CatalogFlashMode,
     "session_revocation_reasons": CatalogSessionRevocationReason,
     "face_errors": CatalogFaceError,
     "enrollment_flags": CatalogEnrollmentFlag,
     "screens": CatalogScreen,
+    "menu_modules": CatalogMenuModule,
 }
 #: Motivo cuyo mensaje se usa si llega un código que no está en el catálogo.
 FALLBACK_REASON = "NOT_FOUND"
@@ -100,6 +121,8 @@ class Catalogs:
     mode_methods: Mapping[str, tuple[str, ...]]
     #: Rol → pantallas que tiene (catalog.role_screens).
     role_screens: Mapping[str, frozenset[str]] = field(default_factory=dict)
+    #: Pantalla → módulo del menú en que va (catalog.menu_module_screens).
+    screen_modules: Mapping[str, str] = field(default_factory=dict)
     _by_code: dict[str, dict[str, dict[str, Any]]] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -173,10 +196,12 @@ def load_catalogs(db: Session) -> Catalogs:
     role_screens: dict[str, set[str]] = {}
     for grant in db.scalars(select(RoleScreen)):
         role_screens.setdefault(grant.role_code, set()).add(grant.screen_code)
+    screen_modules = {link.screen_code: link.module_code for link in db.scalars(select(MenuModuleScreen))}
     return Catalogs(
         entries,
         {mode: tuple(methods) for mode, methods in mode_methods.items()},
         {role: frozenset(screens) for role, screens in role_screens.items()},
+        screen_modules,
     )
 
 

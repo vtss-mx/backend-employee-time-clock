@@ -35,7 +35,8 @@ class FaceCaptureService:
             return CheckpointService(self.db, self.user).issue_challenge()
         if self.user.role == UserRole.EMPLOYEE:
             active_employee(self.user)
-        return issue_challenge(self.db, self.user.id, PolicyService(self.db, self.company_id).current())
+        policy = PolicyService(self.db, self.company_id).current()
+        return issue_challenge(self.db, self.user.id, policy, self.company_id)
 
     def precheck(self, pipeline: FacePipeline, images: list[bytes], *, allow_headwear: bool) -> FaceCheckResponse:
         """Calidad, pose y accesorios de 1 a 3 capturas (sin comparar identidad ni registrar intentos).

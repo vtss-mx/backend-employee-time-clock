@@ -11,11 +11,19 @@ from app.models import Company, Employee, FaceStatus, SessionRevocationReason, U
 from app.repositories.department_repository import DepartmentRepository
 from app.repositories.employee_repository import EmployeeRepository, UniqueDocument
 from app.repositories.enrollment_repository import FaceEnrollmentRepository
-from app.repositories.face_repository import FaceEmbeddingRepository, SampleStats
+from app.repositories.face_repository import NO_SAMPLES, FaceEmbeddingRepository, SampleStats
 from app.repositories.user_repository import UserRepository
 from app.repositories.verification_repository import VerificationLogRepository
+from app.schemas.bulk import BULK_MAX
 from app.schemas.common import PageParams
-from app.schemas.employee import DepartmentRef, EmployeeCreate, EmployeeList, EmployeeRead, EmployeeUpdate
+from app.schemas.employee import (
+    DepartmentRef,
+    EmployeeCreate,
+    EmployeeIdList,
+    EmployeeList,
+    EmployeeRead,
+    EmployeeUpdate,
+)
 from app.schemas.validators import (
     curp_birth_date_error,
     rfc_birth_date_error,
@@ -25,7 +33,6 @@ from app.services.availability_service import CURP_TAKEN, NSS_TAKEN, NUMBER_TAKE
 from app.services.people_service import SHARED_ACCOUNT, PeopleService
 from app.services.session_service import SessionService
 
-NO_SAMPLES = SampleStats()
 RESET_BY_COMPANY = "Registro reiniciado por la empresa"
 REVERIFY_DEFAULT_REASON = "Tu empresa solicitó que verifiques nuevamente tu identidad."
 DUPLICATE_MESSAGE = "El correo, teléfono, número de empleado, RFC, CURP o NSS ya está registrado"
@@ -90,6 +97,11 @@ class EmployeeService:
             total,
             page,
         )
+
+    def ids(self, *, search: str | None, active: bool | None, department_id: int | None) -> EmployeeIdList:
+        """Los ids del filtro (hasta el tope de una operación masiva) para seleccionarlos todos."""
+        ids, total = self.employees.ids(search=search, active=active, department_id=department_id, limit=BULK_MAX)
+        return EmployeeIdList(ids=ids, total=total, limit=BULK_MAX)
 
     def read(self, employee: Employee) -> EmployeeRead:
         department = self.departments.names((employee.department_id,)) if employee.department_id else {}
@@ -239,15 +251,6 @@ class EmployeeService:
         self.db.commit()
         return changed
 
-    def forget_learned_face(self, employee_id: int) -> tuple[Employee, int]:
-        """Olvida lo que la galería del empleado aprendió del uso (face_learning): vuelve a compararse
-        solo con su registro aprobado, que no se toca. Para cuando la empresa duda de alguna
-        identificación. Devuelve el empleado y cuántas muestras se olvidaron."""
-        employee = self.get(employee_id)
-        removed = self.faces.delete_learned(employee.id)
-        self.db.commit()
-        return employee, removed
-
     # ---------- Internos ----------
 
     def _request_reverification(self, reason: str | None, employee_id: int | None = None) -> int:
@@ -338,8 +341,6 @@ class EmployeeService:
             face_rejection_reason=employee.face_rejection_reason,
             has_face=samples.total > 0,
             face_samples=samples.total,
-            face_learned_samples=samples.learned,
-            face_last_learned_at=samples.last_learned_at,
             department_id=employee.department_id,
             department_name=department_name,
             created_at=employee.created_at,

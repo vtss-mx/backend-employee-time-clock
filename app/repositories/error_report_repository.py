@@ -1,13 +1,13 @@
 import json
 from datetime import datetime
 
-from sqlalchemy import ColumnElement, case, func, or_, select
+from sqlalchemy import ColumnElement, case, func, or_, select, update
 from sqlalchemy.dialects import postgresql, sqlite
 from sqlalchemy.orm import Session
 
 from app.core.error_events import CONTEXT_LIMIT, DETAIL_LIMIT, ErrorEvent, clip
 from app.models import ErrorOccurrence, ErrorReport
-from app.repositories.aggregates import paginate
+from app.repositories.aggregates import affected_rows, paginate
 
 
 class ErrorReportRepository:
@@ -84,17 +84,33 @@ class ErrorReportRepository:
     def search(
         self, *, status: str | None, severity: str | None, search: str | None, offset: int, limit: int
     ) -> tuple[list[ErrorReport], int]:
-        stmt = select(ErrorReport)
-        if status:
-            stmt = stmt.where(ErrorReport.status == status)
-        if severity:
-            stmt = stmt.where(ErrorReport.severity == severity)
-        term = " ".join((search or "").split()).lower()
-        if term:
-            stmt = stmt.where(_matches(term))
+        stmt = select(ErrorReport).where(*_filters(status, severity, search))
         return paginate(
             self.db, stmt, (ErrorReport.last_seen_at.desc(), ErrorReport.id.desc()), offset=offset, limit=limit
         )
+
+    def resolve_matching(
+        self,
+        *,
+        status: str | None,
+        severity: str | None,
+        search: str | None,
+        seen_until: datetime,
+        admin_id: int,
+        now: datetime,
+    ) -> int:
+        """Marca como solucionados los errores del filtro que siguen abiertos y no han vuelto a ocurrir
+        desde `seen_until`: una sentencia (atómica frente a una ocurrencia nueva que los reabre)."""
+        stmt = (
+            update(ErrorReport)
+            .where(
+                *_filters(status, severity, search),
+                ErrorReport.status != "RESOLVED",
+                ErrorReport.last_seen_at <= seen_until,
+            )
+            .values(status="RESOLVED", status_changed_at=now, status_changed_by_id=admin_id)
+        )
+        return affected_rows(self.db, stmt)
 
     def get(self, report_id: int, *, for_update: bool = False) -> ErrorReport | None:
         return self.db.get(ErrorReport, report_id, with_for_update=for_update or None, populate_existing=for_update)
@@ -112,6 +128,19 @@ class ErrorReportRepository:
 
     def latest_seen(self) -> datetime | None:
         return self.db.scalar(select(func.max(ErrorReport.last_seen_at)))
+
+
+def _filters(status: str | None, severity: str | None, search: str | None) -> list[ColumnElement[bool]]:
+    """Las condiciones del filtro de la bandeja (las mismas al listar y al marcar en bloque)."""
+    conditions = []
+    if status:
+        conditions.append(ErrorReport.status == status)
+    if severity:
+        conditions.append(ErrorReport.severity == severity)
+    term = " ".join((search or "").split()).lower()
+    if term:
+        conditions.append(_matches(term))
+    return conditions
 
 
 def _matches(term: str) -> ColumnElement[bool]:

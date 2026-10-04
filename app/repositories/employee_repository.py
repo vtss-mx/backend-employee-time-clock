@@ -1,6 +1,7 @@
+from collections.abc import Iterable
 from typing import Literal
 
-from sqlalchemy import ColumnElement, func, select, union, update
+from sqlalchemy import ColumnElement, Select, func, select, union, update
 from sqlalchemy.orm import Session
 
 from app.models import Employee, FaceStatus, User
@@ -24,8 +25,11 @@ class EmployeeRepository:
     def _scoped(self) -> ColumnElement[bool]:
         return Employee.company_id == self.company_id
 
-    def get_by_id(self, employee_id: int) -> Employee | None:
-        employee = self.db.get(Employee, employee_id)
+    def get_by_id(self, employee_id: int, *, lock: bool = False) -> Employee | None:
+        """`lock`: candado de fila hasta terminar la transacción (cambios del mismo empleado en orden)."""
+        # FOR UPDATE OF employees: el usuario y la empresa se cargan con LEFT JOIN (no se bloquean).
+        locking = {"of": Employee} if lock else None
+        employee = self.db.get(Employee, employee_id, with_for_update=locking, populate_existing=lock)
         return employee if employee is not None and employee.company_id == self.company_id else None
 
     def by_ids(self, employee_ids: set[int]) -> dict[int, Employee]:
@@ -69,10 +73,45 @@ class EmployeeRepository:
             stmt = stmt.where(Employee.id != exclude_id)
         return self.db.scalar(stmt.limit(1)) is not None
 
+    def lock_many(self, employee_ids: Iterable[int]) -> list[Employee]:
+        """Varios empleados de la empresa con candado de fila, en orden de id: dos operaciones masivas
+        que comparten empleados los bloquean en el mismo orden (sin interbloqueos). FOR UPDATE OF
+        employees: el usuario y la empresa se cargan con LEFT JOIN (no se bloquean)."""
+        stmt = (
+            select(Employee)
+            .where(self._scoped(), Employee.id.in_(set(employee_ids)))
+            .order_by(Employee.id)
+            .with_for_update(of=Employee)
+            .execution_options(populate_existing=True)
+        )
+        return list(self.db.scalars(stmt))
+
     def search(
         self, *, search: str | None, active: bool | None, offset: int, limit: int, department_id: int | None = None
     ) -> tuple[list[Employee], int]:
-        stmt = select(Employee).join(User, Employee.user_id == User.id).where(self._scoped())
+        stmt = self._filtered(select(Employee), search=search, active=active, department_id=department_id)
+        order = (Employee.last_name, Employee.first_name, Employee.id)
+        return paginate(self.db, stmt, order, offset=offset, limit=limit)
+
+    def ids(
+        self, *, search: str | None, active: bool | None, department_id: int | None, limit: int
+    ) -> tuple[list[int], int]:
+        """Los ids de los empleados que coinciden con los filtros del listado (los primeros `limit`, en
+        el orden del listado) y cuántos son: "seleccionar todos los de este filtro"."""
+        stmt = self._filtered(select(Employee.id), search=search, active=active, department_id=department_id)
+        total = self.db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+        page = stmt.order_by(Employee.last_name, Employee.first_name, Employee.id).limit(limit)
+        return list(self.db.scalars(page)), int(total)
+
+    def _filtered[RowT](
+        self, stmt: Select[RowT], *, search: str | None, active: bool | None, department_id: int | None
+    ) -> Select[RowT]:
+        """Los filtros del listado de empleados (una sola definición para la página y para los ids).
+
+        Sin JOIN con las cuentas: ningún filtro lo necesita (el correo se busca en su propia rama) y con
+        él el conteo de la página recorría `users` completa de toda la plataforma en lugar de leer solo
+        el índice de la empresa."""
+        stmt = stmt.where(self._scoped())
         term = " ".join((search or "").split()).lower()
         if term:
             # Cada rama usa su índice: GIN (company_id + trigramas) para los datos del empleado y
@@ -89,9 +128,7 @@ class EmployeeRepository:
             stmt = stmt.where(Employee.active.is_(active))
         if department_id is not None:  # índice (company_id, department_id, apellidos, nombre, id)
             stmt = stmt.where(Employee.department_id == department_id)
-
-        order = (Employee.last_name, Employee.first_name, Employee.id)
-        return paginate(self.db, stmt, order, offset=offset, limit=limit)
+        return stmt
 
     def add(self, employee: Employee) -> Employee:
         employee.company_id = self.company_id

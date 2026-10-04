@@ -18,11 +18,27 @@ Los niveles más altos son una extrapolación de la curva: ningún impostor de L
 
 import math
 
-#: (a, b) por modelo de reconocimiento (FACE_RECOGNITION_MODEL).
+#: (a, b) por modelo. "facenet" (solo FaceNet) se ajustó igual sobre LFW (scripts/calibrate_lfw.py):
+#: sirve para exigir que cada modelo de la fusión coincida por su cuenta (`model_floor_confidence`).
 _CALIBRATION: dict[str, tuple[float, float]] = {
     "fusion": (-13.3133, 38.0366),
     "sface": (-10.8702, 33.6267),
+    "facenet": (-11.5726, 27.9249),
 }
+
+#: Confianza mínima de cada modelo por separado, nunca por debajo de este piso.
+MODEL_FLOOR_BASE = 0.40
+#: Cada modelo exige "tres nueves menos" que la fusión: 99.999 % → 99 %; hasta 99.9 % → el piso.
+MODEL_FLOOR_FACTOR = 1000.0
+
+
+def model_floor_confidence(confidence: float) -> float:
+    """Confianza que debe alcanzar CADA modelo de la fusión (SFace y FaceNet) cuando la fusión exige
+    `confidence`. Defensa contra imágenes fabricadas para engañar a un solo modelo: en LFW (6000
+    pares) agrega a lo más 0.23 % de rechazos legítimos (nivel 80 %; 0 desde 99 %), elimina al único
+    impostor que la fusión sola aceptaba y, si un modelo quedara totalmente engañado, el otro solo
+    dejaría pasar 0.3-0.6 % de los impostores (sin pisos: 39-100 % hasta 99.9 %)."""
+    return max(MODEL_FLOOR_BASE, 1.0 - MODEL_FLOOR_FACTOR * (1.0 - confidence))
 
 
 def match_confidence(similarity: float, model: str) -> float:

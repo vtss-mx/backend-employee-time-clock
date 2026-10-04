@@ -37,6 +37,7 @@ os.environ.update(
         "FACE_MODELS_AUTO_DOWNLOAD": "false",
         # Las pruebas responden al reto al instante; test_capture_security lo vuelve a exigir.
         "FACE_CHALLENGE_MIN_SECONDS": "0",
+        "FACE_FLASH_MIN_SECONDS": "0",
         # La depuración se prueba llamándola directamente (sin el hilo en segundo plano).
         "MAINTENANCE_INTERVAL_SECONDS": "0",
         # Los errores registrados se guardan llamando a error_reporter.flush() (sin hilo).
@@ -48,8 +49,15 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from app.core.database import Base, SessionLocal, engine  # noqa: E402
 from app.dependencies import get_pipeline  # noqa: E402
-from app.facial_recognition import FaceAnalysis, FaceValidationError, TurnDirection  # noqa: E402
-from app.facial_recognition.pipeline import DEFAULT_POLICY, Accessory, FacePolicy, accessories_error  # noqa: E402
+from app.facial_recognition import FaceAnalysis, FaceValidationError, LivenessAction, StepTarget  # noqa: E402
+from app.facial_recognition.photometry import FLASH_PALETTE, FlashSample, emitted_chroma  # noqa: E402
+from app.facial_recognition.pipeline import (  # noqa: E402
+    DEFAULT_POLICY,
+    Accessory,
+    FacePolicy,
+    FlashCapture,
+    accessories_error,
+)
 from app.main import app  # noqa: E402
 from app.middleware.rate_limit import limiter  # noqa: E402
 from app.models import DeviceStatus, Employee, ValidatorDevice  # noqa: E402
@@ -57,6 +65,7 @@ from app.models.catalog_seed import create_schema  # noqa: E402
 from app.services.bootstrap import create_admin_user, create_company_user  # noqa: E402
 from app.services.catalog_service import clear_catalog_cache  # noqa: E402
 from app.services.error_reporter import error_reporter  # noqa: E402
+from app.services.face_security import clear_threshold_cache  # noqa: E402
 from app.services.face_service import clear_migration_blocks  # noqa: E402
 from app.services.policy_service import clear_policy_cache  # noqa: E402
 from app.services.qr_service import QrService  # noqa: E402
@@ -128,9 +137,13 @@ class FakePipeline:
     b"glasses:<persona>"        con lentes      b"hat:<persona>"  con gorra
     b"spoof:<persona>"          foto o pantalla frente a la cámara
     b"exif:<persona>"           archivo con metadatos de cámara (no es una captura de la app)
+    b"dim:<persona>"            captura justa (calidad 0.45: poca luz o algo desenfocada)
     b"noface" / b"multi"        sin rostro / varias personas
-    b"turn-left:<persona>"      cabeza girada a la izquierda (b"turn-right:..." derecha); con
-                                "spoof-" delante es una pantalla y con "-moved" el rostro saltó de lugar
+    b"turn-left:<persona>"      paso del reto: cabeza girada a la izquierda (también "turn-right",
+                                "look-up", "look-down" y "closer"); con "spoof-" delante es una
+                                pantalla y con "-moved" el rostro saltó de lugar
+    b"flash-RED:<persona>"      fotograma del destello que refleja el color pedido; "flash-none" no
+                                refleja nada (mucha luz) y "flash-wrong" refleja otros colores
     """
 
     model_name = "fake-model"
@@ -150,11 +163,20 @@ class FakePipeline:
         found = (detected,) if detected is not None and policy.blocks(detected) else ()
         if found and enforce_accessories:
             raise accessories_error(found)
+        quality = 0.45 if kind == "dim" else 0.9
+        if quality < policy.min_quality:
+            raise FaceValidationError("LOW_QUALITY", {"quality": quality, "required": policy.min_quality})
         real = (0.01 if kind == "spoof" else 0.98) if policy.anti_spoofing else None
-        return replace(_analysis(name), accessories_found=found, real_probability=real, **_traits(image_bytes, kind))
+        return replace(
+            _analysis(name),
+            quality_score=quality,
+            accessories_found=found,
+            real_probability=real,
+            **_traits(image_bytes, kind),
+        )
 
-    def analyze_turn(
-        self, image_bytes: bytes, direction: TurnDirection, *, policy: FacePolicy = DEFAULT_POLICY
+    def analyze_step(
+        self, image_bytes: bytes, action: LivenessAction, target: StepTarget, *, policy: FacePolicy = DEFAULT_POLICY
     ) -> FaceAnalysis:
         kind, name = _parse(image_bytes)
         if kind.startswith("broken-"):  # una captura que el motor no puede leer (cv2.error)
@@ -163,16 +185,74 @@ class FakePipeline:
         kind = kind.removeprefix("spoof-").removesuffix("-moved")
         if kind == "exif" and policy.reject_foreign_images:
             raise FaceValidationError("IMAGE_NOT_FROM_CAMERA")
-        expected = "turn-left" if direction == TurnDirection.LEFT else "turn-right"
-        if kind != expected:
-            raise FaceValidationError("LIVENESS_TURN_NOT_DETECTED")
+        if kind == "noface":
+            raise FaceValidationError("NO_FACE")
+        measured = STEP_VALUES.get(kind, 0.0) if kind == STEP_KINDS[action] else 0.0
+        if measured < target.required(action):
+            raise FaceValidationError("LIVENESS_STEP_NOT_DETECTED", {"measured": measured, "expected": action.value})
         real = (0.01 if spoofed else 0.98) if policy.anti_spoofing else None
+        side = 140 if action == LivenessAction.MOVE_CLOSER else 100
         return replace(
             _analysis(name),
-            face_box=(600, 400, 100, 100) if moved else (0, 0, 100, 100),
+            face_box=(600, 400, side, side) if moved else (0, 0, side, side),
             real_probability=real,
+            step_value=measured,
             **_traits(image_bytes, kind),
         )
+
+    def analyze_flash(self, image_bytes: bytes, *, policy: FacePolicy = DEFAULT_POLICY) -> FlashCapture:
+        kind, _ = _parse(image_bytes)
+        if kind == "flash-crash":  # falla inesperada del motor
+            raise RuntimeError("el motor se cayó")
+        if kind == "flash-broken":
+            raise cv2.error("captura ilegible")
+        if kind == "flash-noface":
+            raise FaceValidationError("NO_FACE")
+        if kind == "flash-exif" and policy.reject_foreign_images:
+            raise FaceValidationError("IMAGE_NOT_FROM_CAMERA")
+        moved = kind.endswith("-moved")
+        color = kind.removeprefix("flash-").removesuffix("-moved")
+        return FlashCapture(
+            sample=_flash_sample(color),
+            face_box=(600, 400, 100, 100) if moved else (0, 0, 100, 100),
+            image_size=_traits(image_bytes, kind)["image_size"],
+            capture_digest=_traits(image_bytes, kind)["capture_digest"],
+        )
+
+
+#: Imagen simulada de cada paso del reto y lo que mide (cómodo sobre el mínimo, bajo el tope).
+STEP_KINDS = {
+    LivenessAction.TURN_LEFT: "turn-left",
+    LivenessAction.TURN_RIGHT: "turn-right",
+    LivenessAction.LOOK_UP: "look-up",
+    LivenessAction.LOOK_DOWN: "look-down",
+    LivenessAction.MOVE_CLOSER: "closer",
+}
+STEP_VALUES = {"turn-left": 0.25, "turn-right": 0.25, "look-up": 0.12, "look-down": 0.12, "closer": 1.4}
+#: Lo contrario de cada paso (para simular que la persona no hizo lo que se pidió).
+WRONG_STEP = {
+    "TURN_LEFT": "turn-right",
+    "TURN_RIGHT": "turn-left",
+    "LOOK_UP": "look-down",
+    "LOOK_DOWN": "look-up",
+    "MOVE_CLOSER": "turn-left",
+}
+_SKIN = np.array([0.45, 0.33, 0.22])
+
+
+def _flash_sample(color: str) -> FlashSample:
+    """Un rostro real refleja el color (el fondo, lejos, casi no); "none" no refleja nada; "wrong", lo
+    contrario de lo que pinta la pantalla."""
+    if color in FLASH_PALETTE:
+        face, background = 0.7 * _SKIN + 0.3 * emitted_chroma(color), 0.95 * _SKIN + 0.05 * emitted_chroma(color)
+    elif color.startswith("wrong-") and color.removeprefix("wrong-") in FLASH_PALETTE:
+        opposite = 1 - emitted_chroma(color.removeprefix("wrong-"))
+        face = background = 0.7 * _SKIN + 0.3 * opposite / opposite.sum()
+    else:
+        face = background = _SKIN
+    r, g, b = (float(v) for v in face)
+    br, bg, bb = (float(v) for v in background)
+    return FlashSample(face=(r, g, b), background=(br, bg, bb))
 
 
 @pytest.fixture(autouse=True)
@@ -184,6 +264,7 @@ def _db():
     clear_catalog_cache()
     error_reporter.clear()  # sin errores pendientes de la prueba anterior
     clear_migration_blocks()
+    clear_threshold_cache()
     with SessionLocal() as db:
         company = create_company_user(db, COMPANY_EMAIL, COMPANY_PASSWORD).company
         create_admin_user(db, ADMIN_EMAIL, ADMIN_PASSWORD)
@@ -332,17 +413,29 @@ def nss_for(number: str) -> str:
 
 
 def turn_files(challenge: dict, person: str = "juan", *, image: str = "turn:{person}", wrong: bool = False) -> list:
-    """Una captura con la cabeza girada por cada giro del reto, en orden.
+    """Una captura por cada movimiento del reto, en orden.
 
-    `image` es la captura simulada con "turn" en lugar del lado (p. ej. "spoof-turn:{person}");
-    `wrong=True` gira al lado contrario del pedido.
+    `image` es la captura simulada con "turn" en lugar del movimiento (p. ej. "spoof-turn:{person}");
+    `wrong=True` hace lo contrario de lo pedido.
     """
     files = []
     for i, action in enumerate(challenge["actions"] or [challenge["action"]]):
-        left = (action == "TURN_LEFT") != wrong
-        content = image.format(person=person).replace("turn", "turn-left" if left else "turn-right", 1)
+        kind = WRONG_STEP[action] if wrong else STEP_KINDS[LivenessAction(action)]
+        content = image.format(person=person).replace("turn", kind, 1)
         files.append(("challenge_image", (f"t{i}.jpg", content.encode(), "image/jpeg")))
     return files
+
+
+#: Código de cada color del destello por su #RRGGBB (lo que envía el reto).
+FLASH_CODES = {f"#{r:02X}{g:02X}{b:02X}": code for code, (r, g, b) in FLASH_PALETTE.items()}
+
+
+def flash_files(challenge: dict, person: str = "juan", *, image: str = "flash-{color}:{person}") -> list:
+    """Una captura por cada color del destello, en orden (`{color}` es el código del color pedido)."""
+    return [
+        ("flash_image", (f"c{i}.jpg", image.format(color=FLASH_CODES[hex_color], person=person).encode(), "image/jpeg"))
+        for i, hex_color in enumerate(challenge["flash"])
+    ]
 
 
 def submit_enrollment(client, headers, *, frontal=(b"face:juan", b"face:juan", b"face:juan"), turn_person="juan"):

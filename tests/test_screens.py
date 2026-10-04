@@ -34,7 +34,7 @@ def _revoke(role: str, screen: Screen) -> None:
 
 def test_every_role_gets_its_screens_and_home(client, admin_headers, company_headers):
     admin = _me(client, admin_headers)
-    assert _codes(admin) == ["ADMIN_DASHBOARD", "ADMIN_COMPANIES", "ADMIN_ERRORS", "PROFILE"]
+    assert _codes(admin) == ["ADMIN_DASHBOARD", "ADMIN_COMPANIES", "ADMIN_ERRORS", "ADMIN_FACE_SECURITY", "PROFILE"]
     assert admin["home"] == "/admin/dashboard"
     assert admin["screens"][1] == {
         "code": "ADMIN_COMPANIES",
@@ -43,7 +43,11 @@ def test_every_role_gets_its_screens_and_home(client, admin_headers, company_hea
         "path": "/admin/companies",
         "icon": "Building2",
         "badge": None,
+        "module": "PLATFORM",
     }
+    # El menú se agrupa en módulos: solo los que usan sus pantallas, en orden.
+    assert [m["code"] for m in admin["modules"]] == ["PLATFORM", "OPERATIONS", "ACCOUNT"]
+    assert admin["modules"][0] == {"code": "PLATFORM", "name": "Plataforma", "icon": "Building2"}
 
     company = _me(client, company_headers)
     assert _codes(company) == [
@@ -51,13 +55,21 @@ def test_every_role_gets_its_screens_and_home(client, admin_headers, company_hea
         "COMPANY_EMPLOYEES",
         "COMPANY_DEPARTMENTS",
         "COMPANY_VALIDATIONS",
+        "COMPANY_ATTENDANCE",
+        "COMPANY_SHIFTS",
+        "COMPANY_CALENDAR",
+        "COMPANY_SITES",
         "COMPANY_VALIDATORS",
-        "COMPANY_REPORTS",
-        "COMPANY_SETTINGS",
         "COMPANY_API",
         "PROFILE",
     ]
     assert company["home"] == "/company/dashboard" and company["screens"][3]["badge"] == "PENDING_ENROLLMENTS"
+    assert company["screens"][5]["badge"] == "PENDING_SHIFT_REQUESTS"
+    assert (
+        company["screens"][6]["badge"] == "PENDING_ABSENCE_REQUESTS" and company["screens"][6]["module"] == "ATTENDANCE"
+    )
+    assert [s["module"] for s in company["screens"][:4]] == ["OVERVIEW", "PEOPLE", "PEOPLE", "PEOPLE"]
+    assert [m["code"] for m in company["modules"]] == ["OVERVIEW", "PEOPLE", "ATTENDANCE", "ACCESS", "DATA", "ACCOUNT"]
 
     validator = _me(client, validator_headers(client, company_headers))
     assert _codes(validator) == ["VALIDATOR_CHECKPOINT", "PROFILE"]
@@ -74,8 +86,8 @@ def test_employee_screens_follow_the_state_of_their_face_registration(client, co
 
     client.post(f"/api/enrollments/{enrollment['enrollment_id']}/approve", headers=company_headers)
     approved = _me(client, headers)
-    assert _codes(approved) == ["EMPLOYEE_VERIFY", "EMPLOYEE_QR", "PROFILE"]
-    assert approved["home"] == "/employee/dashboard"
+    assert _codes(approved) == ["EMPLOYEE_ATTENDANCE", "EMPLOYEE_VERIFY", "EMPLOYEE_QR", "PROFILE"]
+    assert approved["home"] == "/employee/attendance"  # registra su asistencia en cuanto entra
 
 
 def test_login_and_refresh_carry_the_screens(client, company_headers):

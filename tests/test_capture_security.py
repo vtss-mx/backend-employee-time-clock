@@ -28,7 +28,7 @@ from app.services.capture_guard import (
 from app.services.face_service import SuspiciousCapture
 from tests.conftest import _analysis, approved_employee, create_employee, login, submit_enrollment, turn_files
 from tests.test_in_person_face import in_person
-from tests.test_policy import set_policy
+from tests.test_policy import admin_policy, set_policy
 from tests.test_validators import approved, validator_headers
 
 VERIFY = "/api/verification/face"
@@ -282,9 +282,15 @@ def test_policy_exposes_every_lock_enabled_by_default(client, company_headers):
     assert all(policy[lock] is True for lock in locks)
     assert (policy["anti_spoofing_level"], policy["liveness_steps"]) == ("STANDARD", 2)
     assert (policy["lockout_max_failures"], policy["lockout_minutes"]) == (5, 15)
-    for invalid in ({"liveness_steps": 3}, {"lockout_max_failures": 1}, {"lockout_minutes": 0}):
-        assert client.put("/api/settings/verification", json=invalid, headers=company_headers).status_code == 422
-    level = client.put("/api/settings/verification", json={"anti_spoofing_level": "PARANOID"}, headers=company_headers)
+    url, admin = admin_policy(client, company_headers)
+    for invalid in (
+        {"liveness_steps": 4},
+        {"liveness_timeout_seconds": 10},
+        {"lockout_max_failures": 1},
+        {"lockout_minutes": 0},
+    ):
+        assert client.put(url, json=invalid, headers=admin).status_code == 422
+    level = client.put(url, json={"anti_spoofing_level": "PARANOID"}, headers=admin)
     assert level.status_code == 422 and level.json()["code"] == "INVALID_ANTISPOOF_LEVEL"
 
 

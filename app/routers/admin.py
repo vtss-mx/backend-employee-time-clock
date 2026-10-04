@@ -1,7 +1,9 @@
 """Consola de la plataforma: alta y administración de empresas. Solo rol ADMIN.
 
-El ADMIN no ve empleados ni datos biométricos de las empresas (privacidad por diseño): solo sus
-datos fiscales y de contacto, sus administradores y conteos.
+El ADMIN configura cada empresa: sus datos, su plan, sus módulos (Integraciones), su política de
+verificación de identidad y el aprendizaje del reconocimiento facial (la empresa no lo ve ni lo
+configura). De sus empleados solo consulta la ficha de trabajo, de solo lectura; nunca datos fiscales
+ni biométricos (privacidad por diseño).
 """
 
 from typing import Annotated, Any
@@ -20,13 +22,17 @@ from app.schemas.company import (
     CompanyCreate,
     CompanyDetail,
     CompanyEmployeeList,
+    CompanyEmployeeRead,
     CompanyList,
     CompanyStatusUpdate,
     CompanyUpdate,
     PlatformStats,
 )
 from app.schemas.employee import EmployeeStatusUpdate
+from app.schemas.face import FaceLearningSummary
+from app.schemas.policy import VerificationPolicyRead, VerificationPolicyUpdate
 from app.services.company_service import CompanyService
+from app.services.policy_service import PolicyService
 
 router = APIRouter(
     prefix="/admin",
@@ -113,6 +119,76 @@ def company_employees(
 ) -> ApiResponse[CompanyEmployeeList]:
     result = CompanyService(db).employees(company_id, search=search, active=active, page=page)
     return ok(result, f"{result.total} empleado(s)", code="COMPANY_EMPLOYEES")
+
+
+@router.get(
+    "/companies/{company_id}/face-learning",
+    response_model=ApiResponse[FaceLearningSummary],
+    summary="Evolución del reconocimiento facial de una empresa",
+    description=(
+        "Lo que su galería aprendió de identificaciones seguras: empleados que ya aprenden, muestras "
+        "aprendidas vigentes y cuántas identificaciones decidieron. Solo el ADMIN lo ve."
+    ),
+    responses=NOT_FOUND,
+    dependencies=[Depends(require_screen(Screen.ADMIN_COMPANIES))],
+)
+def company_face_learning(company_id: int, _: AdminUser, db: DbSession) -> ApiResponse[FaceLearningSummary]:
+    summary = CompanyService(db).face_learning(company_id)
+    return ok(summary, "Evolución del reconocimiento facial", code="FACE_LEARNING_SUMMARY")
+
+
+@router.delete(
+    "/companies/{company_id}/employees/{employee_id}/face/learned",
+    response_model=ApiResponse[CompanyEmployeeRead],
+    summary="Olvidar lo que el reconocimiento aprendió de un empleado",
+    description=(
+        "Borra las muestras aprendidas de sus identificaciones: vuelve a compararse solo con su registro "
+        "aprobado, que no se toca. No cambia su estado facial."
+    ),
+    responses={404: {"model": ErrorResponse, "description": "Empresa o empleado no encontrado"}},
+    dependencies=[Depends(require_screen(Screen.ADMIN_COMPANIES))],
+)
+def forget_learned_face(
+    company_id: int, employee_id: int, _: AdminUser, db: DbSession
+) -> ApiResponse[CompanyEmployeeRead]:
+    employee, removed = CompanyService(db).forget_learned_face(company_id, employee_id)
+    return ok(
+        employee,
+        f"Se olvidaron {removed} muestra(s) aprendida(s): se compara solo con su registro aprobado.",
+        code="FACE_LEARNING_FORGOTTEN",
+    )
+
+
+@router.get(
+    "/companies/{company_id}/verification-policy",
+    response_model=ApiResponse[VerificationPolicyRead],
+    summary="Política de verificación de identidad de una empresa",
+    responses=NOT_FOUND,
+    dependencies=[Depends(require_screen(Screen.ADMIN_COMPANIES))],
+)
+def company_policy(company_id: int, _: AdminUser, db: DbSession) -> ApiResponse[VerificationPolicyRead]:
+    CompanyService(db).get(company_id)  # 404 si la empresa no existe
+    return ok(PolicyService(db, company_id).read(), "Política de verificación", code="POLICY")
+
+
+@router.put(
+    "/companies/{company_id}/verification-policy",
+    response_model=ApiResponse[VerificationPolicyRead],
+    summary="Configurar la política de verificación de una empresa",
+    description=(
+        "El ADMIN de la plataforma es el responsable: exigir retirar lentes, gorra o cubrebocas, prueba de "
+        "vida, anti-spoofing, QR, nivel de confianza, candados contra engaños y aprendizaje continuo. Solo se "
+        "modifican los campos enviados; aplica en segundos a todos los procesos de la API."
+    ),
+    responses=NOT_FOUND,
+    dependencies=[Depends(require_screen(Screen.ADMIN_COMPANIES))],
+)
+def update_company_policy(
+    company_id: int, payload: VerificationPolicyUpdate, user: AdminUser, db: DbSession
+) -> ApiResponse[VerificationPolicyRead]:
+    CompanyService(db).get(company_id)
+    policy = PolicyService(db, company_id).update(payload, user)
+    return ok(policy, "Política de verificación actualizada", code="POLICY_UPDATED")
 
 
 @router.put(

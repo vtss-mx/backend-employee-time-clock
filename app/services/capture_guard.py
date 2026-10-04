@@ -9,8 +9,9 @@ Cada comprobación cierra una forma concreta de engañar al sistema:
 | Una foto fija enviada como varias capturas | fotogramas idénticos | STATIC_CAPTURE |
 | Reenvío de capturas interceptadas o guardadas | huella ya recibida antes | REPLAY_DETECTED |
 | Capturas armadas con imágenes de tomas distintas | misma resolución y rostro continuo | CAPTURE_INCONSISTENT |
-| Programa que responde al reto al instante | tiempo humano mínimo para girar | CHALLENGE_TOO_FAST |
-| Foto, pantalla o video frente a la cámara | anti-spoofing en frontales y en el giro | SPOOF_DETECTED |
+| Programa que responde al reto al instante | tiempo humano mínimo por movimiento y color | CHALLENGE_TOO_FAST |
+| Foto, pantalla o video frente a la cámara | anti-spoofing en frontales y en cada movimiento | SPOOF_DETECTED |
+| Video inyectado o generado que no ve la pantalla | el rostro refleja los colores del destello | FLASH_MISMATCH |
 
 Todas lanzan `SuspiciousCapture`: se registran en la bitácora y cuentan para el bloqueo temporal
 (attempt_guard). Ninguna sustituye a las demás: un atacante tendría que superarlas todas a la vez.
@@ -27,7 +28,8 @@ import numpy as np
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.facial_recognition import FaceAnalysis, FacePolicy
+from app.facial_recognition import FaceAnalysis, FacePolicy, LivenessAction
+from app.facial_recognition.pipeline import FlashCapture
 from app.repositories.capture_repository import CaptureFingerprintRepository
 from app.services.face_service import SuspiciousCapture, looks_spoofed, spoof_consensus
 from app.services.liveness_service import Challenge
@@ -48,13 +50,16 @@ def ensure_real_camera(camera_label: str | None, policy: PolicySnapshot) -> None
         raise SuspiciousCapture("VIRTUAL_CAMERA")
 
 
-def ensure_human_timing(challenge: Challenge | None, policy: PolicySnapshot) -> None:
-    """Los giros no pueden llegar antes de lo que tarda una persona en leer el reto y girar
-    (cada giro suma el mínimo: con dos, además vuelve al frente entre ellos)."""
+def ensure_human_timing(challenge: Challenge | None, policy: PolicySnapshot, flash_frames: int = 0) -> None:
+    """Las capturas no pueden llegar antes de lo que tarda una persona en leer el reto y hacer cada
+    movimiento (entre uno y otro vuelve al frente), más un instante por cada color del destello."""
     if challenge is None or not policy.enforce_human_timing:
         return
     elapsed = (datetime.now(UTC) - challenge.issued_at).total_seconds()
-    if elapsed < settings.FACE_CHALLENGE_MIN_SECONDS * len(challenge.directions):
+    needed = (
+        settings.FACE_CHALLENGE_MIN_SECONDS * len(challenge.actions) + settings.FACE_FLASH_MIN_SECONDS * flash_frames
+    )
+    if elapsed < needed:
         raise SuspiciousCapture("CHALLENGE_TOO_FAST")
 
 
@@ -75,9 +80,12 @@ def thumb_difference(a: FaceAnalysis, b: FaceAnalysis) -> float | None:
     return float(np.abs(a.face_thumb - b.face_thumb).mean())
 
 
-def ensure_not_static(frontal: Sequence[FaceAnalysis], turns: Sequence[FaceAnalysis]) -> None:
+def ensure_not_static(
+    frontal: Sequence[FaceAnalysis], turns: Sequence[FaceAnalysis], flash: Sequence[FlashCapture] = ()
+) -> None:
     """Ningún fotograma repetido: ni la misma imagen ni un rostro idéntico píxel a píxel."""
-    digests = [c.capture_digest for c in (*frontal, *turns) if c.capture_digest is not None]
+    captures: list[FaceAnalysis | FlashCapture] = [*frontal, *turns, *flash]
+    digests = [c.capture_digest for c in captures if c.capture_digest is not None]
     if len(set(digests)) < len(digests):
         raise SuspiciousCapture("STATIC_CAPTURE")
     for a, b in combinations(frontal, 2):
@@ -86,29 +94,56 @@ def ensure_not_static(frontal: Sequence[FaceAnalysis], turns: Sequence[FaceAnaly
             raise SuspiciousCapture("STATIC_CAPTURE")
 
 
-def ensure_same_take(frontal: Sequence[FaceAnalysis], turns: Sequence[FaceAnalysis]) -> None:
+def ensure_same_take(
+    frontal: Sequence[FaceAnalysis],
+    turns: Sequence[FaceAnalysis],
+    actions: Sequence[LivenessAction] = (),
+    flash: Sequence[FlashCapture] = (),
+) -> None:
     """Las capturas de un intento son de la MISMA toma en vivo.
 
     - Misma resolución: salen del mismo flujo de la cámara (no de archivos distintos).
-    - Cada giro continúa la toma: el rostro no cambia de tamaño, no salta de lugar y la luz no
-      cambia de forma imposible al girar la cabeza.
+    - Cada movimiento y cada color del destello continúan la toma: el rostro no cambia de tamaño
+      (salvo lo que pide "acercarse"), no salta de lugar y la luz no cambia de forma imposible (el
+      destello cambia el color a propósito: ahí no se mide la luz).
     """
-    if len({c.image_size for c in (*frontal, *turns) if c.image_size is not None}) > 1:
+    captures: list[FaceAnalysis | FlashCapture] = [*frontal, *turns, *flash]
+    sizes = {c.image_size for c in captures if c.image_size is not None}
+    if len(sizes) > 1:
         raise SuspiciousCapture("CAPTURE_INCONSISTENT")
-    if frontal:
-        for turn in turns:
-            ensure_continuity(frontal[-1], turn)
+    if not frontal:
+        return
+    for index, turn in enumerate(turns):
+        closer = index < len(actions) and actions[index] == LivenessAction.MOVE_CLOSER
+        ensure_continuity(frontal[-1], turn, closer=closer)
+    for capture in flash:
+        ensure_framing(frontal[-1].face_box, capture.face_box)
 
 
-def ensure_continuity(frontal: FaceAnalysis, turn: FaceAnalysis) -> None:
-    """Del último fotograma frontal al del giro la persona solo gira la cabeza."""
-    fx, fy, fw, fh = frontal.face_box
-    tx, ty, tw, th = turn.face_box
+def _box_change(before: tuple[int, int, int, int], after: tuple[int, int, int, int]) -> tuple[float, float]:
+    """Cuánto cambió el tamaño del rostro (proporción) y cuánto se movió su centro (en anchos de rostro)."""
+    fx, fy, fw, fh = before
+    tx, ty, tw, th = after
     scale = max(fw, tw) / max(min(fw, tw), 1)
     shift = math.hypot((fx + fw / 2) - (tx + tw / 2), (fy + fh / 2) - (ty + th / 2)) / max(fw, 1)
+    return scale, shift
+
+
+def ensure_framing(before: tuple[int, int, int, int], after: tuple[int, int, int, int]) -> None:
+    """El rostro sigue en el mismo lugar y del mismo tamaño (fotogramas del destello)."""
+    scale, shift = _box_change(before, after)
+    if scale > settings.FACE_CONTINUITY_MAX_SCALE or shift > settings.FACE_CONTINUITY_MAX_SHIFT:
+        raise SuspiciousCapture("CAPTURE_INCONSISTENT", {"scale": round(scale, 2), "shift": round(shift, 2)})
+
+
+def ensure_continuity(frontal: FaceAnalysis, turn: FaceAnalysis, *, closer: bool = False) -> None:
+    """Del último fotograma frontal al del movimiento la persona solo mueve la cabeza (o se acerca:
+    entonces el rostro puede crecer hasta lo que permite el tope de "acercarse")."""
+    scale, shift = _box_change(frontal.face_box, turn.face_box)
     light = abs(frontal.brightness - turn.brightness)
+    max_scale = settings.FACE_CONTINUITY_MAX_SCALE * (settings.FACE_LIVENESS_MAX_CLOSER_SCALE if closer else 1.0)
     if (
-        scale > settings.FACE_CONTINUITY_MAX_SCALE
+        scale > max_scale
         or shift > settings.FACE_CONTINUITY_MAX_SHIFT
         or light > settings.FACE_CONTINUITY_MAX_BRIGHTNESS_DELTA
     ):
@@ -116,7 +151,7 @@ def ensure_continuity(frontal: FaceAnalysis, turn: FaceAnalysis) -> None:
         raise SuspiciousCapture("CAPTURE_INCONSISTENT", details)
 
 
-def ensure_not_replayed(db: Session, company_id: int, captures: Sequence[FaceAnalysis]) -> None:
+def ensure_not_replayed(db: Session, company_id: int, captures: Sequence[FaceAnalysis | FlashCapture]) -> None:
     """Ninguna captura se había recibido antes; se recuerdan para rechazar su reenvío.
 
     Las huellas se guardan con la bitácora del intento (mismo commit) y cuentan durante
@@ -137,12 +172,16 @@ def inspect_take(
     frontal: Sequence[FaceAnalysis],
     turns: Sequence[FaceAnalysis],
     policy: PolicySnapshot,
+    *,
+    actions: Sequence[LivenessAction] = (),
+    flash: Sequence[FlashCapture] = (),
 ) -> None:
     """Comprobaciones de la toma completa (las que la empresa tenga activas), después del análisis de
-    cada captura. El reenvío al final: solo se recuerdan capturas que superaron lo demás."""
+    cada captura. El reenvío al final: solo se recuerdan capturas que superaron lo demás. Los fotogramas
+    del destello cuentan solo cuando el destello es obligatorio (mientras se observa no bloquean)."""
     if policy.detect_static_captures:
-        ensure_not_static(frontal, turns)
+        ensure_not_static(frontal, turns, flash)
     if policy.check_capture_continuity:
-        ensure_same_take(frontal, turns)
+        ensure_same_take(frontal, turns, actions, flash)
     if policy.detect_replays:
-        ensure_not_replayed(db, company_id, [*frontal, *turns])
+        ensure_not_replayed(db, company_id, [*frontal, *turns, *flash])

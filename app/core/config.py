@@ -162,11 +162,51 @@ class Settings(BaseSettings):
     FACE_MASK_MAX_SKIN_RATIO: float = Field(default=0.55, ge=0.0, le=1.0)
     FACE_MASK_STRICT_THRESHOLD: float = Field(default=0.90, ge=0.0, le=1.0)
 
-    # Prueba de vida: reto aleatorio emitido por el servidor (girar la cabeza).
+    # Prueba de vida: reto aleatorio emitido por el servidor (girar, mirar arriba o abajo, acercarse).
+    # La duración del reto y cuántos movimientos pide la decide cada empresa en su política. Estos
+    # mínimos son el PISO: la autocalibración (face_security) solo puede subirlos, hasta su tope.
     FACE_LIVENESS_ENABLED: bool = True
     FACE_LIVENESS_MIN_YAW_RATIO: float = Field(default=0.18, gt=0.0, le=1.0)
+    FACE_LIVENESS_MAX_YAW_RATIO: float = Field(default=0.28, gt=0.0, le=1.0)
+    # Mirar arriba/abajo: cambio del pitch_ratio respecto a las frontales (≈ 13° con 0.08).
+    FACE_LIVENESS_MIN_PITCH_DELTA: float = Field(default=0.08, gt=0.0, le=1.0)
+    FACE_LIVENESS_MAX_PITCH_DELTA: float = Field(default=0.14, gt=0.0, le=1.0)
+    # Acercarse: cuántas veces crece el ancho del rostro respecto a las frontales.
+    FACE_LIVENESS_MIN_CLOSER_SCALE: float = Field(default=1.25, gt=1.0, le=3.0)
+    FACE_LIVENESS_MAX_CLOSER_SCALE: float = Field(default=1.45, gt=1.0, le=3.0)
     FACE_LIVENESS_CONSISTENCY_THRESHOLD: float = Field(default=0.30, ge=0.0, le=1.0)
-    FACE_CHALLENGE_TTL_SECONDS: int = Field(default=90, ge=15, le=600)
+
+    # Destello de colores (photometry): cuántos colores por reto, la respuesta mínima del rostro para
+    # considerar la medición concluyente y, ya concluyente, qué tanto debe seguir los colores emitidos.
+    # Con el modo OBSERVE solo se mide (la autocalibración usa esas mediciones).
+    FACE_FLASH_COLORS: int = Field(default=3, ge=2, le=6)
+    FACE_FLASH_MIN_MAGNITUDE: float = Field(default=0.004, ge=0.0, le=1.0)
+    FACE_FLASH_MIN_SCORE: float = Field(default=0.35, ge=-1.0, le=1.0)
+    FACE_FLASH_MAX_SCORE: float = Field(default=0.75, ge=-1.0, le=1.0)
+    # Tiempo humano mínimo por color del destello (se suma al de cada movimiento).
+    FACE_FLASH_MIN_SECONDS: float = Field(default=0.15, ge=0.0, le=5.0)
+
+    # Autocalibración y refuerzo automático (face_security): la plataforma se mide y se endurece sola,
+    # tenga o no la empresa el aprendizaje de la galería. Solo endurece (nunca baja de los mínimos).
+    FACE_AUTOCALIBRATION_ENABLED: bool = True
+    # Cada cuánto se recalcula (el mantenimiento lo hace en segundo plano).
+    FACE_AUTOCALIBRATION_INTERVAL_HOURS: float = Field(default=6.0, gt=0.0, le=168.0)
+    # Intentos exitosos mínimos para mover un umbral, los días que se miran y cuántos como máximo.
+    FACE_AUTOCALIBRATION_MIN_SAMPLES: int = Field(default=300, ge=20, le=1_000_000)
+    FACE_AUTOCALIBRATION_WINDOW_DAYS: int = Field(default=30, ge=1, le=365)
+    FACE_AUTOCALIBRATION_MAX_SAMPLES: int = Field(default=20_000, ge=100, le=1_000_000)
+    # El umbral queda en este percentil de las personas reales por el margen (2 % y 0.85: casi todas
+    # pasan con holgura y quien imita apenas el movimiento ya no).
+    FACE_AUTOCALIBRATION_PERCENTILE: float = Field(default=0.02, gt=0.0, lt=0.5)
+    FACE_AUTOCALIBRATION_MARGIN: float = Field(default=0.85, gt=0.0, le=1.0)
+    # Tope de la probabilidad de rostro real que la autocalibración puede exigir (nivel Máximo).
+    FACE_AUTOCALIBRATION_MAX_REAL: float = Field(default=0.5, ge=0.0, le=1.0)
+    # Refuerzo: con tantos intentos sospechosos contra una empresa en la ventana, sus retos piden el
+    # máximo de movimientos hasta que la ventana quede limpia.
+    FACE_ESCALATION_MIN_ATTACKS: int = Field(default=5, ge=1, le=1000)
+    FACE_ESCALATION_WINDOW_MINUTES: int = Field(default=60, ge=1, le=10_080)
+    # Días que se guardan los números de cada intento facial.
+    FACE_METRICS_RETENTION_DAYS: int = Field(default=90, ge=7, le=730)
 
     # --- Protección contra engaños: parámetros técnicos de los candados ---
     # Cada empresa activa o desactiva cada candado en su política de verificación
@@ -174,7 +214,7 @@ class Settings(BaseSettings):
     # Diferencia mínima (niveles de gris 0-255) entre capturas de un mismo intento: una persona
     # real nunca da dos fotogramas iguales (ruido del sensor, respiración); una foto fija sí.
     FACE_STATIC_MIN_DIFFERENCE: float = Field(default=0.6, ge=0.0, le=50.0)
-    # Segundos mínimos entre el reto y la captura del giro: menos es imposible para una persona.
+    # Segundos mínimos por movimiento entre el reto y su captura: menos es imposible para una persona.
     FACE_CHALLENGE_MIN_SECONDS: float = Field(default=0.8, ge=0.0, le=30.0)
     # Días que se recuerda la huella de cada captura para rechazar su reenvío.
     FACE_REPLAY_RETENTION_DAYS: int = Field(default=30, ge=1, le=365)
@@ -300,6 +340,9 @@ class Settings(BaseSettings):
     RATE_LIMIT_VALIDATION_PER_MINUTE: int = Field(default=120, ge=1)
     # API de integración: peticiones por llave y minuto.
     RATE_LIMIT_API_KEY_PER_MINUTE: int = Field(default=120, ge=1)
+    # Fallas de la aplicación web que reporta el navegador (público): reportes por IP y minuto. La app
+    # no repite el mismo reporte en una carga de la página; esto frena a quien lo use para inundar.
+    RATE_LIMIT_CLIENT_ERRORS_PER_MINUTE: int = Field(default=20, ge=1)
 
     # --- Registro de errores del sistema (ops.error_reports, pantalla "Errores del sistema") ---
     # Se acumulan en memoria y un hilo los guarda en lotes cada ERROR_REPORT_FLUSH_SECONDS (0 = solo
@@ -312,16 +355,6 @@ class Settings(BaseSettings):
     # Un error SOLUCIONADO que no ha vuelto a ocurrir en este tiempo se depura (si vuelve, se crea
     # de nuevo como pendiente): la bandeja no crece sin fin.
     ERROR_RESOLVED_RETENTION_DAYS: int = Field(default=180, ge=1, le=3650)
-
-    # --- Asistente de reportes (pantalla "Reportes" de cada empresa; app/services/reporting) ---
-    # Filas que muestra el asistente en pantalla (el resto se ve al exportar a Excel).
-    REPORT_PREVIEW_ROWS: int = Field(default=20, ge=1, le=200)
-    # Tope de filas de un archivo de Excel: un reporte mayor se corta y el archivo lo dice.
-    REPORT_EXPORT_MAX_ROWS: int = Field(default=100_000, ge=100, le=1_000_000)
-    # Tope de grupos de un reporte agrupado (p. ej. por empleado o por día).
-    REPORT_GROUPS_MAX: int = Field(default=500, ge=10, le=10_000)
-    # Cuánto recuerda las preguntas de cada empresa (sugerencias y aprendizaje).
-    REPORT_QUERY_RETENTION_DAYS: int = Field(default=180, ge=7, le=3650)
 
     # --- Mantenimiento (depuración de lo vencido, fuera de las peticiones) ---
     # Cada cuántos segundos depura cada instancia (solo una a la vez trabaja); 0 = desactivado

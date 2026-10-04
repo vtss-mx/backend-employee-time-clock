@@ -17,7 +17,7 @@ from app.services.face_gallery import face_galleries
 from app.services.face_learning import Evidence, FaceLearning
 from app.services.policy_service import PolicySnapshot
 from tests.conftest import FakePipeline, _analysis, approved_employee, face_vector, login, turn_files
-from tests.test_policy import set_policy
+from tests.test_policy import admin_company, set_policy
 from tests.test_validators import approved, identify_face, validator_headers
 
 
@@ -82,8 +82,10 @@ def test_safe_verification_teaches_the_gallery_and_keeps_the_anchor(client, comp
     assert len(learned(juan)) == 1
 
     employee = client.get(f"/api/employees/{juan}", headers=company_headers).json()["data"]
-    assert (employee["face_samples"], employee["face_learned_samples"]) == (4, 1)
-    assert employee["face_last_learned_at"] is not None
+    assert employee["face_samples"] == 4
+    base, admin = admin_company(client, company_headers)
+    listed = client.get(f"{base}/employees", headers=admin).json()["data"]["items"][0]
+    assert listed["face_learned_samples"] == 1 and listed["face_last_learned_at"] is not None
 
 
 def test_gallery_improves_with_use_without_drifting(client, company_headers, no_pause):
@@ -186,34 +188,47 @@ def test_a_capture_without_a_deciding_sample_credits_none(client, company_header
     assert len(learned(juan)) == 1 and sum(row.matches for row in samples(juan)) == 0
 
 
-def test_company_sees_how_its_recognition_evolves(client, company_headers):
+def test_only_the_admin_sees_how_the_recognition_evolves(client, company_headers):
     headers = approved_employee(client, company_headers)
     verify(client, headers, "juan~0.80~luz")  # la decide el ancla y enseña una muestra
+    base, admin = admin_company(client, company_headers)
 
-    summary = client.get("/api/employees/face/learning", headers=company_headers)
+    summary = client.get(f"{base}/face-learning", headers=admin)
     assert summary.status_code == 200 and summary.json()["code"] == "FACE_LEARNING_SUMMARY"
     data = summary.json()["data"]
     assert data["enabled"] is True and data["last_learned_at"] is not None
     assert (data["approved_employees"], data["employees_learning"], data["learned_samples"]) == (1, 1, 1)
     assert (data["identifications"], data["learned_identifications"]) == (1, 0)
+    # Su ficha en la consola dice cuánto aprendió; la empresa ya no ve nada del aprendizaje.
+    listed = client.get(f"{base}/employees", headers=admin).json()["data"]["items"][0]
+    assert listed["face_learned_samples"] == 1 and listed["face_last_learned_at"] is not None
+    record = client.get(f"/api/employees/{listed['id']}", headers=company_headers).json()["data"]
+    assert "face_learned_samples" not in record and "face_last_learned_at" not in record
 
     set_policy(client, company_headers, adaptive_learning=False)
-    assert client.get("/api/employees/face/learning", headers=company_headers).json()["data"]["enabled"] is False
+    base, admin = admin_company(client, company_headers)  # set_policy abrió otra sesión del ADMIN
+    assert client.get(f"{base}/face-learning", headers=admin).json()["data"]["enabled"] is False
+    assert client.get("/api/admin/companies/999999/face-learning", headers=admin).status_code == 404
 
 
-def test_company_forgets_what_the_gallery_learned(client, company_headers):
+def test_the_admin_forgets_what_the_gallery_learned(client, company_headers):
     headers = approved_employee(client, company_headers)
     juan = employee_id_of(client, company_headers)
     verify(client, headers, "juan~0.80~luz")
     assert len(learned(juan)) == 1
+    base, admin = admin_company(client, company_headers)
 
-    url = f"/api/employees/{juan}/face/learned"
-    assert client.delete(url, headers=headers).status_code == 403  # el empleado no administra
-    assert client.delete("/api/employees/999999/face/learned", headers=company_headers).status_code == 404
-    forgotten = client.delete(url, headers=company_headers)
+    url = f"{base}/employees/{juan}/face/learned"
+    assert client.delete(url, headers=company_headers).status_code == 403  # la empresa no lo administra
+    assert client.delete(url, headers=headers).status_code == 403
+    missing = client.delete(f"{base}/employees/999999/face/learned", headers=admin)
+    assert missing.status_code == 404 and missing.json()["code"] == "EMPLOYEE_NOT_FOUND"
+    gone = client.delete(f"/api/admin/companies/999999/employees/{juan}/face/learned", headers=admin)
+    assert gone.status_code == 404 and gone.json()["code"] == "COMPANY_NOT_FOUND"
+    forgotten = client.delete(url, headers=admin)
     assert forgotten.status_code == 200 and forgotten.json()["code"] == "FACE_LEARNING_FORGOTTEN"
     data = forgotten.json()["data"]
-    assert (data["face_samples"], data["face_learned_samples"], data["face_status"]) == (3, 0, "APPROVED")
+    assert (data["face_learned_samples"], data["face_last_learned_at"], data["face_status"]) == (0, None, "APPROVED")
     assert learned(juan) == [] and len(samples(juan)) == 3
     assert verify(client, headers, "juan")["verified"] is True  # sigue identificándose con su registro
 
@@ -237,7 +252,8 @@ def test_gallery_cache_decrypts_only_new_samples(client, company_headers, monkey
     assert gallery_size() == (6, 6)
     verify(client, headers, "juan~0.80~luz")  # una muestra aprendida
     assert gallery_size() == (7, 1)  # solo se descifró la nueva
-    client.delete(f"/api/employees/{juan['id']}/face/learned", headers=company_headers)
+    base, admin = admin_company(client, company_headers)
+    client.delete(f"{base}/employees/{juan['id']}/face/learned", headers=admin)
     assert gallery_size() == (6, 0)  # salió sin descifrar nada
 
     verify(client, headers, "juan~0.80~sol")

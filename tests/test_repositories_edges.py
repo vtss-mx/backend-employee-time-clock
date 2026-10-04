@@ -6,8 +6,7 @@ from app.models import EnrollmentStatus
 from app.repositories.enrollment_repository import FaceEnrollmentRepository
 from app.repositories.user_repository import UserRepository
 from tests.conftest import COMPANY_EMAIL, approved_employee, create_employee, login, submit_enrollment
-
-LEARNING = "/api/employees/face/learning"
+from tests.test_policy import admin_company
 
 
 def test_an_empty_department_list_has_no_counts_to_load(client, company_headers):
@@ -42,11 +41,13 @@ def test_enrollments_without_a_status_filter_come_most_recent_first(client, comp
 
 
 def test_the_learning_summary_of_a_company_without_samples_and_with_approved_faces(client, company_headers):
-    empty = client.get(LEARNING, headers=company_headers).json()["data"]
+    base, admin = admin_company(client, company_headers)
+    learning = f"{base}/face-learning"
+    empty = client.get(learning, headers=admin).json()["data"]
     assert (empty["approved_employees"], empty["learned_samples"], empty["last_learned_at"]) == (0, 0, None)
 
     approved_employee(client, company_headers)
-    summary = client.get(LEARNING, headers=company_headers).json()["data"]
+    summary = client.get(learning, headers=admin).json()["data"]
     assert summary["approved_employees"] == 1
     # Solo el registro aprobado (el ancla): aún no aprende ni decidió identificaciones.
     assert (summary["employees_learning"], summary["learned_samples"], summary["identifications"]) == (0, 0, 0)

@@ -183,7 +183,9 @@ def test_one_failing_purge_does_not_stop_the_others(monkeypatch):
     monkeypatch.setattr(maintenance_service, "delete_batch", flaky)
     with SessionLocal() as db:
         removed = maintenance_service.purge_expired(db)
-    assert len(removed) == len(maintenance_service.PURGES) and len(set(calls)) == len(maintenance_service.PURGES)
+    assert len(set(calls)) == len(maintenance_service.PURGES)
+    extra = {"jornadas sin salida", "umbrales recalibrados"}
+    assert set(removed) == {purge.name for purge in maintenance_service.PURGES} | extra
 
 
 def test_catalogs_survive_a_database_blip(monkeypatch):

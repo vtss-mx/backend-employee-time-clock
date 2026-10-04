@@ -35,6 +35,10 @@ class SampleStats:
     last_learned_at: datetime | None = None
 
 
+#: Un empleado sin muestras activas.
+NO_SAMPLES = SampleStats()
+
+
 class FaceEmbeddingRepository:
     def __init__(self, db: Session) -> None:
         self.db = db

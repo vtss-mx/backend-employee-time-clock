@@ -4,6 +4,7 @@ Revision ID: 0003
 Revises: 0002
 Create Date: 2026-10-01 05:00:00
 """
+
 from collections.abc import Sequence
 
 import sqlalchemy as sa
@@ -35,7 +36,10 @@ def upgrade() -> None:
         sa.Column("reviewed_by_id", sa.Integer(), nullable=True),
         sa.Column("rejection_reason", sa.String(length=500), nullable=True),
         sa.ForeignKeyConstraint(
-            ["employee_id"], ["employees.id"], name=op.f("fk_face_enrollments_employee_id_employees"), ondelete="CASCADE"
+            ["employee_id"],
+            ["employees.id"],
+            name=op.f("fk_face_enrollments_employee_id_employees"),
+            ondelete="CASCADE",
         ),
         sa.ForeignKeyConstraint(
             ["reviewed_by_id"], ["users.id"], name=op.f("fk_face_enrollments_reviewed_by_id_users"), ondelete="SET NULL"
@@ -51,8 +55,13 @@ def upgrade() -> None:
             sa.Column(
                 "face_status",
                 sa.Enum(
-                    "NOT_ENROLLED", "PENDING_REVIEW", "APPROVED", "REJECTED",
-                    name="facestatus", native_enum=False, length=20,
+                    "NOT_ENROLLED",
+                    "PENDING_REVIEW",
+                    "APPROVED",
+                    "REJECTED",
+                    name="facestatus",
+                    native_enum=False,
+                    length=20,
                 ),
                 server_default="NOT_ENROLLED",
                 nullable=False,
@@ -65,7 +74,10 @@ def upgrade() -> None:
         batch_op.create_index(batch_op.f("ix_face_embeddings_enrollment_id"), ["enrollment_id"], unique=False)
         batch_op.create_foreign_key(
             batch_op.f("fk_face_embeddings_enrollment_id_face_enrollments"),
-            "face_enrollments", ["enrollment_id"], ["id"], ondelete="CASCADE",
+            "face_enrollments",
+            ["enrollment_id"],
+            ["id"],
+            ondelete="CASCADE",
         )
 
     # Empleados registrados con el flujo anterior (rostro capturado por COMPANY) ya están validados.

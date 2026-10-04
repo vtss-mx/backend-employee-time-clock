@@ -1,9 +1,9 @@
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
-from app.models import ErrorStatus
+from app.models import ErrorSeverity, ErrorStatus
 from app.schemas.common import Page
 
 
@@ -13,7 +13,9 @@ class ErrorReportRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    source: str = Field(description="HTTP, LOG (segundo plano o dentro de un proceso) o WEBSOCKET")
+    source: str = Field(
+        description="HTTP, LOG (segundo plano o dentro de un proceso), WEBSOCKET o CLIENT (la aplicación web)"
+    )
     severity: str = Field(description="catalog.error_severities")
     status: str = Field(description="catalog.error_statuses")
     code: str
@@ -37,6 +39,9 @@ class ErrorReportDetail(ErrorReportRead):
 
 class ErrorReportList(Page[ErrorReportRead]):
     """Errores del sistema (lo más reciente primero)."""
+
+    #: Hora del servidor al armar la lista: "marcar como solucionados" no toca lo que ocurrió después.
+    as_of: datetime
 
 
 class ErrorOccurrenceRead(BaseModel):
@@ -67,6 +72,23 @@ class ErrorSummary(BaseModel):
 
 class ErrorStatusUpdate(BaseModel):
     status: ErrorStatus
+
+
+class ErrorBulkResolve(BaseModel):
+    """Marcar como solucionados todos los errores del filtro que el ADMIN tiene en pantalla.
+
+    Exige un estado o una gravedad específicos (nunca "todos"); la búsqueda lo acota más. Solo cambian
+    los que el ADMIN vio: los que ocurrieron después de `seen_until` (el `as_of` de su lista) se quedan.
+    """
+
+    status: ErrorStatus | None = None
+    severity: ErrorSeverity | None = None
+    search: str | None = Field(default=None, max_length=100)
+    seen_until: AwareDatetime
+
+
+class ErrorBulkResult(BaseModel):
+    resolved: int
 
 
 class DemandRead(BaseModel):

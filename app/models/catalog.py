@@ -87,6 +87,64 @@ class CatalogDeviceStatus(ToneMixin, CatalogEntry, Base):
     __tablename__ = "device_statuses"
 
 
+class CatalogWorkMode(CatalogEntry, Base):
+    """Desde dónde se registró la asistencia: en sitio, remoto o en un validador."""
+
+    __tablename__ = "work_modes"
+
+
+class CatalogAttendanceAction(CatalogEntry, Base):
+    """Lo que registra el empleado en su turno: entrada, inicio y fin de descanso, salida."""
+
+    __tablename__ = "attendance_actions"
+
+
+class CatalogWorkSessionStatus(ToneMixin, CatalogEntry, Base):
+    """Estados de la jornada de un turno."""
+
+    __tablename__ = "work_session_statuses"
+
+
+class CatalogShiftRequestStatus(ToneMixin, CatalogEntry, Base):
+    """Estados de una solicitud de cambio de turno."""
+
+    __tablename__ = "shift_request_statuses"
+
+
+class CatalogBoardState(ToneMixin, CatalogEntry, Base):
+    """En qué va cada empleado en el tablero de asistencia del día (lo calcula el backend)."""
+
+    __tablename__ = "board_states"
+
+
+class CatalogAssignmentState(ToneMixin, CatalogEntry, Base):
+    """Vigencia de la asignación de un turno: vigente, programada o terminada."""
+
+    __tablename__ = "assignment_states"
+
+
+class CatalogDayOffType(ToneMixin, CatalogEntry, Base):
+    """Tipos de ausencia (días que no se trabaja): vacaciones, permiso, incapacidad, otro motivo.
+
+    Los días festivos no van aquí (son de toda la empresa: `company_holidays`). `requestable`: el
+    empleado lo puede pedir desde "Mi asistencia" (la empresa lo aprueba o rechaza); los demás solo
+    los registra la empresa. `phrase` arma lo que se le dice al empleado ("Estás de vacaciones del
+    ... al ...") cuando intenta checar.
+    """
+
+    __tablename__ = "day_off_types"
+
+    phrase: Mapped[str] = mapped_column(String(80), nullable=False)
+    requestable: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false(), nullable=False)
+
+
+class CatalogAttendanceEditReason(CatalogEntry, Base):
+    """Motivos sugeridos cuando la empresa registra o corrige la asistencia de un empleado (también puede
+    escribir otro): se guarda el texto con quién y cuándo."""
+
+    __tablename__ = "attendance_edit_reasons"
+
+
 class CatalogApiScope(CatalogEntry, Base):
     """Permisos que puede tener una llave de la API de integración (solo lectura de la propia empresa)."""
 
@@ -187,6 +245,12 @@ class CatalogAntispoofLevel(CatalogEntry, Base):
     any_frame: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false(), nullable=False)
 
 
+class CatalogFlashMode(CatalogEntry, Base):
+    """Modos del destello de colores de la prueba de vida (verification_policy.flash_liveness)."""
+
+    __tablename__ = "flash_modes"
+
+
 class CatalogSessionRevocationReason(CatalogEntry, Base):
     """Por qué se cerró una sesión (auth_sessions.revoked_reason) y qué se le dice a la persona."""
 
@@ -228,6 +292,35 @@ class CatalogScreen(CatalogEntry, Base):
     short_name: Mapped[str | None] = mapped_column(String(30))
     icon: Mapped[str] = mapped_column(String(40), nullable=False)
     badge: Mapped[str | None] = mapped_column(String(30))
+
+
+class CatalogMenuModule(CatalogEntry, Base):
+    """Módulos del menú: agrupan las pantallas (sus submódulos) en el menú lateral, en este orden.
+
+    `icon` es el nombre del ícono (lucide) del encabezado del módulo. Qué pantalla va en cada módulo
+    vive en `menu_module_screens`.
+    """
+
+    __tablename__ = "menu_modules"
+
+    icon: Mapped[str] = mapped_column(String(40), nullable=False)
+
+
+class MenuModuleScreen(Base):
+    """En qué módulo del menú va cada pantalla (en uno solo: la llave primaria es la pantalla)."""
+
+    __tablename__ = "menu_module_screens"
+    __table_args__ = (
+        Index("ix_menu_module_screens_module_code", "module_code"),
+        {"schema": CATALOG},
+    )
+
+    screen_code: Mapped[str] = mapped_column(
+        ForeignKey(f"{CATALOG}.screens.code", ondelete="CASCADE"), primary_key=True
+    )
+    module_code: Mapped[str] = mapped_column(
+        ForeignKey(f"{CATALOG}.menu_modules.code", ondelete="CASCADE"), nullable=False
+    )
 
 
 class RoleScreen(Base):

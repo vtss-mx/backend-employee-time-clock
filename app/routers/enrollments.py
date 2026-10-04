@@ -7,15 +7,14 @@ from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from app.core.responses import ApiResponse, ok
 from app.dependencies import (
     CameraLabel,
-    ChallengeImages,
     CompanyScope,
     CompanyUser,
     DbSession,
     EmployeeUser,
+    Liveness,
     Pagination,
     Pipeline,
     company_of,
-    read_challenge_images,
     read_image_uploads,
     require_screen,
     verification_rate_limit,
@@ -44,7 +43,7 @@ router = APIRouter(
     description=(
         "Disponible cuando `face_status` es NOT_ENROLLED o REJECTED. Multipart con `images` "
         "(1 a 5 capturas frontales; se recomiendan 3) y, si la prueba de vida está activa, "
-        "`challenge_id` (de `/api/face/challenge`) + `challenge_image`. Se validan calidad, pose, "
+        "`challenge_id` (de `/api/face/challenge`) + `challenge_image` + `flash_image`. Se validan calidad, pose, "
         "accesorios, consistencia y prueba de vida; los embeddings quedan inactivos y el estado "
         "pasa a PENDING_REVIEW hasta que COMPANY lo apruebe."
     ),
@@ -56,8 +55,7 @@ def submit_enrollment(
     db: DbSession,
     pipeline: Pipeline,
     images: Annotated[list[UploadFile], File(description="Capturas frontales")],
-    challenge_id: Annotated[str | None, Form(max_length=100)] = None,
-    challenge_image: ChallengeImages = None,
+    liveness: Liveness,
     accessory_review: Annotated[
         bool,
         Form(
@@ -70,13 +68,11 @@ def submit_enrollment(
     camera_label: CameraLabel = None,
 ) -> ApiResponse[EnrollmentSubmitResponse]:
     frontal = read_image_uploads(images, max_files=5)
-    turns = read_challenge_images(challenge_image)
     result = EnrollmentService(db, company_of(user)).submit(
         user,
         frontal,
         pipeline,
-        challenge_id=challenge_id,
-        challenge_images=turns,
+        liveness=liveness,
         accessory_review=accessory_review,
         camera_label=camera_label,
     )

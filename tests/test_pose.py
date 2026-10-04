@@ -1,7 +1,7 @@
 import math
 
 from app.facial_recognition.engine import FaceLandmarks
-from app.facial_recognition.pose import TurnDirection, estimate_pose
+from app.facial_recognition.pose import LivenessAction, StepTarget, estimate_pose, step_measure
 
 
 def _landmarks(yaw_deg: float, roll_deg: float = 0.0) -> FaceLandmarks:
@@ -27,12 +27,31 @@ def test_frontal_pose():
     assert 0.4 < pose.pitch_ratio < 0.6
 
 
+TARGET = StepTarget(
+    min_yaw_ratio=0.2, min_pitch_delta=0.08, min_closer_scale=1.25, baseline_pitch=0.5, baseline_width=100
+)
+
+
+def _turned(yaw_deg: float, action: LivenessAction) -> bool:
+    return step_measure(action, estimate_pose(_landmarks(yaw_deg)), 100, TARGET) >= TARGET.required(action)
+
+
 def test_turn_direction_and_magnitude():
-    left = estimate_pose(_landmarks(30))  # persona gira hacia SU izquierda -> nariz a la derecha de la imagen
-    right = estimate_pose(_landmarks(-30))
-    assert left.turned(TurnDirection.LEFT, 0.20) and not left.turned(TurnDirection.RIGHT, 0.20)
-    assert right.turned(TurnDirection.RIGHT, 0.20) and not right.turned(TurnDirection.LEFT, 0.20)
-    assert not estimate_pose(_landmarks(10)).turned(TurnDirection.LEFT, 0.20)
+    # La persona gira hacia SU izquierda: la nariz va a la derecha de la imagen.
+    assert _turned(30, LivenessAction.TURN_LEFT) and not _turned(30, LivenessAction.TURN_RIGHT)
+    assert _turned(-30, LivenessAction.TURN_RIGHT) and not _turned(-30, LivenessAction.TURN_LEFT)
+    assert not _turned(10, LivenessAction.TURN_LEFT)
+
+
+def test_look_up_down_and_closer_are_measured_against_the_frontal_baseline():
+    pose = estimate_pose(_landmarks(0))
+    up = type(pose)(yaw_ratio=0.0, roll_degrees=0.0, pitch_ratio=0.38)
+    down = type(pose)(yaw_ratio=0.0, roll_degrees=0.0, pitch_ratio=0.62)
+    assert step_measure(LivenessAction.LOOK_UP, up, 100, TARGET) == 0.5 - 0.38
+    assert step_measure(LivenessAction.LOOK_DOWN, down, 100, TARGET) == 0.62 - 0.5
+    assert step_measure(LivenessAction.LOOK_UP, down, 100, TARGET) < 0  # miró al revés
+    assert step_measure(LivenessAction.MOVE_CLOSER, pose, 140, TARGET) == 1.4
+    assert TARGET.required(LivenessAction.LOOK_DOWN) == 0.08 and TARGET.required(LivenessAction.MOVE_CLOSER) == 1.25
 
 
 def test_roll_detected():

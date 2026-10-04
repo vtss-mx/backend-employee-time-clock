@@ -1,8 +1,14 @@
 """Comparación de embeddings mediante similitud coseno."""
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 import numpy as np
+
+#: La fusión guarda [√w·SFace (128), √(1-w)·FaceNet (512)]: cada parte se compara por separado
+#: renormalizándola (sin volver a registrar a nadie).
+SFACE_DIMENSION = 128
+FUSION_DIMENSION = SFACE_DIMENSION + 512
 
 
 def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
@@ -23,6 +29,34 @@ def similarity_matrix(probes: Sequence[np.ndarray], references: Sequence[np.ndar
     left = normalize_rows(np.stack(probes).astype(np.float32))
     right = normalize_rows(np.stack(references).astype(np.float32))
     return left @ right.T
+
+
+@dataclass(frozen=True)
+class MatchRequirement:
+    """Lo que debe alcanzar cada (captura, muestra) para contar como la misma persona."""
+
+    #: Similitud de la fusión (o del único modelo).
+    fused: float
+    #: Similitud mínima de SFace y de FaceNet por separado (solo con vectores de la fusión).
+    floors: tuple[float, float] | None = None
+
+
+def acceptance(
+    probes: Sequence[np.ndarray], references: Sequence[np.ndarray], requirement: MatchRequirement
+) -> tuple[np.ndarray, np.ndarray]:
+    """(similitud de la fusión, coincidencia aceptada) de cada captura contra cada muestra.
+
+    Con vectores de la fusión, además de la similitud combinada CADA modelo debe alcanzar su piso:
+    una imagen fabricada para engañar a uno no basta."""
+    fused = similarity_matrix(probes, references)
+    accepted = fused >= requirement.fused
+    if requirement.floors is not None and fused.size and np.asarray(probes[0]).shape[-1] == FUSION_DIMENSION:
+        left, right = np.stack(probes).astype(np.float32), np.stack(references).astype(np.float32)
+        for part, floor in zip(
+            (slice(None, SFACE_DIMENSION), slice(SFACE_DIMENSION, None)), requirement.floors, strict=True
+        ):
+            accepted &= normalize_rows(left[:, part]) @ normalize_rows(right[:, part]).T >= floor
+    return fused, accepted
 
 
 def embedding_to_bytes(vector: np.ndarray) -> bytes:

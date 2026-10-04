@@ -12,6 +12,7 @@ from tests.conftest import (
     nss_for,
     rfc_for,
 )
+from tests.test_policy import set_policy
 
 URL = "/api/admin/companies"
 
@@ -157,8 +158,9 @@ def test_companies_are_isolated(client, company_headers, second_company):
     assert client.get("/api/employees", headers=company_headers).json()["data"]["total"] == 1
 
     # La política de verificación es de cada empresa.
-    client.put("/api/settings/verification", json={"min_confidence": 0.9}, headers=other)
+    set_policy(client, other, min_confidence=0.9)
     assert client.get("/api/settings/verification", headers=company_headers).json()["data"]["min_confidence"] == 0.99999
+    assert client.get("/api/settings/verification", headers=other).json()["data"]["min_confidence"] == 0.9
 
 
 def test_validation_inbox_is_per_company(client, company_headers, second_company):
@@ -283,6 +285,8 @@ def test_admin_sees_the_employees_of_a_company_paginated_and_read_only(
         "phone",
         "active",
         "face_status",
+        "face_learned_samples",  # solo cuántas y cuándo: nunca fotos ni plantillas
+        "face_last_learned_at",
     }
     found = client.get(url, params={"search": "ana@"}, headers=admin_headers).json()["data"]
     assert [e["email"] for e in found["items"]] == ["ana@empresa.com"]

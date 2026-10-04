@@ -9,6 +9,7 @@ Revision ID: 0019
 Revises: 0018
 Create Date: 2026-10-02 02:00:00
 """
+
 from collections.abc import Sequence
 
 import sqlalchemy as sa
@@ -45,7 +46,10 @@ def upgrade() -> None:
             ["user_id"], ["auth.users.id"], name=op.f("fk_validators_user_id_users"), ondelete="CASCADE"
         ),
         sa.ForeignKeyConstraint(
-            ["company_id"], ["tenancy.companies.id"], name=op.f("fk_validators_company_id_companies"), ondelete="RESTRICT"
+            ["company_id"],
+            ["tenancy.companies.id"],
+            name=op.f("fk_validators_company_id_companies"),
+            ondelete="RESTRICT",
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_validators")),
         sa.UniqueConstraint("user_id", name=op.f("uq_validators_user_id")),

@@ -37,7 +37,7 @@ class FailingPipeline(FakePipeline):
     """FakePipeline con fallas del motor:
     b"unreadable:<persona>"    captura frontal que OpenCV no puede leer (cv2.error)
     b"crash:<persona>"         el motor truena con la captura frontal (ONNX, memoria...)
-    giro b"crash-turn-...:..." el motor truena con la captura del giro
+    paso b"crash-turn-...:..." el motor truena con la captura de un paso del reto
     """
 
     def analyze_frontal(self, image_bytes, *, policy=DEFAULT_POLICY, enforce_accessories=True):
@@ -47,10 +47,10 @@ class FailingPipeline(FakePipeline):
             raise RuntimeError("onnxruntime: memoria agotada")
         return super().analyze_frontal(image_bytes, policy=policy, enforce_accessories=enforce_accessories)
 
-    def analyze_turn(self, image_bytes, direction, *, policy=DEFAULT_POLICY):
+    def analyze_step(self, image_bytes, action, target, *, policy=DEFAULT_POLICY):
         if image_bytes.startswith(b"crash-"):
             raise RuntimeError("onnxruntime: memoria agotada")
-        return super().analyze_turn(image_bytes, direction, policy=policy)
+        return super().analyze_step(image_bytes, action, target, policy=policy)
 
 
 @pytest.fixture

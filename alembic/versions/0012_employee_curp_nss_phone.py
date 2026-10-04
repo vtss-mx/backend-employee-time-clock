@@ -4,6 +4,7 @@ Revision ID: 0012
 Revises: 0011
 Create Date: 2026-10-01 19:30:00
 """
+
 from collections.abc import Sequence
 
 import sqlalchemy as sa
@@ -42,7 +43,9 @@ def upgrade() -> None:
 def downgrade() -> None:
     if _postgres():
         op.execute("DROP INDEX IF EXISTS ix_employees_search_trgm")
-        op.execute(f"CREATE INDEX ix_employees_search_trgm ON employees USING gin (({PREVIOUS_SEARCH_TEXT}) gin_trgm_ops)")
+        op.execute(
+            f"CREATE INDEX ix_employees_search_trgm ON employees USING gin (({PREVIOUS_SEARCH_TEXT}) gin_trgm_ops)"
+        )
     op.drop_index(op.f("ix_employees_nss"), table_name="employees")
     op.drop_index(op.f("ix_employees_curp"), table_name="employees")
     op.drop_column("employees", "phone")

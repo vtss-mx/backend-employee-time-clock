@@ -63,6 +63,13 @@ class AntispoofLevelItem(CatalogItem):
     any_frame: bool
 
 
+class DayOffTypeItem(StatusItem):
+    #: Cómo se le dice al empleado ("Estás de vacaciones") cuando intenta checar ese día.
+    phrase: str
+    #: El empleado lo puede pedir desde "Mi asistencia" (los demás solo los registra la empresa).
+    requestable: bool
+
+
 class CatalogsRead(BaseModel):
     roles: list[CatalogItem]
     verification_methods: list[CatalogItem]
@@ -83,3 +90,11 @@ class CatalogsRead(BaseModel):
     api_key_statuses: list[StatusItem]
     error_statuses: list[StatusItem]
     error_severities: list[StatusItem]
+    work_modes: list[CatalogItem]
+    attendance_actions: list[CatalogItem]
+    work_session_statuses: list[StatusItem]
+    shift_request_statuses: list[StatusItem]
+    board_states: list[StatusItem]
+    assignment_states: list[StatusItem]
+    day_off_types: list[DayOffTypeItem]
+    attendance_edit_reasons: list[CatalogItem]

@@ -18,7 +18,6 @@ from app.schemas.department import (
 from app.services.department_service import DepartmentService
 
 router = APIRouter(
-    dependencies=[Depends(require_screen(Screen.COMPANY_DEPARTMENTS))],
     prefix="/departments",
     tags=["Departamentos (COMPANY)"],
     responses={
@@ -27,12 +26,22 @@ router = APIRouter(
     },
 )
 
+#: Administrar departamentos: solo su pantalla.
+MANAGE = [Depends(require_screen(Screen.COMPANY_DEPARTMENTS))]
+#: El listado también filtra a quién asignar un turno o registrar una ausencia (Turnos y Calendario).
+LIST = [Depends(require_screen(Screen.COMPANY_DEPARTMENTS, Screen.COMPANY_SHIFTS, Screen.COMPANY_CALENDAR))]
+
 NOT_FOUND: dict[int | str, dict[str, Any]] = {
     404: {"model": ErrorResponse, "description": "Departamento (o empleado) no encontrado"}
 }
 
 
-@router.get("", response_model=ApiResponse[DepartmentList], summary="Departamentos de la empresa (paginado)")
+@router.get(
+    "",
+    response_model=ApiResponse[DepartmentList],
+    summary="Departamentos de la empresa (paginado)",
+    dependencies=LIST,
+)
 def list_departments(
     company: CompanyScope,
     db: DbSession,
@@ -45,6 +54,7 @@ def list_departments(
 
 @router.post(
     "",
+    dependencies=MANAGE,
     response_model=ApiResponse[DepartmentRead],
     status_code=status.HTTP_201_CREATED,
     summary="Crear un departamento",
@@ -56,13 +66,25 @@ def create_department(payload: DepartmentCreate, company: CompanyScope, db: DbSe
     return ok(service.read(service.create(payload)), "Departamento creado", code="DEPARTMENT_CREATED", status_code=201)
 
 
-@router.get("/{department_id}", response_model=ApiResponse[DepartmentRead], summary="Detalle", responses=NOT_FOUND)
+@router.get(
+    "/{department_id}",
+    response_model=ApiResponse[DepartmentRead],
+    summary="Detalle",
+    responses=NOT_FOUND,
+    dependencies=MANAGE,
+)
 def get_department(department_id: int, company: CompanyScope, db: DbSession) -> ApiResponse[DepartmentRead]:
     service = DepartmentService(db, company)
     return ok(service.read(service.get(department_id)), "Departamento encontrado", code="DEPARTMENT_FOUND")
 
 
-@router.put("/{department_id}", response_model=ApiResponse[DepartmentRead], summary="Editar", responses=NOT_FOUND)
+@router.put(
+    "/{department_id}",
+    response_model=ApiResponse[DepartmentRead],
+    summary="Editar",
+    responses=NOT_FOUND,
+    dependencies=MANAGE,
+)
 def update_department(
     department_id: int, payload: DepartmentUpdate, company: CompanyScope, db: DbSession
 ) -> ApiResponse[DepartmentRead]:
@@ -74,6 +96,7 @@ def update_department(
 
 @router.delete(
     "/{department_id}",
+    dependencies=MANAGE,
     response_model=ApiResponse[None],
     summary="Eliminar un departamento sin empleados",
     description="Sus responsables se retiran con él. Con empleados asignados responde 409 `DEPARTMENT_HAS_EMPLOYEES`.",
@@ -86,6 +109,7 @@ def delete_department(department_id: int, company: CompanyScope, db: DbSession) 
 
 @router.post(
     "/{department_id}/employees",
+    dependencies=MANAGE,
     response_model=ApiResponse[DepartmentRead],
     summary="Asignar un empleado al departamento",
     description="Cada empleado está a lo más en un departamento: si estaba en otro, cambia a este. Idempotente.",
@@ -101,6 +125,7 @@ def assign_employee(
 
 @router.delete(
     "/{department_id}/employees/{employee_id}",
+    dependencies=MANAGE,
     response_model=ApiResponse[DepartmentRead],
     summary="Quitar un empleado del departamento (idempotente)",
     responses=NOT_FOUND,
@@ -115,6 +140,7 @@ def unassign_employee(
 
 @router.post(
     "/{department_id}/managers",
+    dependencies=MANAGE,
     response_model=ApiResponse[DepartmentRead],
     summary="Nombrar responsable a un empleado de la empresa (idempotente)",
     responses=NOT_FOUND,
@@ -129,6 +155,7 @@ def add_manager(
 
 @router.delete(
     "/{department_id}/managers/{employee_id}",
+    dependencies=MANAGE,
     response_model=ApiResponse[DepartmentRead],
     summary="Retirar a un responsable (idempotente)",
     responses=NOT_FOUND,

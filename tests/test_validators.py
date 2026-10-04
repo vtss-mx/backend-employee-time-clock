@@ -255,3 +255,25 @@ def test_company_deactivation_closes_validator_sessions(client, company_headers,
     assert client.get("/api/checkpoint/me", headers=headers).status_code == 401
     denied = client.post("/api/auth/login", json={"email": "recepcion@empresa.com", "password": PASSWORD})
     assert denied.json()["code"] == "COMPANY_INACTIVE"
+
+
+def test_identifying_among_everyone_can_demand_more_than_verifying_one(client, company_headers):
+    """La confianza 1:N (identificar entre toda la plantilla) se configura aparte y nunca baja de la 1:1."""
+    from app.core.config import settings
+    from app.facial_recognition.calibration import similarity_for_confidence
+    from tests.test_policy import set_policy
+
+    ana = approved(client, company_headers, "ana", number="EMP-002")
+    headers = validator_headers(client, company_headers, mode="FACE")
+    model = settings.FACE_RECOGNITION_MODEL
+    # Una captura con confianza entre 99 % y 99.999 %: basta con 99 %, no con 99.999 %.
+    middle = (similarity_for_confidence(0.99, model) + similarity_for_confidence(0.99999, model)) / 2
+    person = f"ana~{middle:.6f}~luz"
+    # Sin aprendizaje continuo: lo aprendido de la primera identificación no debe ayudar a las demás.
+    set_policy(client, company_headers, min_confidence=0.99, identify_confidence=0.99, adaptive_learning=False)
+    assert identify_face(client, headers, person).json()["data"]["employee_id"] == ana["id"]
+    set_policy(client, company_headers, identify_confidence=0.99999)  # más estricto solo al identificar
+    assert identify_face(client, headers, person).json()["data"]["verified"] is False
+    # Si la 1:N quedara por debajo de la 1:1, rige la 1:1.
+    set_policy(client, company_headers, min_confidence=0.99999, identify_confidence=0.99)
+    assert identify_face(client, headers, person).json()["data"]["verified"] is False

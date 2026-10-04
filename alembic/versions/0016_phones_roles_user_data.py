@@ -11,6 +11,7 @@ Revision ID: 0016
 Revises: 0015
 Create Date: 2026-10-01 23:30:00
 """
+
 from collections.abc import Sequence
 
 import sqlalchemy as sa

@@ -18,7 +18,7 @@ from app.models import DeviceStatus, SessionRevocationReason, UserRole, Validato
 from app.repositories.user_repository import UserRepository
 from app.repositories.validator_device_repository import ValidatorDeviceRepository
 from app.repositories.validator_repository import ValidatorRepository
-from app.schemas.address import Address
+from app.schemas.address import address_of, apply_address
 from app.schemas.common import PageParams
 from app.schemas.validator import (
     ValidatorCreate,
@@ -32,13 +32,6 @@ from app.services.session_service import SessionService
 
 LOCATION_POINT_REQUIRED = "Para exigir ubicación, marca en el mapa el punto del domicilio"
 LOCATION_RADIUS_REQUIRED = "Indica el radio (en metros) dentro del cual puede iniciar sesión"
-#: Columnas del domicilio en workforce.validators (mismos nombres que el esquema Address).
-ADDRESS_FIELDS = tuple(Address.model_fields)
-
-
-def _apply_address(validator: Validator, address: Address) -> None:
-    for field in ADDRESS_FIELDS:
-        setattr(validator, field, getattr(address, field))
 
 
 def _location_rule(validator: Validator) -> tuple[bool, float | None, float | None, int | None]:
@@ -97,7 +90,7 @@ class ValidatorService:
             location_required=data.location_required,
             location_radius_m=data.location_radius_m,
         )
-        _apply_address(validator, data.address)
+        apply_address(validator, data.address)
         _ensure_location_complete(validator)
         self.validators.add(validator)
         self.db.commit()
@@ -110,7 +103,7 @@ class ValidatorService:
         for field, value in data.model_dump(exclude_unset=True, exclude_none=True, exclude={"address"}).items():
             setattr(validator, field, value)
         if data.address is not None:
-            _apply_address(validator, data.address)
+            apply_address(validator, data.address)
         _ensure_location_complete(validator)
         # Ubicación recién exigida o con otro punto/radio: su sesión abierta no la cumplió.
         if validator.location_required and _location_rule(validator) != before:
@@ -155,10 +148,7 @@ class ValidatorService:
             last_login_at=validator.user.last_login_at,
             identifications_today=identifications_today,
             created_at=validator.created_at,
-            # Sin validar de nuevo (un país pudo desactivarse en el catálogo después de guardarlo).
-            address=Address.model_construct(**{f: getattr(validator, f) for f in ADDRESS_FIELDS})
-            if validator.street
-            else None,
+            address=address_of(validator),
             location_required=validator.location_required,
             location_radius_m=validator.location_radius_m,
             devices_pending=devices.get(DeviceStatus.PENDING, 0),

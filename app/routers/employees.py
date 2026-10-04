@@ -6,18 +6,17 @@ su propia cámara (registro asistido y verificación 1:1).
 
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile, status
+from fastapi import APIRouter, Depends, File, Query, Request, UploadFile, status
 
 from app.core.responses import ApiResponse, ok
 from app.dependencies import (
     CameraLabel,
-    ChallengeImages,
     CompanyScope,
     CompanyUser,
     DbSession,
+    Liveness,
     Pagination,
     Pipeline,
-    read_challenge_images,
     read_image_uploads,
     request_meta,
     require_screen,
@@ -27,6 +26,7 @@ from app.models import Screen
 from app.schemas.common import ErrorResponse
 from app.schemas.employee import (
     EmployeeCreate,
+    EmployeeIdList,
     EmployeeList,
     EmployeeRead,
     EmployeeStatusUpdate,
@@ -35,12 +35,10 @@ from app.schemas.employee import (
     IdentityReverifySummary,
 )
 from app.schemas.enrollment import EnrollmentSubmitResponse
-from app.schemas.face import FaceLearningSummary
 from app.schemas.qr import EmployeeQrSummary
 from app.schemas.verification import VerificationLogList, VerificationResult
 from app.services.employee_service import EmployeeService
 from app.services.enrollment_service import EnrollmentService
-from app.services.face_learning import learning_summary
 from app.services.qr_service import QrService
 from app.services.verification_service import VerificationService
 
@@ -56,27 +54,60 @@ router = APIRouter(
 NOT_FOUND: dict[int | str, dict[str, Any]] = {404: {"model": ErrorResponse, "description": "Empleado no encontrado"}}
 
 
+#: Pantallas que eligen empleados de la lista: la propia, el resumen, departamentos y las operaciones
+#: para varios empleados (asignar un turno, registrar vacaciones colectivas).
+PICKER_SCREENS = (
+    Screen.COMPANY_EMPLOYEES,
+    Screen.COMPANY_DASHBOARD,
+    Screen.COMPANY_DEPARTMENTS,
+    Screen.COMPANY_SHIFTS,
+    Screen.COMPANY_CALENDAR,
+)
+SearchFilter = Annotated[str | None, Query(max_length=100, description="Nombre, número o correo")]
+ActiveFilter = Annotated[bool | None, Query(description="Filtrar por estado")]
+DepartmentFilter = Annotated[int | None, Query(gt=0, description="Solo los asignados a ese departamento")]
+
+
 @router.get(
     "",
     response_model=ApiResponse[EmployeeList],
     summary="Listar/buscar empleados",
-    description="También la usa Departamentos: sus empleados (`department_id`) y a quién asignar o nombrar.",
-    dependencies=[
-        Depends(require_screen(Screen.COMPANY_EMPLOYEES, Screen.COMPANY_DASHBOARD, Screen.COMPANY_DEPARTMENTS))
-    ],
+    description=(
+        "También la usan Departamentos (sus empleados con `department_id`), Turnos y Calendario (a quién "
+        "asignar un turno o registrar una ausencia)."
+    ),
+    dependencies=[Depends(require_screen(*PICKER_SCREENS))],
 )
 def list_employees(
     company: CompanyScope,
     db: DbSession,
     page: Pagination,
-    search: Annotated[str | None, Query(max_length=100, description="Nombre, número o correo")] = None,
-    active: Annotated[bool | None, Query(description="Filtrar por estado")] = None,
-    department_id: Annotated[int | None, Query(gt=0, description="Solo los asignados a ese departamento")] = None,
+    search: SearchFilter = None,
+    active: ActiveFilter = None,
+    department_id: DepartmentFilter = None,
 ) -> ApiResponse[EmployeeList]:
     result = EmployeeService(db, company).list_employees(
         search=search, active=active, page=page, department_id=department_id
     )
     return ok(result, f"{result.total} empleado(s) encontrado(s)", code="EMPLOYEES_LISTED")
+
+
+@router.get(
+    "/ids",
+    response_model=ApiResponse[EmployeeIdList],
+    summary="Ids de los empleados de un filtro (seleccionar todos para una operación masiva)",
+    description="Los mismos filtros del listado; a lo más el tope de una operación masiva (`limit`).",
+    dependencies=[Depends(require_screen(Screen.COMPANY_SHIFTS, Screen.COMPANY_CALENDAR))],
+)
+def list_employee_ids(
+    company: CompanyScope,
+    db: DbSession,
+    search: SearchFilter = None,
+    active: ActiveFilter = None,
+    department_id: DepartmentFilter = None,
+) -> ApiResponse[EmployeeIdList]:
+    result = EmployeeService(db, company).ids(search=search, active=active, department_id=department_id)
+    return ok(result, f"{result.total} empleado(s) en el filtro", code="EMPLOYEE_IDS")
 
 
 @router.post(
@@ -160,20 +191,6 @@ def delete_employee(employee_id: int, company: CompanyScope, db: DbSession) -> A
 # ---------------- Rostro ----------------
 
 
-@router.get(
-    "/face/learning",
-    response_model=ApiResponse[FaceLearningSummary],
-    summary="Evolución del reconocimiento facial de la empresa",
-    description=(
-        "Lo que la galería de la empresa aprendió de sus identificaciones seguras: empleados que ya "
-        "aprenden, muestras aprendidas vigentes y cuántas identificaciones decidieron."
-    ),
-    dependencies=[Depends(require_screen(Screen.COMPANY_DASHBOARD, Screen.COMPANY_EMPLOYEES))],
-)
-def face_learning(company: CompanyScope, db: DbSession) -> ApiResponse[FaceLearningSummary]:
-    return ok(learning_summary(db, company), "Evolución del reconocimiento facial", code="FACE_LEARNING_SUMMARY")
-
-
 @router.post(
     "/face/reset",
     response_model=ApiResponse[IdentityReverifySummary],
@@ -221,33 +238,10 @@ def reset_face(
     )
 
 
-@router.delete(
-    "/{employee_id}/face/learned",
-    response_model=ApiResponse[EmployeeRead],
-    summary="Olvidar lo que aprendió el reconocimiento facial del empleado",
-    description=(
-        "La galería de cada empleado aprende de sus identificaciones seguras. Si la empresa duda de "
-        "alguna, olvida esas muestras aprendidas: el empleado vuelve a compararse solo con su registro "
-        "aprobado, que no se toca. No cambia su estado facial."
-    ),
-    responses=NOT_FOUND,
-    dependencies=[Depends(require_screen(Screen.COMPANY_EMPLOYEES))],
-)
-def forget_learned_face(employee_id: int, company: CompanyScope, db: DbSession) -> ApiResponse[EmployeeRead]:
-    service = EmployeeService(db, company)
-    employee, removed = service.forget_learned_face(employee_id)
-    return ok(
-        service.read(employee),
-        f"Se olvidaron {removed} muestra(s) aprendida(s): el empleado se compara solo con su registro aprobado.",
-        code="FACE_LEARNING_FORGOTTEN",
-    )
-
-
 # ---------------- Rostro en persona ----------------
 
 IN_PERSON = [Depends(require_screen(Screen.COMPANY_EMPLOYEES)), Depends(verification_rate_limit)]
 FrontalImages = Annotated[list[UploadFile], File(description="Capturas frontales del empleado")]
-ChallengeId = Annotated[str | None, Form(max_length=100, description="Reto de `/api/face/challenge`")]
 
 
 @router.post(
@@ -258,7 +252,7 @@ ChallengeId = Annotated[str | None, Form(max_length=100, description="Reto de `/
     description=(
         "Registro asistido: la empresa captura el rostro del empleado presente con su cámara. "
         "Multipart con `images` (1 a 5 capturas frontales) y, si la prueba de vida está activa, "
-        "`challenge_id` (de `/api/face/challenge`, pedido por la empresa) + `challenge_image`. "
+        "`challenge_id` (de `/api/face/challenge`, pedido por la empresa) + `challenge_image` + `flash_image`. "
         "Mismas validaciones que el autoregistro; la sospecha de foto o pantalla bloquea. Queda "
         "aprobado al momento y reemplaza cualquier registro anterior."
     ),
@@ -272,8 +266,7 @@ def enroll_face_in_person(
     db: DbSession,
     pipeline: Pipeline,
     images: FrontalImages,
-    challenge_id: ChallengeId = None,
-    challenge_image: ChallengeImages = None,
+    liveness: Liveness,
     camera_label: CameraLabel = None,
 ) -> ApiResponse[EnrollmentSubmitResponse]:
     employee = EmployeeService(db, company).get(employee_id)
@@ -282,8 +275,7 @@ def enroll_face_in_person(
         operator,
         read_image_uploads(images, max_files=5),
         pipeline,
-        challenge_id=challenge_id,
-        challenge_images=read_challenge_images(challenge_image),
+        liveness=liveness,
         camera_label=camera_label,
     )
     return ok(result, result.message, code="FACE_ENROLLED_IN_PERSON", status_code=201)
@@ -309,8 +301,7 @@ def verify_face_in_person(
     db: DbSession,
     pipeline: Pipeline,
     images: FrontalImages,
-    challenge_id: ChallengeId = None,
-    challenge_image: ChallengeImages = None,
+    liveness: Liveness,
     camera_label: CameraLabel = None,
 ) -> ApiResponse[VerificationResult]:
     employee = EmployeeService(db, company).get(employee_id)
@@ -320,8 +311,7 @@ def verify_face_in_person(
         operator,
         read_image_uploads(images, max_files=3),
         pipeline,
-        challenge_id=challenge_id,
-        challenge_images=read_challenge_images(challenge_image),
+        liveness=liveness,
         camera_label=camera_label,
     )
     code = "IDENTITY_VERIFIED" if result.verified else "IDENTITY_NOT_VERIFIED"

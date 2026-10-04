@@ -15,8 +15,18 @@ class VerificationLog(Base):
     __table_args__ = (
         # Historial de un empleado: WHERE employee_id ORDER BY created_at DESC, id DESC LIMIT n.
         Index("ix_verification_logs_employee_created", "employee_id", "created_at", "id"),
-        # Bitácora de una empresa en orden de llegada (API de integración: listado y cursor por id).
+        # Bitácora de una empresa en orden de llegada: la API de integración la recorre por cursor (id).
         Index("ix_verification_logs_company_log", "company_id", "id"),
+        # Súper-índice del listado de la empresa por periodo (migración 0047): `since`/`until` en el orden
+        # pedido (la más reciente primero) y el conteo con tope (filtros de empleado y resultado) sin
+        # leer la tabla.
+        Index(
+            "ix_verification_logs_company_created",
+            "company_id",
+            "created_at",
+            "id",
+            postgresql_include=["employee_id", "success"],
+        ),
         # Quién hizo el intento (el empleado o el validador): historial reciente de un validador
         # (WHERE user_id ORDER BY created_at DESC, id DESC), sus identificaciones del día y el
         # bloqueo por fallos seguidos. INCLUDE: esos conteos se resuelven sin leer la tabla.

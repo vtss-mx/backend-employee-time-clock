@@ -119,7 +119,9 @@ def _screen() -> None:
     grants = sa.table("role_screens", sa.column("role_code"), sa.column("screen_code"), schema="catalog")
     for grant in (g for g in seed["role_screens"] if g["screen_code"] == SCREEN):
         op.execute(
-            postgresql.insert(grants).values(**grant).on_conflict_do_nothing(index_elements=["role_code", "screen_code"])
+            postgresql.insert(grants)
+            .values(**grant)
+            .on_conflict_do_nothing(index_elements=["role_code", "screen_code"])
         )
 
 

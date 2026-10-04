@@ -48,7 +48,15 @@ UNIQUES = [
 ]
 # (nombre, tabla, esquema, columnas, destino, esquema destino, columnas destino)
 COMPOSITE_FKS = [
-    ("fk_validators_user_company", "validators", "workforce", ["user_id", "company_id"], "users", "auth", ["id", "company_id"]),
+    (
+        "fk_validators_user_company",
+        "validators",
+        "workforce",
+        ["user_id", "company_id"],
+        "users",
+        "auth",
+        ["id", "company_id"],
+    ),
     (
         "fk_face_enrollments_employee_company",
         "face_enrollments",
@@ -72,7 +80,13 @@ COMPOSITE_FKS = [
 INDEXES = [
     ("ix_users_role", "users", "auth", ["role"], None),
     ("ix_auth_sessions_user_open", "auth_sessions", "auth", ["user_id", "expires_at"], "revoked_at IS NULL"),
-    ("ix_verification_policy_updated_by_id", "verification_policy", "tenancy", ["updated_by_id"], "updated_by_id IS NOT NULL"),
+    (
+        "ix_verification_policy_updated_by_id",
+        "verification_policy",
+        "tenancy",
+        ["updated_by_id"],
+        "updated_by_id IS NOT NULL",
+    ),
     (
         "ix_employees_company_approved",
         "employees",
@@ -97,7 +111,14 @@ def upgrade() -> None:
         op.create_unique_constraint(op.f(name), table, columns, schema=schema)
     for name, table, schema, columns, target, target_schema, target_columns in COMPOSITE_FKS:
         op.create_foreign_key(
-            op.f(name), table, target, columns, target_columns, source_schema=schema, referent_schema=target_schema, ondelete="CASCADE"
+            op.f(name),
+            table,
+            target,
+            columns,
+            target_columns,
+            source_schema=schema,
+            referent_schema=target_schema,
+            ondelete="CASCADE",
         )
     for name, table, schema, columns, where in INDEXES:
         op.create_index(op.f(name), table, columns, schema=schema, postgresql_where=sa.text(where) if where else None)

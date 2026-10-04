@@ -3,7 +3,9 @@ respondió (estado y cuerpo), para que el ADMIN lo vea tal cual en "Errores del 
 
 Todo es literal salvo dos cosas, a propósito:
 - **Secretos**: un campo cuyo nombre es de contraseña, token, llave, cookie o firma se guarda como
-  «[oculto]» (también en la URL). Los encabezados `Authorization` y `Cookie` nunca se copian.
+  «[oculto]» (también en la URL). Los encabezados `Authorization` y `Cookie` nunca se copian. En el
+  texto libre que cuenta el navegador de una falla de la app (mensaje, stack trace) se ocultan el
+  valor que sigue a un nombre de secreto, un `Bearer ...` y un JWT (`redact_text`).
 - **Archivos** (las fotos del rostro): de cada uno solo su campo, nombre, tipo y tamaño; nunca los
   bytes. Así un error de un registro facial no deja biometría en la bitácora.
 
@@ -27,6 +29,17 @@ _SECRET = re.compile(
 #: Encabezados que sí se copian (nunca Authorization ni Cookie).
 _HEADERS: tuple[str, ...] = ("user-agent", "content-type", "content-length", "origin", "referer", "accept-language")
 _HEADERS += ("x-forwarded-for", "x-real-ip", "x-request-id")
+#: En texto libre (mensajes y stack traces que envía el navegador) no hay campos: se oculta el valor
+#: que sigue a un nombre de secreto (`password=...`, `"token": "..."`, `Authorization: Bearer ...`).
+_SECRET_VALUE = re.compile(
+    rf"(?P<key>[\w-]*(?:{_SECRET.pattern})[\w-]*[\"']?\s*[:=]\s*)(?:Bearer\s+)?(?:\"[^\"]*\"|'[^']*'|[^\s&,;)}}\]]+)",
+    re.I,
+)
+#: Un token suelto en el texto: `Bearer ...` o un JWT (`eyJ...`).
+_LOOSE_TOKENS = (
+    (re.compile(r"\bBearer\s+[\w.~+/=-]+", re.I), f"Bearer {_HIDDEN}"),
+    (re.compile(r"\beyJ[\w-]*\.[\w-]+\.[\w-]*"), _HIDDEN),
+)
 
 
 def redact(value: Any) -> Any:
@@ -36,6 +49,15 @@ def redact(value: Any) -> Any:
     if isinstance(value, list):
         return [redact(item) for item in value]
     return value
+
+
+def redact_text(text: str) -> str:
+    """Texto libre tal cual, salvo los secretos que se reconocen en él (la regla de `redact` para un
+    texto que no viene en campos: lo que el navegador cuenta de una falla)."""
+    text = _SECRET_VALUE.sub(lambda found: f"{found['key']}{_HIDDEN}", text)
+    for pattern, hidden in _LOOSE_TOKENS:
+        text = pattern.sub(hidden, text)
+    return text
 
 
 def _pairs(raw: str) -> dict[str, Any]:

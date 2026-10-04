@@ -11,7 +11,6 @@ Flujo:
 
 import base64
 import logging
-from collections.abc import Sequence
 from datetime import UTC, datetime
 
 from sqlalchemy.orm import Session
@@ -49,8 +48,8 @@ from app.services.face_service import (
     SuspiciousCapture,
     accessories_rejection,
 )
-from app.services.identity_core import IdentityLog, LivenessCheck, confirm_live, required_similarity, take_challenge
-from app.services.liveness_service import Challenge
+from app.services.identity_core import IdentityLog, LivenessCheck, confirm_live, required_match, take_challenge
+from app.services.liveness_service import Challenge, LivenessResponse
 from app.services.policy_service import PolicyService, PolicySnapshot
 
 logger = logging.getLogger(__name__)
@@ -89,8 +88,7 @@ class EnrollmentService:
         frontal_images: list[bytes],
         pipeline: FacePipeline,
         *,
-        challenge_id: str | None,
-        challenge_images: Sequence[bytes],
+        liveness: LivenessResponse,
         accessory_review: bool = False,
         camera_label: str | None = None,
     ) -> EnrollmentSubmitResponse:
@@ -107,7 +105,7 @@ class EnrollmentService:
             user,
             frontal_images,
             pipeline,
-            challenge=(challenge_id, challenge_images),
+            challenge=liveness,
             accessory_review=accessory_review,
             camera_label=camera_label,
         )
@@ -123,8 +121,7 @@ class EnrollmentService:
         frontal_images: list[bytes],
         pipeline: FacePipeline,
         *,
-        challenge_id: str | None,
-        challenge_images: Sequence[bytes],
+        liveness: LivenessResponse,
         camera_label: str | None = None,
     ) -> EnrollmentSubmitResponse:
         """Registro asistido: la empresa captura el rostro del empleado con el empleado presente.
@@ -143,7 +140,7 @@ class EnrollmentService:
             operator,
             frontal_images,
             pipeline,
-            challenge=(challenge_id, challenge_images),
+            challenge=liveness,
             in_person=True,
             camera_label=camera_label,
         )
@@ -208,7 +205,7 @@ class EnrollmentService:
         frontal_images: list[bytes],
         pipeline: FacePipeline,
         *,
-        challenge: tuple[str | None, Sequence[bytes]],
+        challenge: LivenessResponse,
         accessory_review: bool = False,
         in_person: bool = False,
         camera_label: str | None = None,
@@ -295,7 +292,7 @@ class EnrollmentService:
         actor: User,
         frontal_images: list[bytes],
         pipeline: FacePipeline,
-        challenge: tuple[str | None, Sequence[bytes]],
+        challenge: LivenessResponse,
         policy: PolicySnapshot,
         *,
         in_person: bool,
@@ -315,7 +312,7 @@ class EnrollmentService:
             self.db,
             self.company_id,
             pipeline,
-            (issued, challenge[1]),
+            (issued, challenge),
             analyses,
             policy,
             face_policy,
@@ -334,7 +331,7 @@ class EnrollmentService:
             return None
         gallery = face_galleries.get(self.db, self.company_id, pipeline.model_name)
         found = duplicate_of(
-            gallery, [a.embedding for a in analyses], exclude=employee.id, required=required_similarity(policy)
+            gallery, [a.embedding for a in analyses], exclude=employee.id, required=required_match(policy)
         )
         return EmployeeRepository(self.db, self.company_id).get_by_id(found) if found is not None else None
 

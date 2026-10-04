@@ -20,11 +20,34 @@ class VerificationPolicyRead(BaseModel):
     validator_mobile_only: bool = Field(
         default=True, description="Los validadores de identidad solo operan desde una tableta o un teléfono"
     )
+    identify_confidence: float = Field(
+        default=0.99999,
+        description="Confianza mínima al identificar entre toda la plantilla (1:N, validadores); nunca menor "
+        "que min_confidence",
+    )
+    min_capture_quality: float = Field(
+        default=0.4, description="Calidad mínima de cada captura (0 = sin mínimo): detección, nitidez y luz"
+    )
+    max_location_accuracy_m: int = Field(
+        default=100, description="Asistencia: precisión mínima (m) de la ubicación de cada registro"
+    )
+    detect_impossible_travel: bool = Field(
+        default=True, description="Asistencia: rechazar registros más lejos de lo que se puede viajar desde el anterior"
+    )
+    max_travel_kmh: int = Field(default=200, description="Velocidad máxima creíble entre dos registros (km/h)")
     # --- Candados contra engaños (cada uno se puede desactivar) ---
     anti_spoofing_level: str = Field(
         default="STANDARD", description="Sensibilidad del anti-spoofing (catalog.antispoof_levels)"
     )
-    liveness_steps: int = Field(default=2, description="Giros aleatorios de la prueba de vida (1 o 2)")
+    liveness_steps: int = Field(
+        default=2,
+        description="Movimientos aleatorios de la prueba de vida (1 a 3: girar, mirar arriba o abajo, acercarse)",
+    )
+    liveness_timeout_seconds: int = Field(default=60, description="Segundos para responder el reto completo")
+    flash_liveness: str = Field(
+        default="OBSERVE",
+        description="Destello de colores en la pantalla (catalog.flash_modes): OFF, OBSERVE (solo medir) o ENFORCE",
+    )
     block_virtual_cameras: bool = Field(
         default=True, description="Rechazar cámaras virtuales (programas que inyectan video)"
     )
@@ -79,9 +102,17 @@ class VerificationPolicyUpdate(BaseModel):
     validator_mobile_only: bool | None = None
     #: Uno de los niveles activos de catalog.confidence_levels (lo valida el servicio).
     min_confidence: float | None = None
+    identify_confidence: float | None = None
+    min_capture_quality: float | None = Field(default=None, ge=0, le=0.9)
+    max_location_accuracy_m: int | None = Field(default=None, ge=10, le=1000)
+    detect_impossible_travel: bool | None = None
+    max_travel_kmh: int | None = Field(default=None, ge=30, le=1000)
     #: Uno de los niveles activos de catalog.antispoof_levels (lo valida el servicio).
     anti_spoofing_level: str | None = Field(default=None, max_length=30)
-    liveness_steps: int | None = Field(default=None, ge=1, le=2)
+    liveness_steps: int | None = Field(default=None, ge=1, le=3)
+    liveness_timeout_seconds: int | None = Field(default=None, ge=20, le=180)
+    #: Uno de los modos activos de catalog.flash_modes (lo valida el servicio).
+    flash_liveness: str | None = Field(default=None, max_length=20)
     block_virtual_cameras: bool | None = None
     reject_foreign_images: bool | None = None
     detect_static_captures: bool | None = None

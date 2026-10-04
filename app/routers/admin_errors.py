@@ -9,6 +9,8 @@ from app.dependencies import AdminUser, DbSession, Pagination, require_screen
 from app.models import ErrorSeverity, ErrorStatus, Screen
 from app.schemas.common import ErrorResponse
 from app.schemas.error_report import (
+    ErrorBulkResolve,
+    ErrorBulkResult,
     ErrorOccurrenceList,
     ErrorReportDetail,
     ErrorReportList,
@@ -66,6 +68,21 @@ def errors_summary(_: AdminUser, db: DbSession) -> ApiResponse[ErrorSummary]:
 )
 def server_status(_: AdminUser) -> ApiResponse[ServerStatus]:
     return ok(ServerStatus.model_validate(health_service.server_status()), "Estado del servidor", code="SERVER_STATUS")
+
+
+@router.post(
+    "/resolve",
+    response_model=ApiResponse[ErrorBulkResult],
+    summary="Marcar como solucionados todos los errores del filtro elegido",
+    description=(
+        "Exige un estado o una gravedad específicos (nunca toda la bandeja); la búsqueda lo acota. Solo "
+        "cambian los abiertos que no volvieron a ocurrir después de `seen_until` (el `as_of` de la lista)."
+    ),
+    responses={422: {"model": ErrorResponse, "description": "Sin un filtro específico"}},
+)
+def resolve_errors(payload: ErrorBulkResolve, admin: AdminUser, db: DbSession) -> ApiResponse[ErrorBulkResult]:
+    resolved = ErrorReportService(db).resolve_matching(payload, admin)
+    return ok(ErrorBulkResult(resolved=resolved), f"{resolved} error(es) solucionado(s)", code="ERRORS_RESOLVED")
 
 
 @router.get(

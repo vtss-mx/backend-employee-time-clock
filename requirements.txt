@@ -24,7 +24,6 @@ pillow==12.3.0
 onnxruntime==1.30.0   # CLIP (detección de lentes / gorra / cubrebocas)
 
 # --- Reportes ---
-openpyxl==3.1.5   # exportación a Excel (modo de solo escritura: reportes grandes sin cargarlos en memoria)
 
 
 # --- Zonas horarias (APP_TIMEZONE) en imágenes sin tzdata del sistema ---

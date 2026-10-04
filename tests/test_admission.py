@@ -12,6 +12,7 @@ from app.core.admission import (
     AdmissionController,
     AdmissionSettings,
     Tier,
+    admission,
     group_of,
     overflow_group,
     tier_of,
@@ -33,7 +34,11 @@ def test_apis_are_grouped_without_ids_and_ranked_by_criticality():
     assert tier_of("POST auth/login") == Tier.CRITICAL
     assert tier_of("POST auth/company") == Tier.CRITICAL  # elegir empresa también es iniciar sesión
     assert tier_of("GET employees") == Tier.NORMAL
-    assert tier_of("GET employees/face/learning") == Tier.BACKGROUND
+    assert tier_of("GET admin/stats") == Tier.BACKGROUND
+    # Tableros y estadísticas pesadas ceden su lugar al saturarse (auditoría de rendimiento).
+    assert tier_of(group_of("GET", "/api/attendance/board")) == Tier.BACKGROUND
+    assert tier_of(group_of("GET", "/api/admin/face-security")) == Tier.BACKGROUND
+    assert tier_of(group_of("GET", "/api/attendance/sessions")) == Tier.NORMAL
 
     now = [0.0]
 
@@ -272,12 +277,16 @@ def test_only_successful_responses_measure_the_capacity():
     assert first is None and second is None and third is not None
 
 
-def test_admin_sees_the_adaptive_capacity_and_the_public_probe_does_not(client, admin_headers, company_headers):
+def test_admin_sees_the_adaptive_capacity_and_the_public_probe_does_not(
+    client, admin_headers, company_headers, monkeypatch
+):
+    # Sin la demanda que dejaron otras pruebas (con más llamadas recientes sacarían a esta del top).
+    monkeypatch.setattr(admission, "groups", {})
     client.get("/api/employees", headers=company_headers)
     server = client.get("/api/admin/errors/server", headers=admin_headers).json()["data"]
-    admission = server["admission"]
-    assert admission["limit"] >= admission["bounds"][0] and admission["waiting"] == 0
-    assert any(item["api"] == "GET employees" and item["tier"] == "NORMAL" for item in admission["top_demand"])
+    capacity = server["admission"]
+    assert capacity["limit"] >= capacity["bounds"][0] and capacity["waiting"] == 0
+    assert any(item["api"] == "GET employees" and item["tier"] == "NORMAL" for item in capacity["top_demand"])
     assert "queue" in server["components"]["face_engine"] or "error" in server["components"]["face_engine"]
     public = client.get("/api/health/ready").json()["data"]
     assert "admission" not in public

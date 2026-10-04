@@ -2,7 +2,9 @@
 
 import pytest
 
+from app.core.database import SessionLocal
 from app.core.geo import distance_m
+from app.models import Validator
 from app.services.location_service import format_distance
 from tests.conftest import COMPANY_EMAIL, COMPANY_PASSWORD, create_company, login
 from tests.test_policy import set_policy
@@ -73,6 +75,17 @@ def test_address_is_normalized_and_returned(client, company_headers):
     assert data["address"]["country_code"] == "US" and data["address"]["postal_code"] == "94103"
     assert data["address"]["interior_number"] is None and data["address"]["street"] == "Main St"
     assert data["location_required"] is False and data["location_radius_m"] is None
+
+
+def test_a_validator_from_before_addresses_reads_without_one(client, company_headers):
+    """Los validadores dados de alta antes de exigir domicilio siguen listándose (sin domicilio)."""
+    created = create_validator(client, company_headers).json()["data"]
+    with SessionLocal() as db:
+        legacy = db.get(Validator, created["id"])
+        assert legacy is not None
+        legacy.street = None
+        db.commit()
+    assert client.get(f"{URL}/{created['id']}", headers=company_headers).json()["data"]["address"] is None
 
 
 def test_requiring_location_needs_the_point_and_the_radius(client, company_headers):

@@ -20,13 +20,16 @@ from app.core.db_schemas import AUTH, CATALOG, OPS
 
 
 class ErrorReport(Base):
-    """Un error del sistema, agrupado: todas sus ocurrencias iguales en una sola fila.
+    """Una falla del sistema, agrupada: todas sus ocurrencias iguales en una sola fila.
 
-    Se registra CUALQUIER error del backend (respuesta 4xx/5xx, excepción no controlada o falla en
-    segundo plano). Agrupar por `fingerprint` (origen, código, ruta, tipo de excepción...) acota la
-    tabla aunque un error se repita millones de veces: cuenta `occurrences` y guarda la primera y
-    la última vez, el último traceId y el detalle técnico. El ADMIN le da seguimiento con `status`;
-    uno solucionado que vuelve a ocurrir se reabre solo como pendiente (`reopened`).
+    Se registran solo las fallas que alguien debe corregir: excepciones no controladas, fallas del
+    servidor o de una dependencia (5xx), errores en segundo plano, fallas del canal WebSocket y fallas
+    de la aplicación web (`CLIENT`). Un 4xx es un resultado normal y no llega aquí (las filas WARNING
+    que ya existían se conservan como historial). Agrupar por `fingerprint` (origen, código, ruta,
+    tipo de excepción...) acota la tabla aunque un error se repita millones de veces: cuenta
+    `occurrences` y guarda la primera y la última vez, el último traceId y el detalle técnico. El
+    ADMIN le da seguimiento con `status`; uno solucionado que vuelve a ocurrir se reabre solo como
+    pendiente (`reopened`).
     """
 
     __tablename__ = "error_reports"
@@ -41,15 +44,15 @@ class ErrorReport(Base):
             postgresql_where=text("status_changed_by_id IS NOT NULL"),
             sqlite_where=text("status_changed_by_id IS NOT NULL"),
         ),
-        Index("ix_error_reports_severity", "severity"),
         CheckConstraint("occurrences > 0", name="occurrences_positive"),
-        CheckConstraint("source IN ('HTTP', 'LOG', 'WEBSOCKET')", name="source"),
+        CheckConstraint("source IN ('HTTP', 'LOG', 'WEBSOCKET', 'CLIENT')", name="source"),
         {"schema": OPS},
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
-    #: HTTP (respuesta de error), LOG (registrado en segundo plano o dentro de un proceso) o WEBSOCKET.
+    #: HTTP (falla de una petición), LOG (registrado en segundo plano o dentro de un proceso), WEBSOCKET
+    #: o CLIENT (falla de la aplicación web que reportó el navegador).
     source: Mapped[str] = mapped_column(String(10), nullable=False)
     severity: Mapped[str] = mapped_column(String(30), ForeignKey(f"{CATALOG}.error_severities.code"), nullable=False)
     status: Mapped[str] = mapped_column(
@@ -64,7 +67,8 @@ class ErrorReport(Base):
     message: Mapped[str] = mapped_column(String(1000), nullable=False)
     http_status: Mapped[int | None] = mapped_column(SmallInteger)
     method: Mapped[str | None] = mapped_column(String(10))
-    #: Ruta sin ids (`GET /api/employees/{id}`) o archivo:línea de quien lo registró.
+    #: Ruta sin ids (`GET /api/employees/{id}`, o la pantalla de la app: `/company/employees/{id}`) o
+    #: archivo:línea de quien lo registró.
     location: Mapped[str | None] = mapped_column(String(255))
     exception_type: Mapped[str | None] = mapped_column(String(255))
     #: Detalle técnico de la última ocurrencia (stack trace), solo para el ADMIN.

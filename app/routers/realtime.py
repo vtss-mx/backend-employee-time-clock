@@ -43,7 +43,7 @@ from starlette.concurrency import run_in_threadpool
 
 from app.core.config import settings
 from app.core.database import SessionLocal
-from app.core.error_events import ErrorEvent, severity_for
+from app.core.error_events import ErrorEvent, is_recorded, severity_for
 from app.core.exceptions import AuthenticationError, PermissionDeniedError
 from app.core.responses import envelope_body, new_trace_id
 from app.core.tokens import decode_access_token
@@ -78,16 +78,20 @@ class _Closed(Exception):
 def _envelope(
     status: int, code: str, message: str, *, data: Any = None, trace_id: str | None = None, report: bool = True
 ) -> dict:
-    """Mensaje del canal con el contrato de siempre. Los errores del canal quedan registrados para el
-    ADMIN; el resultado de una validación (`report=False`: «ese correo ya existe» mientras se escribe)
-    es una respuesta normal, no una falla."""
+    """Mensaje del canal con el contrato de siempre. Una falla del servidor (BD caída, saturación)
+    queda registrada para el ADMIN; un error del cliente (sin autenticar, mensaje inválido, campo no
+    permitido, demasiadas validaciones) es un resultado normal y solo va al log del proceso. El
+    resultado de una validación (`report=False`: «ese correo ya existe» mientras se escribe) ni eso."""
     trace = trace_id or new_trace_id()
     errors = [] if 200 <= status < 300 else [{"code": code, "message": message, "field": None, "details": None}]
-    if status >= 400 and report:
+    severity = severity_for(status)
+    if status >= 400 and report and not is_recorded(severity):
+        logger.info("Canal de validación: %s %s [%s]", status, code, trace)
+    elif status >= 400 and report:
         error_reporter.report(
             ErrorEvent(
                 source="WEBSOCKET",
-                severity=severity_for(status),
+                severity=severity,
                 code=code,
                 message=message,
                 http_status=status,

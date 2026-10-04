@@ -22,6 +22,7 @@ from app.repositories.policy_repository import PolicyRepository
 from app.repositories.user_repository import UserRepository
 from app.schemas.policy import VerificationPolicyRead, VerificationPolicyUpdate
 from app.services.catalog_service import get_catalogs
+from app.services.face_security import thresholds
 
 TOUCH_ONLY_MESSAGE = (
     "Por políticas de tu empresa, la validación de identidad solo está disponible desde una tableta o "
@@ -29,6 +30,16 @@ TOUCH_ONLY_MESSAGE = (
 )
 
 _CACHE_TTL_SECONDS = 5.0
+#: Campos que deben ser un código activo de su catálogo: (campo, catálogo, código y mensaje del error).
+CATALOG_FIELDS = (
+    (
+        "anti_spoofing_level",
+        "antispoof_levels",
+        "INVALID_ANTISPOOF_LEVEL",
+        "Elige uno de los niveles de anti-spoofing disponibles",
+    ),
+    ("flash_liveness", "flash_modes", "INVALID_FLASH_MODE", "Elige uno de los modos del destello disponibles"),
+)
 _CACHE_MAX_COMPANIES = 10_000
 
 
@@ -42,9 +53,16 @@ class PolicySnapshot:
     qr_enabled: bool = True
     validator_mobile_only: bool = True
     min_confidence: float = 0.99999
+    identify_confidence: float = 0.99999
+    min_capture_quality: float = 0.4
+    max_location_accuracy_m: int = 100
+    detect_impossible_travel: bool = True
+    max_travel_kmh: int = 200
     # --- Candados contra engaños ---
     anti_spoofing_level: str = "STANDARD"
     liveness_steps: int = 2
+    liveness_timeout_seconds: int = 60
+    flash_liveness: str = "OBSERVE"
     block_virtual_cameras: bool = True
     reject_foreign_images: bool = True
     detect_static_captures: bool = True
@@ -73,6 +91,7 @@ class PolicySnapshot:
             reject_foreign_images=self.reject_foreign_images,
             spoof_threshold=self.antispoof_threshold,
             spoof_any_frame=self.antispoof_any_frame,
+            min_quality=self.min_capture_quality,
         )
 
     @property
@@ -88,11 +107,14 @@ _cache: OrderedDict[int, tuple[float, PolicySnapshot]] = OrderedDict()
 _lock = threading.Lock()
 
 
-def _snapshot(row: VerificationPolicy) -> PolicySnapshot:
+def _snapshot(row: VerificationPolicy, real_floor: float = 0.0) -> PolicySnapshot:
+    """La política en memoria. El umbral del anti-spoofing es el del nivel de la empresa o, si es más
+    estricto, el piso que la plataforma calibró sola (face_security): nada automático lo relaja."""
     level = get_catalogs().get("antispoof_levels", row.anti_spoofing_level)
+    threshold = float(level["threshold"]) if level else settings.FACE_ANTISPOOF_THRESHOLD
     return PolicySnapshot(
         **{name: getattr(row, name) for name in POLICY_COLUMNS},
-        antispoof_threshold=float(level["threshold"]) if level else settings.FACE_ANTISPOOF_THRESHOLD,
+        antispoof_threshold=max(threshold, real_floor),
         antispoof_any_frame=bool(level["any_frame"]) if level else False,
     )
 
@@ -132,7 +154,7 @@ class PolicyService:
             if cached is not None and now - cached[0] < _CACHE_TTL_SECONDS:
                 _cache.move_to_end(self.company_id)
                 return cached[1]
-        snapshot = _snapshot(self._row())
+        snapshot = _snapshot(self._row(), thresholds(self.db).min_real_probability)
         with _lock:
             _cache[self.company_id] = (now, snapshot)
             _cache.move_to_end(self.company_id)
@@ -140,31 +162,31 @@ class PolicyService:
                 _cache.popitem(last=False)
         return snapshot
 
-    def read(self) -> VerificationPolicyRead:
+    def read(self, *, author: bool = True) -> VerificationPolicyRead:
+        """La política; `author=False` (lo que leen la empresa y su personal) omite quién la cambió: es
+        una cuenta de la plataforma."""
         row = self._row()
+        policy = VerificationPolicyRead.model_validate(row)
+        if not author:
+            return policy
         updated_by = UserRepository(self.db).emails_by_ids((row.updated_by_id,)).get(row.updated_by_id or 0)
-        return VerificationPolicyRead.model_validate(row).model_copy(update={"updated_by": updated_by})
+        return policy.model_copy(update={"updated_by": updated_by})
 
     def update(self, data: VerificationPolicyUpdate, user: User) -> VerificationPolicyRead:
         row = self._row()
         changes = data.model_dump(exclude_unset=True, exclude_none=True)
-        if "min_confidence" in changes:
-            level = get_catalogs().confidence_level(changes["min_confidence"])
+        for name in ("min_confidence", "identify_confidence"):
+            if name not in changes:
+                continue
+            level = get_catalogs().confidence_level(changes[name])
             if level is None:
                 raise UnprocessableError(
-                    "Elige uno de los niveles de confianza disponibles",
-                    code="INVALID_CONFIDENCE_LEVEL",
-                    field="min_confidence",
+                    "Elige uno de los niveles de confianza disponibles", code="INVALID_CONFIDENCE_LEVEL", field=name
                 )
-            changes["min_confidence"] = level["value"]
-        if "anti_spoofing_level" in changes and not get_catalogs().is_active(
-            "antispoof_levels", changes["anti_spoofing_level"]
-        ):
-            raise UnprocessableError(
-                "Elige uno de los niveles de anti-spoofing disponibles",
-                code="INVALID_ANTISPOOF_LEVEL",
-                field="anti_spoofing_level",
-            )
+            changes[name] = level["value"]
+        for name, catalog, code, message in CATALOG_FIELDS:
+            if name in changes and not get_catalogs().is_active(catalog, changes[name]):
+                raise UnprocessableError(message, code=code, field=name)
         for name, value in changes.items():
             setattr(row, name, value)
         row.updated_by_id = user.id
@@ -175,7 +197,7 @@ class PolicyService:
     def ensure_qr_enabled(self) -> None:
         if not self.current().qr_enabled:
             raise PermissionDeniedError(
-                "La verificación por QR está deshabilitada por tu empresa. Usa el reconocimiento facial.",
+                "La verificación por QR está deshabilitada para tu empresa. Usa el reconocimiento facial.",
                 code="QR_DISABLED",
             )
 

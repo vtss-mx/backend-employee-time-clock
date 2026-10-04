@@ -1,14 +1,20 @@
-"""Registro de TODOS los errores del backend en la base de datos (ops.error_reports).
+"""Registro de las FALLAS del sistema en la base de datos (ops.error_reports).
 
-Cualquier error, hasta el más pequeño, queda registrado para que el ADMIN lo vea y le dé
-seguimiento (pendiente, en proceso, en revisión, solucionado):
+Solo lo que alguien tiene que corregir (decisión del dueño del producto: señal, no ruido), para que
+el ADMIN lo vea y le dé seguimiento (pendiente, en proceso, en revisión, solucionado):
 
-- Respuestas HTTP de error (4xx y 5xx): las anota `error_response` y las reporta el middleware del
-  traceId al terminar la petición, con su ruta, quién la hizo y la empresa.
-- Excepciones no controladas (500): con su stack trace.
+- Fallas del servidor en una petición HTTP: excepciones no controladas (500, con su stack trace) y
+  fallas controladas de una dependencia (5xx: BD caída o lenta, motor facial, saturación). Las
+  anota `error_response` y las reporta el middleware del traceId al terminar la petición, con su
+  ruta, quién la hizo y la empresa.
 - Errores registrados en el log (`logger.error` / `logger.exception`) en cualquier parte: hilos de
   mantenimiento, motor facial, canal en vivo, procesos de mejor esfuerzo dentro de una petición...
-- Errores enviados por el canal WebSocket.
+- Fallas del canal WebSocket del lado del servidor.
+- Fallas de la aplicación web que reporta el navegador (`POST /api/client-errors`).
+
+Un 4xx (validación, permisos, reglas de negocio, 404, 401, 429...) NO se guarda: es un resultado
+normal, se responde con su código estable y queda en el log del proceso. La regla vive aquí
+(`report` descarta lo que no es CRITICAL ni ERROR): ningún productor la puede rodear.
 
 Sin frenar a nadie: `report` solo agrega a una cola en memoria acotada (si se llena, se cuenta lo
 perdido y eso mismo se registra) y un hilo guarda en lotes cada ERROR_REPORT_FLUSH_SECONDS. Los
@@ -27,7 +33,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.database import SessionLocal
-from app.core.error_events import ErrorEvent
+from app.core.error_events import ErrorEvent, is_recorded
 from app.core.request_context import request_id_var, request_info_var
 from app.repositories.error_report_repository import ErrorReportRepository
 
@@ -47,7 +53,10 @@ class ErrorReporter:
         self.dropped = 0
 
     def report(self, event: ErrorEvent) -> None:
-        """Nunca bloquea ni lanza: si la cola está llena, solo cuenta lo perdido."""
+        """Nunca bloquea ni lanza: si la cola está llena, solo cuenta lo perdido. Lo que no es una
+        falla (gravedad menor que ERROR, p. ej. un 4xx) se descarta: no va a la bandeja del ADMIN."""
+        if not is_recorded(event.severity):
+            return
         with self._lock:
             if len(self._events) >= self._capacity:
                 self.dropped += 1

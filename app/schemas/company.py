@@ -135,7 +135,8 @@ class PlatformStats(BaseModel):
 
 class CompanyEmployeeRead(BaseModel):
     """Un empleado de una empresa visto por el ADMIN de la plataforma: su ficha de trabajo, de solo
-    lectura. Sin datos fiscales (RFC, CURP, NSS), fecha de nacimiento ni nada biométrico."""
+    lectura, y cuánto aprendió de él el reconocimiento facial (lo administra el ADMIN). Sin datos
+    fiscales (RFC, CURP, NSS), fecha de nacimiento, fotos ni plantillas."""
 
     id: int
     employee_number: str
@@ -146,6 +147,9 @@ class CompanyEmployeeRead(BaseModel):
     phone: str | None = None
     active: bool
     face_status: str
+    #: Muestras que el reconocimiento aprendió de sus identificaciones seguras (solo cuántas y cuándo).
+    face_learned_samples: int = 0
+    face_last_learned_at: datetime | None = None
 
 
 class CompanyEmployeeList(Page[CompanyEmployeeRead]):

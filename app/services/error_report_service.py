@@ -1,6 +1,7 @@
 """Bandeja de errores del sistema para el ADMIN de la plataforma: consultar y dar seguimiento.
 
-Los errores los registra `error_reporter` (cualquier error del backend, hasta el más pequeño). Aquí
+Las fallas las registra `error_reporter` (solo lo que alguien debe corregir: fallas del servidor, del
+segundo plano, del canal en vivo y de la aplicación web; un 4xx no). Aquí
 el ADMIN los revisa y los marca: pendiente, en proceso, en revisión o solucionado. Un solucionado que
 vuelve a ocurrir se reabre solo.
 """
@@ -10,13 +11,14 @@ from datetime import UTC, datetime
 
 from sqlalchemy.orm import Session
 
-from app.core.exceptions import NotFoundError
+from app.core.exceptions import NotFoundError, UnprocessableError
 from app.models import ErrorReport, ErrorStatus, User, UserRole
 from app.repositories.company_repository import CompanyRepository
 from app.repositories.error_report_repository import ErrorReportRepository
 from app.repositories.user_repository import UserRepository
 from app.schemas.common import PageParams
 from app.schemas.error_report import (
+    ErrorBulkResolve,
     ErrorOccurrenceList,
     ErrorOccurrenceRead,
     ErrorReportDetail,
@@ -35,11 +37,12 @@ class ErrorReportService:
     def list_reports(
         self, *, status: str | None, severity: str | None, search: str | None, page: PageParams
     ) -> ErrorReportList:
+        as_of = datetime.now(UTC)  # antes de consultar: nada de lo listado ocurrió después
         items, total = self.repo.search(
             status=status, severity=severity, search=search, offset=page.offset, limit=page.size
         )
         emails = UserRepository(self.db).emails_by_ids(r.status_changed_by_id for r in items)
-        return ErrorReportList.of([self._read(r, emails) for r in items], total, page)
+        return ErrorReportList.of([self._read(r, emails) for r in items], total, page, as_of=as_of)
 
     def detail(self, report_id: int) -> ErrorReportDetail:
         report = self._get(report_id)
@@ -87,6 +90,28 @@ class ErrorReportService:
             report.status_changed_by_id = admin.id
         self.db.commit()
         return self.detail(report.id)
+
+    def resolve_matching(self, data: ErrorBulkResolve, admin: User) -> int:
+        """Marca como solucionados, de una vez, los errores abiertos del filtro elegido. Exige un estado
+        o una gravedad específicos (nunca toda la bandeja) y respeta lo que el ADMIN vio: lo que volvió
+        a ocurrir después de `seen_until` sigue abierto. Devuelve cuántos cambiaron."""
+        if data.status is None and data.severity is None:
+            raise UnprocessableError(
+                "Elige un estado o una gravedad en el filtro para marcar sus errores", code="ERROR_FILTER_REQUIRED"
+            )
+        if data.status == ErrorStatus.RESOLVED:
+            raise UnprocessableError("Esos errores ya están solucionados", code="ERROR_FILTER_RESOLVED", field="status")
+        now = datetime.now(UTC)
+        resolved = self.repo.resolve_matching(
+            status=data.status,
+            severity=data.severity,
+            search=data.search,
+            seen_until=min(data.seen_until, now),
+            admin_id=admin.id,
+            now=now,
+        )
+        self.db.commit()
+        return resolved
 
     # ---------- Internos ----------
 

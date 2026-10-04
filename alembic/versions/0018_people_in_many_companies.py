@@ -11,6 +11,7 @@ Revision ID: 0018
 Revises: 0017
 Create Date: 2026-10-02 00:30:00
 """
+
 from collections.abc import Sequence
 
 import sqlalchemy as sa
@@ -67,7 +68,9 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_index(op.f("ix_auth_sessions_company_id"), table_name="auth_sessions", schema="auth")
-    op.drop_constraint(op.f("fk_auth_sessions_company_id_companies"), "auth_sessions", schema="auth", type_="foreignkey")
+    op.drop_constraint(
+        op.f("fk_auth_sessions_company_id_companies"), "auth_sessions", schema="auth", type_="foreignkey"
+    )
     op.drop_column("auth_sessions", "company_id", schema="auth")
 
     op.drop_constraint(op.f("ck_users_role_company"), "users", schema="auth", type_="check")
@@ -84,8 +87,6 @@ def downgrade() -> None:
     op.create_unique_constraint(op.f("uq_employees_user_id"), "employees", ["user_id"], schema="workforce")
 
     op.add_column("employees", sa.Column("phone", sa.String(length=16), nullable=True), schema="workforce")
-    op.execute(
-        "UPDATE workforce.employees e SET phone = u.phone FROM auth.users u WHERE u.id = e.user_id"
-    )
+    op.execute("UPDATE workforce.employees e SET phone = u.phone FROM auth.users u WHERE u.id = e.user_id")
     op.drop_constraint(op.f("uq_users_phone"), "users", schema="auth", type_="unique")
     op.drop_column("users", "phone", schema="auth")

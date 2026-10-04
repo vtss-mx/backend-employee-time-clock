@@ -1,7 +1,9 @@
 """Alta y administración de empresas (tenants) — exclusivo del ADMIN de la plataforma.
 
-El ADMIN no accede a los empleados ni a los datos biométricos de las empresas: solo a sus datos
-fiscales y de contacto, sus administradores y conteos.
+El ADMIN ve los datos fiscales y de contacto de cada empresa, sus administradores y conteos; de sus
+empleados, solo la ficha de trabajo (nunca datos fiscales ni biométricos). También administra el
+aprendizaje del reconocimiento facial de cada empresa (su evolución y olvidar lo aprendido de un
+empleado): la empresa no lo ve ni lo configura.
 """
 
 from typing import Literal
@@ -11,10 +13,11 @@ from sqlalchemy.orm import Session
 
 from app.core.exceptions import ConflictError, NotFoundError
 from app.core.passwords import hash_password
-from app.models import Company, SessionRevocationReason, User, UserRole
+from app.models import Company, Employee, SessionRevocationReason, User, UserRole
 from app.repositories.company_repository import CompanyRepository
 from app.repositories.department_repository import DepartmentRepository
 from app.repositories.employee_repository import EmployeeRepository
+from app.repositories.face_repository import NO_SAMPLES, FaceEmbeddingRepository
 from app.repositories.user_repository import UserRepository
 from app.schemas.common import PageParams
 from app.schemas.company import (
@@ -31,8 +34,10 @@ from app.schemas.company import (
     CompanyUpdate,
     PlatformStats,
 )
+from app.schemas.face import FaceLearningSummary
 from app.schemas.validators import normalize_company_rfc, normalize_email
 from app.services.availability_service import Availability
+from app.services.face_learning import learning_summary
 from app.services.policy_service import PolicyService, clear_policy_cache
 from app.services.session_service import SessionService
 
@@ -131,25 +136,24 @@ class CompanyService:
         items, total = EmployeeRepository(self.db, company_id).search(
             search=search, active=active, offset=page.offset, limit=page.size
         )
-        departments = DepartmentRepository(self.db, company_id).names(e.department_id for e in items if e.department_id)
-        return CompanyEmployeeList.of(
-            [
-                CompanyEmployeeRead(
-                    id=e.id,
-                    employee_number=e.employee_number,
-                    first_name=e.first_name,
-                    last_name=e.last_name,
-                    department_name=departments.get(e.department_id or 0),
-                    email=e.user.email,
-                    phone=e.user.phone,
-                    active=e.active,
-                    face_status=e.face_status,
-                )
-                for e in items
-            ],
-            total,
-            page,
-        )
+        return CompanyEmployeeList.of(self._employee_reads(company_id, items), total, page)
+
+    def face_learning(self, company_id: int) -> FaceLearningSummary:
+        """Evolución del reconocimiento facial de la empresa (solo el ADMIN la ve)."""
+        self.get(company_id)
+        return learning_summary(self.db, company_id)
+
+    def forget_learned_face(self, company_id: int, employee_id: int) -> tuple[CompanyEmployeeRead, int]:
+        """Olvida lo que el reconocimiento aprendió del uso de un empleado: vuelve a compararse solo con
+        su registro aprobado, que no se toca (p. ej. si se duda de alguna identificación). Devuelve su
+        ficha y cuántas muestras se olvidaron."""
+        self.get(company_id)
+        employee = EmployeeRepository(self.db, company_id).get_by_id(employee_id)
+        if employee is None:
+            raise NotFoundError("Empleado no encontrado", code="EMPLOYEE_NOT_FOUND")
+        removed = FaceEmbeddingRepository(self.db).delete_learned(employee.id)
+        self.db.commit()
+        return self._employee_reads(company_id, [employee])[0], removed
 
     def update(self, company_id: int, data: CompanyUpdate) -> CompanyDetail:
         company = self.get(company_id)
@@ -218,6 +222,32 @@ class CompanyService:
         return self.detail(company.id)
 
     # ---------- Internos ----------
+
+    def _employee_reads(self, company_id: int, employees: list[Employee]) -> list[CompanyEmployeeRead]:
+        """Fichas de trabajo con su departamento y lo aprendido: dos consultas para toda la página."""
+        departments = DepartmentRepository(self.db, company_id).names(
+            e.department_id for e in employees if e.department_id
+        )
+        samples = FaceEmbeddingRepository(self.db).sample_stats(e.id for e in employees)
+        reads = []
+        for e in employees:
+            learned = samples.get(e.id, NO_SAMPLES)
+            reads.append(
+                CompanyEmployeeRead(
+                    id=e.id,
+                    employee_number=e.employee_number,
+                    first_name=e.first_name,
+                    last_name=e.last_name,
+                    department_name=departments.get(e.department_id or 0),
+                    email=e.user.email,
+                    phone=e.user.phone,
+                    active=e.active,
+                    face_status=e.face_status,
+                    face_learned_samples=learned.learned,
+                    face_last_learned_at=learned.last_learned_at,
+                )
+            )
+        return reads
 
     def _company_admin(self, company_id: int, user_id: int) -> tuple[Company, User]:
         """Empresa y uno de SUS administradores (un usuario de otra empresa responde 404)."""

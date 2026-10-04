@@ -188,7 +188,9 @@ def register_exception_handlers(app: FastAPI) -> None:
     async def _validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:
         errors = []
         for err in exc.errors():
-            loc = [str(part) for part in err.get("loc", []) if part not in ("body", "query", "path", "header", "form")]
+            # El primer elemento dice DÓNDE venía el dato (body, query, path, header, cookie) y se omite;
+            # solo ese: un campo que se llame igual (p. ej. `path` en un cuerpo JSON) conserva su nombre.
+            loc = [str(part) for part in err.get("loc", [])][1:]
             message = str(err.get("msg", "Valor inválido")).removeprefix("Value error, ")
             errors.append(
                 ErrorItem(code=str(err.get("type", "invalid")).upper(), message=message, field=".".join(loc) or None)

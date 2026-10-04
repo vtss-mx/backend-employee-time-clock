@@ -77,6 +77,17 @@ class ScreenRead(BaseModel):
     icon: str
     #: Contador que acompaña la opción (p. ej. PENDING_ENROLLMENTS).
     badge: str | None = None
+    #: Módulo del menú en que va (catalog.menu_module_screens); el menú agrupa por módulo.
+    module: str | None = None
+
+
+class MenuModuleRead(BaseModel):
+    """Módulo del menú (encabezado que agrupa pantallas), en el orden del catálogo."""
+
+    code: str
+    name: str
+    #: Nombre del ícono (lucide).
+    icon: str
 
 
 class UserRead(BaseModel):
@@ -99,6 +110,8 @@ class UserRead(BaseModel):
     preferences: UserPreferences = Field(default_factory=UserPreferences)
     #: Pantallas del usuario en orden (menú y rutas del frontend). Las arma navigation_service.
     screens: list[ScreenRead] = Field(default_factory=list)
+    #: Módulos del menú que usan sus pantallas, en orden (encabezados del menú lateral).
+    modules: list[MenuModuleRead] = Field(default_factory=list)
     #: Zona horaria del negocio (hora del Centro): la webapp muestra fechas y horas en ella, no en
     #: la del dispositivo (un teléfono en otra zona ve la misma hora que la empresa).
     timezone: str = Field(default_factory=lambda: settings.APP_TIMEZONE)

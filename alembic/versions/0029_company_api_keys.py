@@ -130,9 +130,7 @@ def _keys() -> None:
         sa.PrimaryKeyConstraint("api_key_id", "scope", name=op.f("pk_company_api_key_scopes")),
         schema="tenancy",
     )
-    op.create_index(
-        op.f("ix_company_api_key_scopes_scope"), "company_api_key_scopes", ["scope"], schema="tenancy"
-    )
+    op.create_index(op.f("ix_company_api_key_scopes_scope"), "company_api_key_scopes", ["scope"], schema="tenancy")
 
 
 def _screen(seed: dict) -> None:
@@ -145,7 +143,9 @@ def _screen(seed: dict) -> None:
     for grant in (g for g in seed["role_screens"] if g["screen_code"] == SCREEN):
         grants = sa.table("role_screens", sa.column("role_code"), sa.column("screen_code"), schema="catalog")
         op.execute(
-            postgresql.insert(grants).values(**grant).on_conflict_do_nothing(index_elements=["role_code", "screen_code"])
+            postgresql.insert(grants)
+            .values(**grant)
+            .on_conflict_do_nothing(index_elements=["role_code", "screen_code"])
         )
 
 

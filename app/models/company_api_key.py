@@ -61,4 +61,4 @@ class CompanyApiKeyScope(Base):
     api_key_id: Mapped[int] = mapped_column(
         ForeignKey(f"{TENANCY}.company_api_keys.id", ondelete="CASCADE"), primary_key=True
     )
-    scope: Mapped[str] = mapped_column(ForeignKey(f"{CATALOG}.api_scopes.code"), primary_key=True, index=True)
+    scope: Mapped[str] = mapped_column(ForeignKey(f"{CATALOG}.api_scopes.code"), primary_key=True)

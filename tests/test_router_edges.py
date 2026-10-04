@@ -11,7 +11,7 @@ from app.core import opaque_tokens
 from app.core.config import settings
 from app.models import Screen
 from app.routers import realtime
-from tests.conftest import COMPANY_EMAIL, COMPANY_PASSWORD, approved_employee
+from tests.conftest import COMPANY_EMAIL, COMPANY_PASSWORD
 from tests.test_realtime import URL, connect, token, validate
 from tests.test_screens import _revoke
 
@@ -52,15 +52,6 @@ def test_retry_after_rotating_the_server_key_renews_without_touching_the_cookie(
 
 
 # ---------------------------------------------------------------- empresa
-
-
-def test_company_sees_how_face_recognition_evolves(client, company_headers):
-    approved_employee(client, company_headers)
-    response = client.get("/api/employees/face/learning", headers=company_headers)
-    assert response.status_code == 200 and response.json()["code"] == "FACE_LEARNING_SUMMARY"
-    summary = response.json()["data"]
-    assert summary["approved_employees"] == 1
-    assert (summary["employees_learning"], summary["learned_samples"], summary["last_learned_at"]) == (0, 0, None)
 
 
 def test_platform_admin_has_no_company_policy_to_read(client, admin_headers):

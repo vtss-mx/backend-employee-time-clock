@@ -31,6 +31,17 @@ depends_on: str | Sequence[str] | None = None
 
 SEED_FILE = Path(__file__).resolve().parents[1] / "seed" / "catalogs.json"
 SCREEN = "COMPANY_REPORTS"
+SCREEN_ROW = {
+    "code": SCREEN,
+    "name": "Reportes",
+    "description": "Asistente de reportes: preguntas sobre los datos de la empresa y exportación a Excel.",
+    "sort_order": 12,
+    "active": True,
+    "path": "/company/reports",
+    "short_name": None,
+    "icon": "FileSpreadsheet",
+    "badge": None,
+}
 SCREEN_ORDER = 9
 
 
@@ -118,16 +129,15 @@ def _screen() -> None:
     screens = sa.table("screens", sa.column("code"), sa.column("sort_order"), schema="catalog")
     for row in seed["screens"]:  # orden del menú del seed: Reportes va después de Validadores
         op.execute(sa.update(screens).where(screens.c.code == row["code"]).values(sort_order=row["sort_order"]))
-    screen = next(r for r in seed["screens"] if r["code"] == SCREEN)
-    table = sa.table("screens", *(sa.column(key) for key in screen), schema="catalog")
-    op.execute(postgresql.insert(table).values(**screen).on_conflict_do_nothing(index_elements=["code"]))
+    # La pantalla tal como se creó (literal: 0043 la retiró del seed y del menú).
+    table = sa.table("screens", *(sa.column(key) for key in SCREEN_ROW), schema="catalog")
+    op.execute(postgresql.insert(table).values(**SCREEN_ROW).on_conflict_do_nothing(index_elements=["code"]))
     grants = sa.table("role_screens", sa.column("role_code"), sa.column("screen_code"), schema="catalog")
-    for grant in (g for g in seed["role_screens"] if g["screen_code"] == SCREEN):
-        op.execute(
-            postgresql.insert(grants)
-            .values(**grant)
-            .on_conflict_do_nothing(index_elements=["role_code", "screen_code"])
-        )
+    op.execute(
+        postgresql.insert(grants)
+        .values(role_code="COMPANY", screen_code=SCREEN)
+        .on_conflict_do_nothing(index_elements=["role_code", "screen_code"])
+    )
 
 
 def upgrade() -> None:

@@ -14,7 +14,7 @@ from dataclasses import asdict
 from app.core.config import settings
 from app.facial_recognition.errors import FaceValidationError
 from app.facial_recognition.pipeline import Accessory, FaceAnalysis, FacePipeline, FacePolicy, QualityThresholds
-from app.facial_recognition.pose import TurnDirection
+from app.facial_recognition.pose import LivenessAction, StepTarget
 from app.facial_recognition.worker_pool import QueueFullError, QueueTimeoutError, WorkerPool, available_cpus
 
 logger = logging.getLogger(__name__)
@@ -37,7 +37,6 @@ def build_thresholds() -> QualityThresholds:
         mask_threshold=settings.FACE_MASK_THRESHOLD,
         mask_max_skin_ratio=settings.FACE_MASK_MAX_SKIN_RATIO,
         mask_strict_threshold=settings.FACE_MASK_STRICT_THRESHOLD,
-        liveness_min_yaw_ratio=settings.FACE_LIVENESS_MIN_YAW_RATIO,
     )
 
 
@@ -162,9 +161,10 @@ __all__ = [
     "FacePipeline",
     "FacePolicy",
     "FaceValidationError",
+    "LivenessAction",
     "QueueFullError",
     "QueueTimeoutError",
-    "TurnDirection",
+    "StepTarget",
     "face_engine_status",
     "face_pool",
     "lease_pipeline",

@@ -7,13 +7,12 @@ from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from app.core.responses import ApiResponse, ok
 from app.dependencies import (
     CameraLabel,
-    ChallengeImages,
     DbSession,
+    Liveness,
     Pagination,
     Pipeline,
     ValidatorUser,
     checkpoint_rate_limit,
-    read_challenge_images,
     read_image_uploads,
     request_meta,
     require_screen,
@@ -93,7 +92,7 @@ def identify_by_qr(payload: CheckpointQrRequest, checkpoint: Checkpoint) -> ApiR
     response_model=ApiResponse[VerificationResult],
     summary="Identificar a un empleado por su rostro (1:N) o confirmar el rostro del dueño de un QR",
     description=(
-        "Multipart: `images` (1 a 3 capturas frontales), `challenge_id` + `challenge_image` (reto de "
+        "Multipart: `images` (1 a 3 capturas frontales), `challenge_id` + `challenge_image` + `flash_image` (reto de "
         "`/api/face/challenge`, si la empresa exige prueba de vida) y, en el modo QR_AND_FACE, "
         "`qr_content`. Sin QR se busca a la persona entre los empleados de la empresa con identidad "
         "validada: todas las capturas deben señalar a la misma persona, alcanzar el nivel de "
@@ -106,16 +105,14 @@ def identify_by_face(
     checkpoint: Checkpoint,
     pipeline: Pipeline,
     images: Annotated[list[UploadFile], File(description="Capturas frontales (JPEG/PNG/WEBP)")],
-    challenge_id: Annotated[str | None, Form(max_length=100)] = None,
-    challenge_image: ChallengeImages = None,
+    liveness: Liveness,
     qr_content: Annotated[str | None, Form(max_length=512)] = None,
     camera_label: CameraLabel = None,
 ) -> ApiResponse[VerificationResult]:
     result = checkpoint.identify_face(
         pipeline,
         read_image_uploads(images, max_files=3),
-        challenge_id=challenge_id,
-        challenge_images=read_challenge_images(challenge_image),
+        liveness=liveness,
         qr_content=qr_content or None,
         camera_label=camera_label,
     )

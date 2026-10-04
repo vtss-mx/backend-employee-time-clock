@@ -6,16 +6,15 @@ muestra a un validador (punto de control) para identificarse.
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Request, UploadFile
 
 from app.core.responses import ApiResponse, ok
 from app.dependencies import (
     CameraLabel,
-    ChallengeImages,
     DbSession,
     EmployeeUser,
+    Liveness,
     Pipeline,
-    read_challenge_images,
     read_image_uploads,
     request_meta,
     require_screen,
@@ -45,8 +44,9 @@ router = APIRouter(
     description=(
         "Multipart:\n"
         "- `images`: 1 a 3 capturas frontales (se recomiendan 2).\n"
-        "- `challenge_id` + `challenge_image` (una por giro, en orden): reto de `/api/face/challenge` y "
-        "la captura con la cabeza girada (obligatorios si FACE_LIVENESS_ENABLED=true).\n\n"
+        "- `challenge_id`, `challenge_image` (una por movimiento) y `flash_image` (una por color del "
+        "destello), en orden: el reto de `/api/face/challenge` y su respuesta (obligatorios si la "
+        "empresa exige prueba de vida).\n\n"
         "Cada captura frontal se valida (un solo rostro, calidad, pose frontal, sin lentes, "
         "gorra ni cubrebocas → 422 con `code` y `details`). Después se valida la prueba de vida "
         "y cada captura debe superar FACE_MATCH_THRESHOLD contra los embeddings registrados."
@@ -59,15 +59,13 @@ def verify_face(
     db: DbSession,
     pipeline: Pipeline,
     images: Annotated[list[UploadFile], File(description="Capturas frontales (JPEG/PNG/WEBP)")],
-    challenge_id: Annotated[str | None, Form(max_length=100)] = None,
-    challenge_image: ChallengeImages = None,
+    liveness: Liveness,
     camera_label: CameraLabel = None,
 ) -> ApiResponse[VerificationResult]:
     frontal = read_image_uploads(images, max_files=3)
-    turns = read_challenge_images(challenge_image)
     ip, user_agent = request_meta(request)
     result = VerificationService(db, ip=ip, user_agent=user_agent).verify_face(
-        user, frontal, pipeline, challenge_id=challenge_id, challenge_images=turns, camera_label=camera_label
+        user, frontal, pipeline, liveness=liveness, camera_label=camera_label
     )
     return _result(result)
 

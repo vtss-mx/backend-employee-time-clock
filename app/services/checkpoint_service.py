@@ -9,14 +9,12 @@ Cada intento queda en la bitácora (attendance.verification_logs) con el validad
 identificación facial segura enseña a la galería del empleado (face_learning).
 """
 
-from collections.abc import Sequence
-
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.exceptions import ConflictError, PermissionDeniedError, UnprocessableError
 from app.facial_recognition import Accessory, FaceAnalysis, FacePipeline
-from app.models import Employee, User, VerificationMethod
+from app.models import Employee, User, VerificationLog, VerificationMethod
 from app.repositories.employee_repository import EmployeeRepository
 from app.repositories.face_repository import FaceEmbeddingRepository
 from app.repositories.verification_repository import VerificationLogRepository
@@ -25,6 +23,7 @@ from app.schemas.common import PageParams
 from app.schemas.user import UserCompanyInfo
 from app.schemas.verification import FaceChallengeResponse, VerificationResult
 from app.services.attempt_guard import ensure_unlocked
+from app.services.attendance_service import AttendanceService
 from app.services.catalog_service import get_catalogs
 from app.services.face_gallery import face_galleries, identify
 from app.services.face_learning import Evidence, FaceLearning
@@ -48,10 +47,11 @@ from app.services.identity_core import (
     match_one,
     mean_confidence,
     reason_message,
-    required_similarity,
+    required_match,
     succeeded,
     take_challenge,
 )
+from app.services.liveness_service import LivenessResponse
 from app.services.policy_service import PolicyService
 from app.services.qr_service import QrService
 
@@ -70,6 +70,8 @@ class CheckpointService:
         self.company_id = user.validator.company_id
         self.policy = PolicyService(db, self.company_id).current()
         self.log = IdentityLog(db, ip=ip, user_agent=user_agent)
+        #: El último intento registrado (la asistencia lo enlaza como evidencia).
+        self.last_log: VerificationLog | None = None
 
     # ---------- Consultas ----------
 
@@ -115,7 +117,7 @@ class CheckpointService:
     def issue_challenge(self) -> FaceChallengeResponse:
         if not self._allows(VerificationMethod.FACE) and not self._allows(VerificationMethod.QR_FACE):
             self._deny()
-        return issue_challenge(self.db, self.user.id, self.policy)
+        return issue_challenge(self.db, self.user.id, self.policy, self.company_id)
 
     def inspect_qr(self, qr_content: str) -> CheckpointEmployee:
         """Paso 1 del modo QR_AND_FACE: de quién es el QR. El QR queda usado (apartado para este
@@ -137,15 +139,14 @@ class CheckpointService:
         self._record(employee, VerificationMethod.QR, employee is not None, None, reason)
         if employee is None:
             return failed(VerificationMethod.QR, reason_message(reason))
-        return succeeded(employee, VerificationMethod.QR, QR_SUCCESS, confidence=None)
+        return self._attend(employee, succeeded(employee, VerificationMethod.QR, QR_SUCCESS, confidence=None))
 
     def identify_face(
         self,
         pipeline: FacePipeline,
         images: list[bytes],
         *,
-        challenge_id: str | None,
-        challenge_images: Sequence[bytes],
+        liveness: LivenessResponse,
         qr_content: str | None = None,
         camera_label: str | None = None,
     ) -> VerificationResult:
@@ -162,22 +163,20 @@ class CheckpointService:
         ensure_frame_count(images)
         ensure_unlocked(self.db, self.policy, actor_id=self.user.id, reasons=SECURITY_REASONS)
         try:
-            challenge = take_challenge(
-                self.db, self.user.id, (challenge_id, challenge_images), camera_label, self.policy
-            )
+            challenge = take_challenge(self.db, self.user.id, liveness, camera_label, self.policy)
             frontal, headwear = self._analyze(pipeline, images)
             face_policy = self.policy.face_policy(None)
-            liveness = confirm_live(
-                self.db, self.company_id, pipeline, (challenge, challenge_images), frontal, self.policy, face_policy
+            check = confirm_live(
+                self.db, self.company_id, pipeline, (challenge, liveness), frontal, self.policy, face_policy
             )
         except SuspiciousCapture as exc:
             self._record(None, method, False, None, exc.code)
             raise
-        failure = liveness.failure
+        failure = check.failure
         if failure is not None:
             self._record(None, method, False, failure.score, failure.reason)
             return failed(method, failure.message)
-        live = bool(liveness.turns)
+        live = bool(check.turns)
         if qr_content:
             return self._confirm_qr_holder(pipeline, qr_content, frontal, headwear, live=live)
         return self._search_gallery(pipeline, frontal, headwear, live=live)
@@ -192,7 +191,7 @@ class CheckpointService:
         found = identify(
             gallery,
             [f.embedding for f in frontal],
-            required=required_similarity(self.policy),
+            required=required_match(self.policy, among_all=True),
             margin=settings.FACE_IDENTIFY_MARGIN,
         )
         score = mean_confidence(found.similarities) if found.similarities else None
@@ -206,7 +205,7 @@ class CheckpointService:
         learning = FaceLearning(FaceService(self.db, pipeline), self.policy)
         learning.reinforce(employee, found.sample_id, Evidence(frontal, live=live, gap=found.gap))
         self._record(employee, VerificationMethod.FACE, True, score, None)
-        return succeeded(employee, VerificationMethod.FACE, FACE_SUCCESS, confidence=score)
+        return self._attend(employee, succeeded(employee, VerificationMethod.FACE, FACE_SUCCESS, confidence=score))
 
     def _confirm_qr_holder(
         self, pipeline: FacePipeline, qr_content: str, frontal: list[FaceAnalysis], headwear: bool, *, live: bool
@@ -232,7 +231,7 @@ class CheckpointService:
         # El QR ya dijo quién es: la captura enseña con las mismas reglas que una verificación 1:1.
         FaceLearning(faces, self.policy).reinforce(employee, match.closest, Evidence(frontal, live=live), references)
         self._record(employee, method, True, match.score, None)
-        return succeeded(employee, method, FACE_SUCCESS, confidence=match.score)
+        return self._attend(employee, succeeded(employee, method, FACE_SUCCESS, confidence=match.score))
 
     def _analyze(self, pipeline: FacePipeline, images: list[bytes]) -> tuple[list[FaceAnalysis], bool]:
         """Calidad, pose y un solo rostro en cada captura; accesorios y suplantación por consenso.
@@ -283,6 +282,14 @@ class CheckpointService:
             code="VALIDATOR_METHOD_NOT_ALLOWED",
         )
 
+    def _attend(self, employee: Employee, result: VerificationResult) -> VerificationResult:
+        """Identificarse en un validador cuenta como entrada o salida del turno, en sitio (si tiene
+        turno en ese momento): `result.attendance` dice qué registró."""
+        result.attendance = AttendanceService(self.db, self.company_id).from_validator(
+            employee, self.user, self.last_log
+        )
+        return result
+
     def _record(
         self,
         employee: Employee | None,
@@ -291,7 +298,7 @@ class CheckpointService:
         score: float | None,
         reason: str | None,
     ) -> None:
-        self.log.record(
+        self.last_log = self.log.record(
             company_id=self.company_id,
             employee_id=employee.id if employee else None,
             actor_id=self.user.id,

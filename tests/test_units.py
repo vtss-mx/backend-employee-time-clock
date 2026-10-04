@@ -11,7 +11,7 @@ from PIL import Image
 from app.core.config import Settings
 from app.core.crypto import decrypt_bytes, encrypt_bytes
 from app.core.system import available_cpus, default_api_workers
-from app.facial_recognition import FaceValidationError, TurnDirection
+from app.facial_recognition import FaceValidationError, LivenessAction, StepTarget
 from app.facial_recognition.accessories import AccessoryScores
 from app.facial_recognition.engine import DetectedFace, FaceEngine, FaceLandmarks
 from app.facial_recognition.image_utils import decode_image
@@ -140,6 +140,14 @@ def test_pipeline_rejects_bad_captures(faces, aligned, expected):
     assert code_of(lambda: pipeline(faces, aligned).analyze_frontal(image_bytes())) == expected
 
 
+def test_pipeline_applies_the_company_minimum_quality():
+    """La calidad mínima de la política: una captura válida pero por debajo del piso se rechaza."""
+    strict = FacePolicy(min_quality=0.99)
+    good = pipeline([face()], accessories=StubAccessories()).analyze_frontal(image_bytes())
+    assert good.quality_score < 0.99
+    assert code_of(lambda: pipeline([face()]).analyze_frontal(image_bytes(), policy=strict)) == "LOW_QUALITY"
+
+
 def test_occlusion_measures_visible_skin_against_forehead():
     from app.facial_recognition.occlusion import lower_face_skin_ratio
 
@@ -205,13 +213,18 @@ def test_pipeline_accessories_and_headwear_exemption():
     assert reported.analyze_frontal(image_bytes(), enforce_accessories=False).accessories_found == ("GLASSES",)
 
 
-def test_pipeline_liveness_turn():
+TARGET = StepTarget(
+    min_yaw_ratio=0.2, min_pitch_delta=0.08, min_closer_scale=1.25, baseline_pitch=0.5, baseline_width=100
+)
+
+
+def test_pipeline_liveness_step():
     turned_left = face(score=0.7, lm=landmarks(yaw_shift=20))
-    result = pipeline([turned_left]).analyze_turn(image_bytes(), TurnDirection.LEFT)
-    assert result.pose is not None and result.pose.turned(TurnDirection.LEFT, 0.2)
+    result = pipeline([turned_left]).analyze_step(image_bytes(), LivenessAction.TURN_LEFT, TARGET)
+    assert result.pose is not None and result.step_value is not None and result.step_value >= 0.2
     with pytest.raises(FaceValidationError) as exc:
-        pipeline([turned_left]).analyze_turn(image_bytes(), TurnDirection.RIGHT)
-    assert exc.value.code == "LIVENESS_TURN_NOT_DETECTED" and exc.value.details["expected"] == "TURN_RIGHT"
+        pipeline([turned_left]).analyze_step(image_bytes(), LivenessAction.TURN_RIGHT, TARGET)
+    assert exc.value.code == "LIVENESS_STEP_NOT_DETECTED" and exc.value.details["expected"] == "TURN_RIGHT"
 
 
 # ---------------------------------------------------------------- validadores

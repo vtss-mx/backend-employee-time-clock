@@ -1,12 +1,16 @@
-"""Configuración de la empresa editable desde el frontend (rol COMPANY)."""
+"""Política de verificación de identidad vigente, para leerla desde cualquier sesión.
 
-from fastapi import APIRouter, Depends
+La configura el ADMIN de la plataforma para cada empresa (`/admin/companies/{id}/verification-policy`);
+aquí la leen la empresa, sus empleados y sus validadores para saber qué se les exigirá antes de
+escanear. Quién la cambió no se expone fuera de la consola de la plataforma.
+"""
+
+from fastapi import APIRouter
 
 from app.core.responses import ApiResponse, ok
-from app.dependencies import CompanyScope, CompanyUser, DbSession, MemberCompany, require_screen
-from app.models import Screen
+from app.dependencies import DbSession, MemberCompany
 from app.schemas.common import ErrorResponse
-from app.schemas.policy import VerificationPolicyRead, VerificationPolicyUpdate
+from app.schemas.policy import VerificationPolicyRead
 from app.services.policy_service import PolicyService
 
 router = APIRouter(
@@ -23,23 +27,4 @@ router = APIRouter(
     description="La leen todos los usuarios autenticados: el empleado ve qué se le exigirá antes de escanear.",
 )
 def get_verification_policy(company: MemberCompany, db: DbSession) -> ApiResponse[VerificationPolicyRead]:
-    return ok(PolicyService(db, company).read(), "Política de verificación", code="POLICY")
-
-
-@router.put(
-    "/verification",
-    response_model=ApiResponse[VerificationPolicyRead],
-    summary="COMPANY: actualizar la política de verificación",
-    description=(
-        "Activa o desactiva la exigencia de retirar lentes, gorra o cubrebocas, la prueba de vida, "
-        "el anti-spoofing y la verificación por QR. Solo se modifican los campos enviados. Los cambios "
-        "aplican en segundos a todos los procesos de la API."
-    ),
-    dependencies=[Depends(require_screen(Screen.COMPANY_SETTINGS))],
-)
-def update_verification_policy(
-    payload: VerificationPolicyUpdate, user: CompanyUser, company: CompanyScope, db: DbSession
-) -> ApiResponse[VerificationPolicyRead]:
-    return ok(
-        PolicyService(db, company).update(payload, user), "Política de verificación actualizada", code="POLICY_UPDATED"
-    )
+    return ok(PolicyService(db, company).read(author=False), "Política de verificación", code="POLICY")

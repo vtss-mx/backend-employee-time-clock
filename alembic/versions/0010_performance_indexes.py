@@ -8,6 +8,7 @@ Revision ID: 0010
 Revises: 0009
 Create Date: 2026-10-01 12:10:00
 """
+
 from collections.abc import Sequence
 
 import sqlalchemy as sa
@@ -23,10 +24,30 @@ SEARCH_TEXT = "lower(first_name || ' ' || last_name || ' ' || employee_number ||
 
 # (tabla, índice simple que se reemplaza, índice nuevo, columnas)
 REPLACED = [
-    ("face_embeddings", "ix_face_embeddings_employee_id", "ix_face_embeddings_employee_active", ["employee_id", "active", "created_at"]),
-    ("face_enrollments", "ix_face_enrollments_employee_id", "ix_face_enrollments_employee_submitted", ["employee_id", "submitted_at", "id"]),
-    ("face_enrollments", "ix_face_enrollments_status", "ix_face_enrollments_status_submitted", ["status", "submitted_at", "id"]),
-    ("verification_logs", "ix_verification_logs_employee_id", "ix_verification_logs_employee_created", ["employee_id", "created_at", "id"]),
+    (
+        "face_embeddings",
+        "ix_face_embeddings_employee_id",
+        "ix_face_embeddings_employee_active",
+        ["employee_id", "active", "created_at"],
+    ),
+    (
+        "face_enrollments",
+        "ix_face_enrollments_employee_id",
+        "ix_face_enrollments_employee_submitted",
+        ["employee_id", "submitted_at", "id"],
+    ),
+    (
+        "face_enrollments",
+        "ix_face_enrollments_status",
+        "ix_face_enrollments_status_submitted",
+        ["status", "submitted_at", "id"],
+    ),
+    (
+        "verification_logs",
+        "ix_verification_logs_employee_id",
+        "ix_verification_logs_employee_created",
+        ["employee_id", "created_at", "id"],
+    ),
     ("auth_sessions", "ix_auth_sessions_user_id", "ix_auth_sessions_user_created", ["user_id", "created_at"]),
 ]
 
@@ -39,7 +60,9 @@ def upgrade() -> None:
     # Los valores únicos se comparan por igualdad exacta (sin lower/upper) para usar su índice;
     # se garantiza que todo lo existente ya esté normalizado.
     op.execute("UPDATE users SET email = lower(email) WHERE email <> lower(email)")
-    op.execute("UPDATE employees SET employee_number = upper(employee_number) WHERE employee_number <> upper(employee_number)")
+    op.execute(
+        "UPDATE employees SET employee_number = upper(employee_number) WHERE employee_number <> upper(employee_number)"
+    )
 
     for table, old, new, columns in REPLACED:
         op.create_index(new, table, columns)
@@ -74,7 +97,9 @@ def upgrade() -> None:
     op.drop_index("ix_verification_logs_created_at", table_name="verification_logs")
     if _postgres():
         # Bitácora de solo inserción en orden de tiempo: BRIN en lugar de B-tree.
-        op.create_index("ix_verification_logs_created_at_brin", "verification_logs", ["created_at"], postgresql_using="brin")
+        op.create_index(
+            "ix_verification_logs_created_at_brin", "verification_logs", ["created_at"], postgresql_using="brin"
+        )
         # Búsqueda por fragmentos (LIKE '%texto%') con trigramas.
         op.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
         op.execute(f"CREATE INDEX ix_employees_search_trgm ON employees USING gin (({SEARCH_TEXT}) gin_trgm_ops)")

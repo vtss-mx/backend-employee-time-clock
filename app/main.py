@@ -21,10 +21,14 @@ from app.middleware.security import register_security_middlewares
 from app.routers import (
     admin,
     admin_errors,
+    admin_face_security,
     api_keys,
+    attendance,
     auth,
+    calendar,
     catalogs,
     checkpoint,
+    client_errors,
     departments,
     employees,
     enrollments,
@@ -32,7 +36,8 @@ from app.routers import (
     health,
     integrations,
     realtime,
-    reports,
+    shifts,
+    sites,
     users,
     validation,
     validators,
@@ -144,8 +149,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "ngrok-skip-browser-warning", "X-Request-ID"],
-    # Content-Disposition: el nombre del archivo de Excel de un reporte.
-    expose_headers=["X-Request-ID", "Retry-After", "Content-Disposition"],
+    expose_headers=["X-Request-ID", "Retry-After"],
     max_age=600,
 )
 register_exception_handlers(app)
@@ -156,6 +160,7 @@ API_ROUTERS = (
     auth.router,
     admin.router,
     admin_errors.router,
+    admin_face_security.router,
     users.router,
     employees.router,
     departments.router,
@@ -170,7 +175,13 @@ API_ROUTERS = (
     validation.router,
     api_keys.router,
     integrations.router,
-    reports.router,
+    sites.router,
+    shifts.router,
+    attendance.company_router,
+    attendance.employee_router,
+    calendar.company_router,
+    calendar.employee_router,
+    client_errors.router,
 )
 for router in API_ROUTERS:
     app.include_router(router, prefix=settings.API_PREFIX)

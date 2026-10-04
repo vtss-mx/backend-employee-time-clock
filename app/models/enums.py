@@ -94,6 +94,100 @@ class ErrorSeverity(StrEnum):
     WARNING = "WARNING"  # solicitud rechazada (4xx: validación, permisos, reglas de negocio)
 
 
+class FlashMode(StrEnum):
+    """Destello de colores de la prueba de vida (catalog.flash_modes, verification_policy.flash_liveness)."""
+
+    OFF = "OFF"
+    OBSERVE = "OBSERVE"  # se pide y se mide, pero nunca bloquea (calibración con capturas reales)
+    ENFORCE = "ENFORCE"  # obligatorio: un rostro que no refleja los colores no pasa
+
+
+class WorkMode(StrEnum):
+    """Desde dónde se registró la asistencia (catalog.work_modes)."""
+
+    ON_SITE = "ON_SITE"  # dentro de la geocerca de uno de sus sitios de trabajo
+    REMOTE = "REMOTE"  # desde cualquier lugar, en un día que la empresa le permite trabajar remoto
+    VALIDATOR = "VALIDATOR"  # al identificarse en la tableta de un validador (cuenta como en sitio)
+    COMPANY = "COMPANY"  # lo registró o corrigió la empresa (sin rostro ni ubicación), con su motivo
+
+
+class AttendanceAction(StrEnum):
+    """Lo que registra el empleado en su turno (catalog.attendance_actions)."""
+
+    CHECK_IN = "CHECK_IN"
+    BREAK_START = "BREAK_START"
+    BREAK_END = "BREAK_END"
+    CHECK_OUT = "CHECK_OUT"
+
+
+class WorkSessionStatus(StrEnum):
+    """Estado de la jornada de un turno (catalog.work_session_statuses)."""
+
+    OPEN = "OPEN"  # con entrada y sin salida
+    CLOSED = "CLOSED"  # con entrada y salida
+    MISSED_CHECKOUT = "MISSED_CHECKOUT"  # venció el límite para checar la salida sin hacerlo
+
+
+class BoardState(StrEnum):
+    """En qué va cada empleado en el tablero del día (catalog.board_states)."""
+
+    SCHEDULED = "SCHEDULED"  # aún no es la hora de su entrada
+    MISSING = "MISSING"  # ya debió entrar y no ha checado
+    WORKING = "WORKING"
+    ON_BREAK = "ON_BREAK"
+    DONE = "DONE"  # checó su salida
+    MISSED_CHECKOUT = "MISSED_CHECKOUT"  # venció su límite de salida sin checarla
+    ABSENT = "ABSENT"  # terminó su turno sin entrada
+    DAY_OFF = "DAY_OFF"  # ese día no trabaja (festivo o ausencia aprobada): no es una falta
+
+
+class AssignmentState(StrEnum):
+    """Vigencia de la asignación de un turno (catalog.assignment_states)."""
+
+    CURRENT = "CURRENT"  # rige hoy
+    SCHEDULED = "SCHEDULED"  # empieza después (cambio programado)
+    ENDED = "ENDED"
+
+
+class ShiftRequestStatus(StrEnum):
+    """Seguimiento de una solicitud de cambio de turno (catalog.shift_request_statuses)."""
+
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+    CANCELLED = "CANCELLED"
+
+
+class PricingMode(StrEnum):
+    """Cómo se cobra a una empresa (catalog.pricing_modes)."""
+
+    PER_USER = "PER_USER"  # por cada empleado activo, día por día (prorrateo)
+    FLAT = "FLAT"  # un monto fijo por empresa
+
+
+class PricePeriod(StrEnum):
+    """A qué tiempo corresponde el precio (catalog.price_periods)."""
+
+    DAY = "DAY"
+    MONTH = "MONTH"
+    YEAR = "YEAR"
+
+
+class DiscountType(StrEnum):
+    """Descuento en porcentaje del subtotal o monto fijo por cargo (catalog.discount_types)."""
+
+    PERCENT = "PERCENT"
+    AMOUNT = "AMOUNT"
+
+
+class DiscountRecurrence(StrEnum):
+    """Cuándo aplica el descuento (catalog.discount_recurrences)."""
+
+    ALWAYS = "ALWAYS"  # en todos los cargos
+    FIRST = "FIRST"  # solo en los primeros N cargos
+    EVERY = "EVERY"  # cada N cargos (el N-ésimo, el 2N-ésimo...)
+
+
 class ApiKeyStatus(StrEnum):
     """Estado de una llave de la API (catalog.api_key_statuses): se deriva de sus fechas."""
 
@@ -114,15 +208,19 @@ class Screen(StrEnum):
     ADMIN_DASHBOARD = "ADMIN_DASHBOARD"
     ADMIN_COMPANIES = "ADMIN_COMPANIES"
     ADMIN_ERRORS = "ADMIN_ERRORS"
+    ADMIN_FACE_SECURITY = "ADMIN_FACE_SECURITY"
     COMPANY_DASHBOARD = "COMPANY_DASHBOARD"
     COMPANY_EMPLOYEES = "COMPANY_EMPLOYEES"
     COMPANY_DEPARTMENTS = "COMPANY_DEPARTMENTS"
     COMPANY_VALIDATIONS = "COMPANY_VALIDATIONS"
     COMPANY_VALIDATORS = "COMPANY_VALIDATORS"
-    COMPANY_SETTINGS = "COMPANY_SETTINGS"
     COMPANY_API = "COMPANY_API"
-    COMPANY_REPORTS = "COMPANY_REPORTS"
+    COMPANY_SHIFTS = "COMPANY_SHIFTS"
+    COMPANY_CALENDAR = "COMPANY_CALENDAR"
+    COMPANY_SITES = "COMPANY_SITES"
+    COMPANY_ATTENDANCE = "COMPANY_ATTENDANCE"
     VALIDATOR_CHECKPOINT = "VALIDATOR_CHECKPOINT"
+    EMPLOYEE_ATTENDANCE = "EMPLOYEE_ATTENDANCE"
     EMPLOYEE_ENROLL = "EMPLOYEE_ENROLL"
     EMPLOYEE_PENDING = "EMPLOYEE_PENDING"
     EMPLOYEE_VERIFY = "EMPLOYEE_VERIFY"

@@ -19,7 +19,7 @@ import numpy as np
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.facial_recognition.matcher import normalize_rows
+from app.facial_recognition.matcher import MatchRequirement, acceptance, normalize_rows
 from app.repositories.face_repository import FaceEmbeddingRepository, GalleryRow
 from app.services.face_service import readable_embedding
 
@@ -70,11 +70,14 @@ def _empty(fingerprint: Fingerprint) -> Gallery:
     )
 
 
-def identify(gallery: Gallery, probes: Sequence[np.ndarray], *, required: float, margin: float) -> Identification:
+def identify(
+    gallery: Gallery, probes: Sequence[np.ndarray], *, required: MatchRequirement, margin: float
+) -> Identification:
     """Quién es, por consenso entre capturas.
 
-    Cada captura debe señalar a la MISMA persona, alcanzar la similitud requerida y superar con
-    margen a la segunda persona más parecida (si dos personas se parecen, no se adivina).
+    Cada captura debe señalar a la MISMA persona, alcanzar la similitud requerida (con la fusión,
+    también cada modelo por separado contra alguna muestra de esa persona) y superar con margen a la
+    segunda persona más parecida (si dos personas se parecen, no se adivina).
     """
     if gallery.size == 0:
         return Identification(None, (), "EMPTY_GALLERY")
@@ -93,16 +96,18 @@ def identify(gallery: Gallery, probes: Sequence[np.ndarray], *, required: float,
     similarities = tuple(round(s, 4) for s in best)
     if len(set(winners)) != 1:
         return Identification(None, similarities, "INCONSISTENT_MATCH")
-    if min(best) < required:
+    mine = np.flatnonzero(gallery.labels == winners[0])
+    if not acceptance(probes, list(gallery.matrix[mine]), required)[1].any(axis=1).all():
         return Identification(None, similarities, "NO_MATCH")
     if min(gaps) < margin:
         return Identification(None, similarities, "AMBIGUOUS_MATCH")
-    mine = np.flatnonzero(gallery.labels == winners[0])
     closest = mine[int(np.argmax(scores[:, mine].max(axis=0)))]
     return Identification(winners[0], similarities, sample_id=int(gallery.ids[closest]), gap=round(min(gaps), 4))
 
 
-def duplicate_of(gallery: Gallery, probes: Sequence[np.ndarray], *, exclude: int, required: float) -> int | None:
+def duplicate_of(
+    gallery: Gallery, probes: Sequence[np.ndarray], *, exclude: int, required: MatchRequirement
+) -> int | None:
     """Otro empleado de la galería con ESTE rostro (todas las capturas lo señalan con la confianza
     exigida), o None. Detecta a una misma persona registrándose en dos cuentas."""
     others = gallery.labels != exclude

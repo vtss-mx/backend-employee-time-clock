@@ -1,17 +1,39 @@
-"""Política de verificación configurable por COMPANY y anti-spoofing / migración de modelo."""
+"""Política de verificación (la configura el ADMIN para cada empresa) y anti-spoofing / migración de modelo."""
 
 from app.core.crypto import decrypt_bytes, encrypt_bytes
 from app.core.database import SessionLocal
 from app.facial_recognition.matcher import embedding_from_bytes, embedding_to_bytes
 from app.models import Employee, FaceEmbedding
-from tests.conftest import FakePipeline, approved_employee, create_employee, login, submit_enrollment
+from tests.conftest import (
+    ADMIN_EMAIL,
+    ADMIN_PASSWORD,
+    FakePipeline,
+    approved_employee,
+    create_employee,
+    login,
+    submit_enrollment,
+)
 from tests.test_face import _verify
 
 URL = "/api/settings/verification"
 
 
+def admin_company(client, company_headers) -> tuple[str, dict[str, str]]:
+    """(ruta de la empresa de esa sesión en la consola del ADMIN, sesión del ADMIN)."""
+    company_id = client.get("/api/users/me", headers=company_headers).json()["data"]["company"]["id"]
+    return f"/api/admin/companies/{company_id}", login(client, ADMIN_EMAIL, ADMIN_PASSWORD)
+
+
+def admin_policy(client, company_headers) -> tuple[str, dict[str, str]]:
+    """(ruta, sesión del ADMIN) para configurar la política de la empresa de esa sesión."""
+    base, admin = admin_company(client, company_headers)
+    return f"{base}/verification-policy", admin
+
+
 def set_policy(client, company_headers, **changes):
-    response = client.put(URL, json=changes, headers=company_headers)
+    """La política la configura el ADMIN de la plataforma (como desde su consola)."""
+    url, admin = admin_policy(client, company_headers)
+    response = client.put(url, json=changes, headers=admin)
     assert response.status_code == 200, response.text
     return response.json()["data"]
 
@@ -24,12 +46,21 @@ def test_policy_defaults_and_permissions(client, company_headers):
     assert create_employee(client, company_headers).status_code == 201
     employee = login(client, "juan@empresa.com", "Empleado123")
     assert client.get(URL, headers=employee).status_code == 200  # el empleado la puede leer
-    denied = client.put(URL, json={"block_mask": False}, headers=employee)
-    assert denied.status_code == 403  # pero solo COMPANY la modifica
+    # Nadie de la empresa la modifica: no hay ruta para hacerlo, y la del ADMIN les responde 403.
+    assert client.put(URL, json={"block_mask": False}, headers=company_headers).status_code == 405
+    url, _admin = admin_policy(client, company_headers)
+    assert client.put(url, json={"block_mask": False}, headers=company_headers).status_code == 403
 
     updated = set_policy(client, company_headers, block_mask=False)
     assert updated["block_mask"] is False and updated["block_glasses"] is True
-    assert updated["updated_by"] == "admin@empresa.com"
+    assert updated["updated_by"] == ADMIN_EMAIL  # en la consola de la plataforma...
+    assert client.get(URL, headers=company_headers).json()["data"]["updated_by"] is None  # ...no fuera de ella
+
+
+def test_the_admin_configures_only_existing_companies(client, admin_headers):
+    missing = "/api/admin/companies/999/verification-policy"
+    assert client.get(missing, headers=admin_headers).status_code == 404
+    assert client.put(missing, json={"block_mask": False}, headers=admin_headers).status_code == 404
 
 
 def test_company_can_allow_accessories(client, company_headers):
@@ -150,8 +181,10 @@ def test_company_sets_required_confidence(client, company_headers):
     assert client.get(URL, headers=company_headers).json()["data"]["min_confidence"] == 0.99999
     assert set_policy(client, company_headers, min_confidence=0.99)["min_confidence"] == 0.99
     assert set_policy(client, company_headers, min_confidence=0.99999)["min_confidence"] == 0.99999
-    assert client.put(URL, json={"min_confidence": 0.999999}, headers=company_headers).status_code == 422
-    too_low = client.put(URL, json={"min_confidence": 0.5}, headers=company_headers)
+    url, admin = admin_policy(client, company_headers)
+    assert client.put(url, json={"min_confidence": 0.999999}, headers=admin).status_code == 422
+    assert client.get(url, headers=admin).json()["data"]["min_confidence"] == 0.99999
+    too_low = client.put(url, json={"min_confidence": 0.5}, headers=admin)
     assert too_low.status_code == 422 and too_low.json()["errors"][0]["field"] == "min_confidence"
 
 
@@ -169,3 +202,17 @@ def test_confidence_range_starts_at_80_and_is_effective():
     # El piso técnico no anula los niveles bajos: 80 % exige su propia similitud (0.386).
     assert similarity_for_confidence(0.80, "fusion") >= settings.FACE_MATCH_THRESHOLD
     assert abs(similarity_for_confidence(0.80, "fusion") - 0.386) < 0.002
+
+
+def test_the_admin_sets_a_minimum_capture_quality(client, company_headers):
+    """Una captura pobre (poca luz, desenfocada) no verifica si la política exige más calidad."""
+    headers = approved_employee(client, company_headers)
+    assert client.get(URL, headers=company_headers).json()["data"]["min_capture_quality"] == 0.4
+    poor = (b"dim:juan", b"dim:juan", b"dim:juan")
+    assert _verify(client, headers, frontal=poor).json()["data"]["verified"] is True  # 0.45 supera el 0.40 de fábrica
+    set_policy(client, company_headers, min_capture_quality=0.5)
+    rejected = _verify(client, headers, frontal=poor)
+    assert rejected.status_code == 422 and rejected.json()["code"] == "LOW_QUALITY"
+    assert "calidad suficiente" in rejected.json()["message"]
+    url, admin = admin_policy(client, company_headers)
+    assert client.put(url, json={"min_capture_quality": 0.95}, headers=admin).status_code == 422  # tope 0.9

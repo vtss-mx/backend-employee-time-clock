@@ -13,6 +13,7 @@ from app.core.database import SessionLocal
 from app.core.exceptions import PermissionDeniedError, UnprocessableError
 from app.models import FaceEnrollment, User
 from app.services.enrollment_service import EnrollmentService, _image_type
+from app.services.liveness_service import NO_RESPONSE
 from tests.conftest import (
     COMPANY_EMAIL,
     FakePipeline,
@@ -31,7 +32,7 @@ def _submit(email: str, images: list[bytes]):
     with SessionLocal() as db:
         user = db.query(User).filter_by(email=email).one()
         service = EnrollmentService(db, user.current_company.id)
-        return service.submit(user, images, FakePipeline(), challenge_id=None, challenge_images=())
+        return service.submit(user, images, FakePipeline(), liveness=NO_RESPONSE)
 
 
 def test_the_reference_photo_keeps_its_real_format():

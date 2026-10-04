@@ -9,13 +9,12 @@ identity_core.
 """
 
 import logging
-from collections.abc import Sequence
 
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import ConflictError
 from app.facial_recognition import FacePipeline
-from app.models import Employee, FaceStatus, User, VerificationMethod
+from app.models import Employee, FaceStatus, User, VerificationLog, VerificationMethod
 from app.schemas.verification import VerificationResult
 from app.services.attempt_guard import ensure_unlocked
 from app.services.catalog_service import get_catalogs
@@ -33,6 +32,7 @@ from app.services.identity_core import (
     succeeded,
     take_challenge,
 )
+from app.services.liveness_service import NO_RESPONSE, LivenessResponse
 from app.services.policy_service import PolicyService
 
 logger = logging.getLogger(__name__)
@@ -42,6 +42,8 @@ class VerificationService:
     def __init__(self, db: Session, *, ip: str | None = None, user_agent: str | None = None) -> None:
         self.db = db
         self.log = IdentityLog(db, ip=ip, user_agent=user_agent)
+        #: El último intento registrado (la asistencia lo enlaza como evidencia del registro).
+        self.last_log: VerificationLog | None = None
 
     def verify_face(
         self,
@@ -49,15 +51,14 @@ class VerificationService:
         frontal_images: list[bytes],
         pipeline: FacePipeline,
         *,
-        challenge_id: str | None = None,
-        challenge_images: Sequence[bytes] = (),
+        liveness: LivenessResponse = NO_RESPONSE,
         camera_label: str | None = None,
     ) -> VerificationResult:
         """Verificación 1:1 del empleado autenticado.
 
         1. Reto de prueba de vida válido, de uso único y del mismo usuario.
         2. Cada frame frontal: un rostro, calidad, pose frontal y sin accesorios (422 si no).
-        3. Frame del reto: la cabeza girada en la dirección solicitada y misma persona.
+        3. Respuesta al reto: el destello y cada movimiento pedido, de la misma persona.
         4. Cada frame frontal debe alcanzar la confianza de la empresa contra sus muestras.
         5. Si fue holgada y segura, la galería del empleado aprende de ella (face_learning).
         """
@@ -66,8 +67,7 @@ class VerificationService:
             user,
             frontal_images,
             pipeline,
-            challenge_id=challenge_id,
-            challenge_images=challenge_images,
+            liveness=liveness,
             camera_label=camera_label,
         )
 
@@ -78,8 +78,7 @@ class VerificationService:
         frontal_images: list[bytes],
         pipeline: FacePipeline,
         *,
-        challenge_id: str | None = None,
-        challenge_images: Sequence[bytes] = (),
+        liveness: LivenessResponse = NO_RESPONSE,
         camera_label: str | None = None,
     ) -> VerificationResult:
         """La empresa verifica la identidad de un empleado presente: su rostro contra su registro aprobado."""
@@ -94,8 +93,7 @@ class VerificationService:
             operator,
             frontal_images,
             pipeline,
-            challenge_id=challenge_id,
-            challenge_images=challenge_images,
+            liveness=liveness,
             camera_label=camera_label,
         )
 
@@ -106,8 +104,7 @@ class VerificationService:
         frontal_images: list[bytes],
         pipeline: FacePipeline,
         *,
-        challenge_id: str | None,
-        challenge_images: Sequence[bytes],
+        liveness: LivenessResponse,
         camera_label: str | None = None,
     ) -> VerificationResult:
         """Rostro de `employee` contra sus muestras; `actor` opera la cámara (su reto y su bitácora).
@@ -124,19 +121,19 @@ class VerificationService:
             raise ConflictError(get_catalogs().face_error_message("FACE_NOT_REGISTERED"), code="FACE_NOT_REGISTERED")
 
         try:
-            challenge = take_challenge(self.db, actor.id, (challenge_id, challenge_images), camera_label, policy)
+            challenge = take_challenge(self.db, actor.id, liveness, camera_label, policy)
             # Errores de calidad/accesorios -> 422 (no cuentan como intento fallido).
             face_policy = policy.face_policy(employee)
             frontal, _ = face_service.analyze_frames(frontal_images, policy=face_policy)
-            liveness = confirm_live(
-                self.db, employee.company_id, pipeline, (challenge, challenge_images), frontal, policy, face_policy
+            check = confirm_live(
+                self.db, employee.company_id, pipeline, (challenge, liveness), frontal, policy, face_policy
             )
         except SuspiciousCapture as exc:
             logger.warning("Intento sospechoso (empleado %s, operador %s): %s", employee.id, actor.id, exc.code)
             self._record(employee, actor, VerificationMethod.FACE, False, None, exc.code)
             raise
 
-        failure = liveness.failure
+        failure = check.failure
         if failure is not None:
             logger.info("Prueba de vida no superada (empleado %s): %s", employee.id, failure.reason)
             self._record(employee, actor, VerificationMethod.FACE, False, failure.score, failure.reason)
@@ -148,7 +145,7 @@ class VerificationService:
             return failed(VerificationMethod.FACE, reason_message("NO_MATCH"))
         # La galería del empleado evoluciona: suma utilidad a la muestra que decidió y, si la captura
         # es segura, aprende de ella (se guarda junto con el intento en la bitácora).
-        evidence = Evidence(frontal, live=bool(liveness.turns))
+        evidence = Evidence(frontal, live=bool(check.turns))
         FaceLearning(face_service, policy).reinforce(employee, match.closest, evidence, references)
         self._record(employee, actor, VerificationMethod.FACE, True, match.score, None)
         return succeeded(employee, VerificationMethod.FACE, FACE_SUCCESS, confidence=match.score)
@@ -164,7 +161,7 @@ class VerificationService:
         score: float | None,
         reason: str | None,
     ) -> None:
-        self.log.record(
+        self.last_log = self.log.record(
             company_id=employee.company_id,
             employee_id=employee.id,
             actor_id=user.id,

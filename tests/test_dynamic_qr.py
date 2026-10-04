@@ -9,7 +9,7 @@ from app.services.maintenance_service import purge_expired
 from app.services.qr_service import LEGACY_PREFIX, QrService
 from tests.conftest import approved_employee, qr_content
 from tests.test_policy import URL as POLICY
-from tests.test_policy import set_policy
+from tests.test_policy import admin_policy, set_policy
 from tests.test_validators import approved, identify_face, validator_headers
 
 MY_QR = "/api/users/me/qr"
@@ -62,10 +62,11 @@ def test_employee_qr_renews_on_demand_and_reports_its_state(client, company_head
     assert missing.status_code == 404 and missing.json()["code"] == "QR_NOT_FOUND"
 
 
-def test_company_decides_how_long_each_qr_lives(client, company_headers):
+def test_the_admin_decides_how_long_each_qr_lives(client, company_headers):
     assert client.get(POLICY, headers=company_headers).json()["data"]["qr_lifetime_seconds"] == 30
+    url, admin = admin_policy(client, company_headers)
     for invalid in (10, 301):
-        assert client.put(POLICY, json={"qr_lifetime_seconds": invalid}, headers=company_headers).status_code == 422
+        assert client.put(url, json={"qr_lifetime_seconds": invalid}, headers=admin).status_code == 422
     assert set_policy(client, company_headers, qr_lifetime_seconds=120)["qr_lifetime_seconds"] == 120
 
 

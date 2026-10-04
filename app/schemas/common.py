@@ -32,8 +32,17 @@ class Page[ItemT](BaseModel):
     size: int
 
     @classmethod
-    def of(cls, items: Sequence[ItemT], total: int, params: PageParams) -> Self:
-        return cls(items=list(items), total=total, page=params.page, size=params.size)
+    def of(cls, items: Sequence[ItemT], total: int, params: PageParams, **extra: Any) -> Self:
+        """`extra`: campos propios de un listado (p. ej. los conteos del tablero de asistencia)."""
+        return cls(items=list(items), total=total, page=params.page, size=params.size, **extra)
 
 
-__all__ = ["ApiResponse", "ErrorItem", "ErrorResponse", "Page", "PageParams"]
+class EmployeeRef(BaseModel):
+    """Empleado resumido (turnos, asistencia, calendario y operaciones masivas)."""
+
+    id: int
+    full_name: str
+    employee_number: str
+
+
+__all__ = ["ApiResponse", "EmployeeRef", "ErrorItem", "ErrorResponse", "Page", "PageParams"]

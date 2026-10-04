@@ -32,6 +32,7 @@ from app.models import ApiScope, Screen, User, UserRole
 from app.schemas.common import PageParams
 from app.services.api_key_service import ApiClient, authenticate, require_scope
 from app.services.catalog_service import get_catalogs
+from app.services.liveness_service import MAX_STEPS, LivenessResponse
 from app.services.session_service import SessionService
 
 _bearer = HTTPBearer(
@@ -252,18 +253,29 @@ def read_image_uploads(files: list[UploadFile], *, max_files: int) -> list[bytes
     return [read_image_upload(f) for f in files]
 
 
-#: Una captura con la cabeza girada por cada giro del reto, en orden (el campo se repite).
-ChallengeImages = Annotated[
-    list[UploadFile] | None,
-    File(description="Captura con la cabeza girada por cada giro del reto, en orden (`challenge_image` repetido)"),
-]
-#: Giros que puede pedir un reto (verification_policy.liveness_steps).
-MAX_CHALLENGE_STEPS = 2
+def liveness_response(
+    challenge_id: Annotated[str | None, Form(max_length=100, description="Reto de `/api/face/challenge`")] = None,
+    challenge_image: Annotated[
+        list[UploadFile] | None,
+        File(description="Una captura por cada movimiento del reto, en orden (`challenge_image` repetido)"),
+    ] = None,
+    flash_image: Annotated[
+        list[UploadFile] | None,
+        File(description="Una captura por cada color del destello, en orden (`flash_image` repetido)"),
+    ] = None,
+) -> LivenessResponse:
+    """La respuesta al reto de prueba de vida que viene en el formulario (vacía si no se envió)."""
+    return LivenessResponse(
+        challenge_id=challenge_id,
+        steps=tuple(read_image_uploads(challenge_image, max_files=MAX_STEPS)) if challenge_image else (),
+        flash=tuple(read_image_uploads(flash_image, max_files=MAX_FLASH_COLORS)) if flash_image else (),
+    )
 
 
-def read_challenge_images(files: list[UploadFile] | None) -> list[bytes]:
-    """Capturas de los giros del reto (ninguna si no se envió el reto)."""
-    return read_image_uploads(files, max_files=MAX_CHALLENGE_STEPS) if files else []
+#: Respuesta al reto: `challenge_id`, `challenge_image` (movimientos) y `flash_image` (destello).
+Liveness = Annotated[LivenessResponse, Depends(liveness_response)]
+#: Colores que puede tener un destello (el máximo de FACE_FLASH_COLORS).
+MAX_FLASH_COLORS = 6
 
 
 def face_check_rate_limit(user: CurrentUser) -> None:

@@ -26,11 +26,6 @@ def assert_envelope(response, status: int, code: str | None = None) -> dict:
     return body
 
 
-#: Descargas de archivos: su éxito es el archivo (un Excel), no JSON. Sus errores sí llevan el sobre
-#: (lo prueba tests/test_reports.py). Lista cerrada: una ruta nueva aquí se justifica en el README.
-FILE_DOWNLOADS = {"['POST'] /reports/export"}
-
-
 def test_every_route_declares_the_envelope():
     """Las respuestas exitosas de cada ruta se documentan y validan como ApiResponse[...]."""
     missing = [
@@ -39,7 +34,7 @@ def test_every_route_declares_the_envelope():
         for route in router.routes
         if isinstance(route, APIRoute) and not getattr(route.response_model, "__name__", "").startswith("ApiResponse")
     ]
-    assert sorted(missing) == sorted(FILE_DOWNLOADS)
+    assert not missing
 
 
 def test_success_has_the_envelope(client, company_headers):

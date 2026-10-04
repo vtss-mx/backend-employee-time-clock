@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String
+from sqlalchemy import DateTime, ForeignKey, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -19,8 +19,13 @@ class FaceChallenge(Base):
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey(f"{AUTH}.users.id", ondelete="CASCADE"), index=True, nullable=False)
-    #: Giro que se pide (catalog.liveness_actions).
+    #: Primer movimiento que se pide (catalog.liveness_actions).
     direction: Mapped[str] = mapped_column(String(20), ForeignKey(f"{CATALOG}.liveness_actions.code"), nullable=False)
-    #: Segundo giro, si la empresa exige dos (verification_policy.liveness_steps = 2).
+    #: Segundo y tercer movimiento, si la empresa exige más pasos (verification_policy.liveness_steps).
     second_direction: Mapped[str | None] = mapped_column(String(20), ForeignKey(f"{CATALOG}.liveness_actions.code"))
+    third_direction: Mapped[str | None] = mapped_column(String(20), ForeignKey(f"{CATALOG}.liveness_actions.code"))
+    #: Colores del destello en orden (códigos de photometry.FLASH_PALETTE separados por coma); None sin destello.
+    flash_colors: Mapped[str | None] = mapped_column(String(80))
+    #: Cuándo se emitió: el tiempo humano mínimo de respuesta se mide desde aquí.
+    issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True, nullable=False)

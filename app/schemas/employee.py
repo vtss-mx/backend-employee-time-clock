@@ -144,11 +144,9 @@ class EmployeeRead(BaseModel):
     face_rejection_reason: str | None = None
     latest_enrollment_id: int | None = None
     has_face: bool
-    #: Muestras activas del rostro: las del registro aprobado más las aprendidas del uso.
+    #: Muestras activas del rostro. Lo que el reconocimiento aprende del uso lo administra el ADMIN
+    #: de la plataforma (`CompanyEmployeeRead`); la empresa no lo ve.
     face_samples: int
-    #: Muestras que la galería aprendió de identificaciones seguras (face_learning).
-    face_learned_samples: int = 0
-    face_last_learned_at: datetime | None = None
     #: Departamento al que está asignado (a lo más uno).
     department_id: int | None = None
     department_name: str | None = None
@@ -160,3 +158,13 @@ class EmployeeRead(BaseModel):
 
 class EmployeeList(Page[EmployeeRead]):
     """Página de empleados de la empresa."""
+
+
+class EmployeeIdList(BaseModel):
+    """Los empleados de un filtro del listado ("seleccionar los N de este filtro" en una operación
+    masiva): sus ids (a lo más `limit`, en el orden del listado) y cuántos coinciden en total."""
+
+    ids: list[int]
+    total: int
+    #: Tope de una operación masiva: si `total` lo pasa, solo vienen los primeros.
+    limit: int

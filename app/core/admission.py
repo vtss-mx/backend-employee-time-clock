@@ -59,14 +59,19 @@ CRITICAL_PREFIXES = (
     "POST face/challenge",
     "POST enrollment/face",
     "POST users/me/qr",
+    "POST me/attendance/",
     "GET users/me/qr",
     "GET users/me",
 )
-#: Lo que puede esperar: tableros, resúmenes y documentación.
+#: Lo que puede esperar: tableros, resúmenes, documentación y los reportes de fallas del navegador
+#: (si el servidor está saturado, se descartan primero: la app no los reintenta). El tablero de
+#: asistencia se refresca solo cada pocos segundos y la seguridad facial del ADMIN es una estadística:
+#: al saturarse ceden su lugar a checar, identificar e iniciar sesión.
 BACKGROUND_PREFIXES = (
     "GET admin/stats",
-    "POST reports/export",
-    "GET employees/face/learning",
+    "GET admin/face-security",
+    "GET attendance/board",
+    "POST client-errors",
     "GET docs",
     "GET redoc",
     "GET openapi.json",

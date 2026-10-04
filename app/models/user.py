@@ -58,12 +58,14 @@ class User(TimestampMixin, Base):
     )
     # joined: al validar la sesión en cada petición se sabe si la empresa sigue activa sin otra consulta.
     company: Mapped[Company | None] = relationship(lazy="joined")
-    #: Configuración del validador de identidad (rol VALIDATOR).
+    #: Configuración del validador de identidad (rol VALIDATOR). Se lee solo cuando se usa (la cuenta
+    #: del validador que opera): con "selectin", cada listado que cargaba cuentas (empleados, tablero,
+    #: historial, administradores) hacía una consulta más a `validators` que nadie leía.
     validator: Mapped[Validator | None] = relationship(
         back_populates="user",
         foreign_keys="Validator.user_id",
         uselist=False,
-        lazy="selectin",
+        lazy="select",
         cascade="all, delete-orphan",
         passive_deletes=True,
     )

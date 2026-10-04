@@ -3,7 +3,15 @@
 import json
 import logging
 
-from app.core.error_context import CAPTURE_LIMIT, BodyCapture, headers_of, parse_body, query_of, redact
+from app.core.error_context import (
+    CAPTURE_LIMIT,
+    BodyCapture,
+    headers_of,
+    parse_body,
+    query_of,
+    redact,
+    redact_text,
+)
 from app.core.request_context import RequestInfo, request_info_var
 from app.middleware.request_id import _Exchange
 from app.services.error_reporter import _log_context
@@ -125,3 +133,18 @@ def test_log_errors_inside_a_request_say_which_and_whose():
     finally:
         request_info_var.reset(anonymous)
     assert json.dumps(inside)  # se guarda como JSON
+
+
+def test_free_text_keeps_everything_but_the_secrets_it_can_recognize():
+    """Lo que el navegador cuenta de una falla es texto libre: se ocultan el valor de un nombre de
+    secreto, un `Bearer ...` y un JWT; lo demás queda literal."""
+    jwt = "eyJhbGciOiJFUzI1NiJ9.eyJzdWIiOiIxIn0.firma"
+    assert redact_text("password=MiClave123&usuario=ana") == "password=[oculto]&usuario=ana"
+    assert (
+        redact_text("{'api-key': 'k1', \"clientSecret\": \"s 2\"}")
+        == "{'api-key': [oculto], \"clientSecret\": [oculto]}"
+    )
+    assert redact_text("Authorization: Bearer abc.def") == "Authorization: [oculto]"
+    assert redact_text(f"cabecera Bearer abc.def y {jwt}") == "cabecera Bearer [oculto] y [oculto]"
+    literal = "Cannot read properties of undefined (reading 'token') en /company/employees/12"
+    assert redact_text(literal) == literal

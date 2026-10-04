@@ -176,7 +176,7 @@ def test_face_verification_accessories_block(client, company_headers):
 
 def test_liveness_wrong_direction_swapped_face_and_replay(client, company_headers):
     headers = approved_employee(client, company_headers)
-    assert "giro de cabeza" in _verify(client, headers, wrong_turn=True).json()["message"]
+    assert "movimiento solicitado" in _verify(client, headers, wrong_turn=True).json()["message"]
     assert _verify(client, headers, turn_person="otra-persona").json()["data"]["verified"] is False
 
     files = [("images", ("c.jpg", b"face:juan", "image/jpeg"))]

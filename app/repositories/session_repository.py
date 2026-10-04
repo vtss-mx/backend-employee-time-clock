@@ -8,14 +8,13 @@ from app.repositories.aggregates import affected_rows, paginate
 
 #: Lo que necesita validar una sesión en CADA petición, en 2 consultas: la sesión con su usuario y
 #: la empresa de este (una), y los empleos con su empresa (otra). Sin estas opciones las relaciones
-#: de los modelos se cargaban en ciclo (usuario → empleos → usuario...) con 3 o 4 consultas y la
-#: configuración del validador para todos los roles; ahora esta se carga solo si se usa, y la
-#: referencia del empleo a su usuario sale del mapa de identidad (sin consulta).
+#: de los modelos se cargaban en ciclo (usuario → empleos → usuario...) con 3 o 4 consultas; la
+#: configuración del validador (`User.validator`) se carga solo si se usa y la referencia del empleo a
+#: su usuario sale del mapa de identidad (sin consulta).
 _AUTH_LOAD = (
     joinedload(AuthSession.user).options(
         joinedload(User.company),
         selectinload(User.employees).options(joinedload(Employee.company), lazyload(Employee.user)),
-        lazyload(User.validator),
     ),
 )
 
@@ -66,15 +65,18 @@ class SessionRepository:
         return affected_rows(self.db, stmt.values(revoked_at=now, revoked_reason=reason), synchronize="fetch")
 
     def revoke_company(self, company_id: int, now: datetime, reason: SessionRevocationReason) -> None:
-        """Las sesiones de una empresa en un solo UPDATE: las de sus administradores y las de los
-        empleados que entraron a ELLA (un empleado que también trabaja en otra empresa conserva su
-        sesión de esa otra). Sin sincronizar la sesión ORM: pueden ser miles de filas."""
-        admins = select(User.id).where(User.company_id == company_id)
+        """Las sesiones de una empresa en un solo UPDATE: las de sus cuentas (administradores y
+        validadores) y las de los empleados que entraron a ELLA (un empleado que también trabaja en otra
+        empresa conserva su sesión de esa otra). Sin sincronizar la sesión ORM: pueden ser miles de filas.
+
+        Las cuentas de la empresa (pocas) se leen antes: con `user_id IN (subconsulta)` dentro del OR,
+        PostgreSQL recorría TODA la tabla de sesiones; con la lista, cada rama usa su índice (BitmapOr)."""
+        accounts = list(self.db.scalars(select(User.id).where(User.company_id == company_id)))
         stmt = (
             update(AuthSession)
             .where(
                 AuthSession.revoked_at.is_(None),
-                or_(AuthSession.company_id == company_id, AuthSession.user_id.in_(admins)),
+                or_(AuthSession.company_id == company_id, AuthSession.user_id.in_(accounts)),
             )
             .values(revoked_at=now, revoked_reason=reason)
         )

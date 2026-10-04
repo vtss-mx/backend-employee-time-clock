@@ -6,11 +6,14 @@ from pathlib import Path
 from sqlalchemy import delete, update
 
 from app.core.database import SessionLocal
-from app.facial_recognition import TurnDirection
+from app.facial_recognition import LivenessAction
 from app.facial_recognition.pipeline import Accessory
 from app.models import (
     ApiKeyStatus,
     ApiScope,
+    AssignmentState,
+    AttendanceAction,
+    BoardState,
     CatalogCountry,
     CatalogFaceError,
     CatalogSessionRevocationReason,
@@ -19,17 +22,22 @@ from app.models import (
     ErrorSeverity,
     ErrorStatus,
     FaceStatus,
+    FlashMode,
     Screen,
     SessionRevocationReason,
+    ShiftRequestStatus,
     UserRole,
     ValidatorMode,
     ValidatorModeMethod,
     VerificationMethod,
+    WorkMode,
+    WorkSessionStatus,
 )
 from app.services.catalog_service import clear_catalog_cache, get_catalogs
 from app.services.enrollment_service import DUPLICATE_FLAG
 from app.services.face_service import SECURITY_REASONS, SPOOF_FLAG
 from tests.conftest import COMPANY_EMAIL, COMPANY_PASSWORD, create_employee, login, submit_enrollment
+from tests.test_policy import admin_policy
 from tests.test_validators import validator_headers
 
 APP_DIR = Path(__file__).resolve().parents[1] / "app"
@@ -39,7 +47,7 @@ REASONS = {
     "INVALID_FORMAT", "NOT_FOUND", "OTHER_COMPANY", "REVOKED", "EXPIRED", "ALREADY_USED", "STATIC_QR",
     "OTHER_EMPLOYEE", "EMPLOYEE_INACTIVE",
     "NO_MATCH", "LIVENESS_FAILED", "LIVENESS_MISMATCH", "FACE_NOT_REGISTERED", "EMPTY_GALLERY", "AMBIGUOUS_MATCH",
-    "INCONSISTENT_MATCH", *SECURITY_REASONS,
+    "INCONSISTENT_MATCH", "FLASH_INCONCLUSIVE", *SECURITY_REASONS,
 }  # fmt: skip
 
 
@@ -81,23 +89,35 @@ def test_code_and_catalogs_name_the_same_values():
     assert _codes("face_statuses") == {s.value for s in FaceStatus}
     assert _codes("enrollment_statuses") == {s.value for s in EnrollmentStatus}
     assert _codes("error_statuses") == {s.value for s in ErrorStatus}
+    assert _codes("work_modes") == {m.value for m in WorkMode}
+    assert _codes("attendance_actions") == {a.value for a in AttendanceAction}
+    assert _codes("work_session_statuses") == {s.value for s in WorkSessionStatus}
+    assert _codes("shift_request_statuses") == {s.value for s in ShiftRequestStatus}
+    assert _codes("board_states") == {s.value for s in BoardState}
+    assert _codes("assignment_states") == {s.value for s in AssignmentState}
     assert _codes("error_severities") == {s.value for s in ErrorSeverity}
     assert _codes("accessories") == {a.value for a in Accessory}
-    assert _codes("liveness_actions") == {d.value for d in TurnDirection}
+    assert _codes("liveness_actions") == {a.value for a in LivenessAction}
+    assert _codes("flash_modes") == {m.value for m in FlashMode}
     assert _codes("verification_reasons") == REASONS
     assert _codes("session_revocation_reasons") == {r.value for r in SessionRevocationReason}
     assert _codes("enrollment_flags") == {a.value for a in Accessory} | {SPOOF_FLAG, DUPLICATE_FLAG}
     assert _codes("screens") == {s.value for s in Screen}
     assert _codes("api_scopes") == {s.value for s in ApiScope}
     assert _codes("api_key_statuses") == {s.value for s in ApiKeyStatus}
+    # Calendario: el empleado solo pide vacaciones o permisos; la incapacidad y lo demás lo registra la empresa.
+    day_off = get_catalogs().entries["day_off_types"]
+    assert {r["code"] for r in day_off} == {"VACATION", "PERMISSION", "SICK_LEAVE", "OTHER"}
+    assert {r["code"] for r in day_off if r["requestable"]} == {"VACATION", "PERMISSION"}
+    assert all(r["phrase"] for r in day_off) and _codes("attendance_edit_reasons")
 
 
 def test_every_face_error_the_api_raises_has_its_message_in_the_catalog():
     """El motor facial y los servicios solo usan códigos: su mensaje debe existir en face_errors."""
     used = re.compile(r'(?:FaceValidationError|face_rejection|face_error_message|SuspiciousCapture)\(\s*"([A-Z_]+)"')
     raised = {code for path in APP_DIR.rglob("*.py") for code in used.findall(path.read_text(encoding="utf-8"))}
-    # El giro no detectado es interno: la API lo informa como LIVENESS_FAILED.
-    assert raised - {"LIVENESS_TURN_NOT_DETECTED"} <= _codes("face_errors")
+    # El movimiento no detectado es interno: la API lo informa como LIVENESS_FAILED.
+    assert raised - {"LIVENESS_STEP_NOT_DETECTED"} <= _codes("face_errors")
     assert {"NO_FACE", "TOO_DARK", "IMAGE_TOO_LARGE", "SPOOF_DETECTED", "CHALLENGE_INVALID"} <= raised
 
 
@@ -156,10 +176,10 @@ def test_face_and_session_messages_come_from_the_database(client, company_header
 
 
 def test_confidence_and_phone_country_must_be_active_in_the_catalog(client, company_headers):
-    url = "/api/settings/verification"
-    accepted = client.put(url, json={"min_confidence": 0.95}, headers=company_headers)
+    url, admin = admin_policy(client, company_headers)
+    accepted = client.put(url, json={"min_confidence": 0.95}, headers=admin)
     assert accepted.status_code == 200 and accepted.json()["data"]["min_confidence"] == 0.95
-    not_a_level = client.put(url, json={"min_confidence": 0.951}, headers=company_headers)
+    not_a_level = client.put(url, json={"min_confidence": 0.951}, headers=admin)
     assert not_a_level.status_code == 422 and not_a_level.json()["code"] == "INVALID_CONFIDENCE_LEVEL"
 
     _set(CatalogCountry, "US", active=False)

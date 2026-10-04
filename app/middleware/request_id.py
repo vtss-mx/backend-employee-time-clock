@@ -1,4 +1,8 @@
-"""Asigna un identificador a cada petición (X-Request-ID = traceId) para correlacionar logs y respuestas.
+"""Asigna un identificador a cada petición (X-Request-ID = traceId) para correlacionar logs y respuestas,
+y registra en ops.error_reports la falla del servidor con que terminó (si la hubo).
+
+Solo las fallas del servidor (5xx y excepciones no controladas) van a la bandeja del ADMIN; un 4xx es
+un resultado normal y queda en el log del proceso con su código y traceId (`app/core/error_events.py`).
 
 Middleware ASGI puro: no usa BaseHTTPMiddleware (que crea tareas y streams adicionales por
 petición y reduce el rendimiento con alta concurrencia).
@@ -15,7 +19,7 @@ from starlette.datastructures import MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.core.error_context import CAPTURE_LIMIT, BodyCapture, headers_of, parse_body, query_of
-from app.core.error_events import ErrorEvent, severity_for
+from app.core.error_events import ErrorEvent, is_recorded, route_of, severity_for
 from app.core.exceptions import internal_error_response
 from app.core.request_context import RequestInfo, request_id_var, request_info_var
 from app.core.responses import new_trace_id
@@ -27,7 +31,8 @@ _VALID_ID = re.compile(r"^[A-Za-z0-9._-]{8,64}$")
 
 class _Exchange:
     """Lo que se pidió y lo que se respondió, copiado mientras pasa (para el contexto de un error):
-    el cuerpo de la petición (acotado, sin archivos) y, si fue un error, el de la respuesta."""
+    el cuerpo de la petición (acotado, sin archivos) y, si fue una falla que se registra (5xx), el de
+    la respuesta. El cuerpo de un 4xx no se copia: no se registra."""
 
     def __init__(self, scope: Scope) -> None:
         headers = scope.get("headers", [])
@@ -46,7 +51,11 @@ class _Exchange:
             self.status = message["status"]
             types = [v for k, v in message.get("headers", []) if k.lower() == b"content-type"]
             self.response_type = types[0].decode("latin-1") if types else ""
-        elif message["type"] == "http.response.body" and self.status >= 400 and len(self.response) < CAPTURE_LIMIT:
+        elif (
+            message["type"] == "http.response.body"
+            and is_recorded(severity_for(self.status))
+            and len(self.response) < CAPTURE_LIMIT
+        ):
             self.response += message.get("body", b"")[: CAPTURE_LIMIT - len(self.response)]
 
     def context(self, scope: Scope, info: RequestInfo, elapsed_ms: float) -> dict[str, Any]:
@@ -135,24 +144,14 @@ class RequestIdMiddleware:
                 )
 
 
-_ID_SEGMENT = re.compile(r"^(\d+|[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f-]{27})$")
-#: Ubicación de un 404 de una ruta que no existe: una sola fila aunque un escáner pruebe mil URLs.
-UNKNOWN_ROUTE = "(ruta inexistente)"
-
-
-def route_of(path: str) -> str:
-    """`/api/employees/12/qr` → `/api/employees/{id}/qr`: el mismo error en otro registro es el mismo."""
-    return "/".join("{id}" if _ID_SEGMENT.match(part) else part for part in path.split("/"))[:255]
-
-
-def location_of(scope: Scope, status: int) -> str:
+def location_of(scope: Scope) -> str:
     """Dónde ocurrió, con la plantilla de la ruta (`/api/employees/{employee_id}/qr`): los parámetros
-    no multiplican los reportes. Sin ruta: un 404 es una URL inventada (ubicación fija); otro error
-    ocurrió antes de enrutar (tamaño, saturación) y se usa la URL sin ids."""
+    no multiplican los reportes. Sin ruta (la falla ocurrió antes de enrutar, p. ej. la saturación) se
+    usa la URL sin ids."""
     path = scope.get("path", "")
     template = getattr(scope.get("route"), "path_format", None)
     if template is None:
-        return UNKNOWN_ROUTE if status == 404 else route_of(path)
+        return route_of(path)
     parts, pattern = path.split("/"), template.split("/")
     offset = max(0, len(parts) - len(pattern))  # la plantilla no lleva el prefijo con que se montó (/api)
     named = [t if t.startswith("{") else p for p, t in zip(parts[offset:], pattern, strict=False)]
@@ -162,20 +161,27 @@ def location_of(scope: Scope, status: int) -> str:
 def _report(
     scope: Scope, info: RequestInfo, crash: Exception | None, trace_id: str, exchange: _Exchange, elapsed_ms: float
 ) -> None:
-    """Registra el error con que terminó la petición (si lo hubo) en ops.error_reports, con su
-    contexto literal: quién, qué pidió y qué se le respondió."""
+    """Registra la falla del servidor con que terminó la petición (si la hubo) en ops.error_reports,
+    con su contexto literal: quién, qué pidió y qué se le respondió.
+
+    Un 4xx no se registra (ni se arma su contexto, lo más costoso): es un resultado normal que se
+    respondió con su código. Queda una línea INFO en el log del proceso para no silenciar nada."""
     if crash is None and info.error is None:
         return
     status, code, message = info.error if crash is None and info.error else (500, "INTERNAL_ERROR", str(crash)[:1000])
+    severity = severity_for(status)
+    if not is_recorded(severity):
+        logger.info("Respuesta %s %s en %s %s [%s]", status, code, scope.get("method"), scope.get("path"), trace_id)
+        return
     error_reporter.report(
         ErrorEvent(
             source="HTTP",
-            severity=severity_for(status),
+            severity=severity,
             code=code,
             message=message or code,
             http_status=status,
             method=scope.get("method"),
-            location=location_of(scope, status),
+            location=location_of(scope),
             exception_type=type(crash).__name__ if crash else None,
             detail="".join(traceback.format_exception(crash)) if crash else None,
             trace_id=trace_id,

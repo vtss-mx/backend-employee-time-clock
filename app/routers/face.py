@@ -82,12 +82,13 @@ def check_face(
 @router.post(
     "/challenge",
     response_model=ApiResponse[FaceChallengeResponse],
-    summary="Obtener reto de prueba de vida (girar la cabeza)",
+    summary="Obtener reto de prueba de vida (movimientos y destello de colores)",
     description=(
-        "Reto aleatorio de uso único (TURN_LEFT / TURN_RIGHT) que expira en "
-        "FACE_CHALLENGE_TTL_SECONDS. Se usa en el registro facial y en la verificación (del "
-        "empleado, del validador o de la empresa con el empleado presente). La dirección es desde "
-        "el punto de vista del empleado."
+        "Reto aleatorio de uso único: de uno a tres movimientos (TURN_LEFT, TURN_RIGHT, LOOK_UP, "
+        "LOOK_DOWN, MOVE_CLOSER; nunca el mismo dos veces seguidas) y, si la empresa lo usa, los "
+        "colores del destello (`flash`). Vence en `expires_in` segundos (política de la empresa). Se "
+        "usa en el registro facial y en la verificación (del empleado, del validador o de la empresa "
+        "con el empleado presente). Las direcciones son desde el punto de vista del empleado."
     ),
 )
 def face_challenge(user: CurrentUser, db: DbSession) -> ApiResponse[FaceChallengeResponse]:

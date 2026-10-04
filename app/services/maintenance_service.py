@@ -1,6 +1,7 @@
 """Mantenimiento: depura lo que vence (sesiones, retos, huellas de capturas, QR, cuentas recordadas,
 contadores del límite de peticiones, muestras faciales aprendidas que dejaron de servir, errores
-solucionados viejos) FUERA de las peticiones de los usuarios.
+solucionados viejos, métricas de intentos faciales) y recalibra la seguridad facial, FUERA de las
+peticiones de los usuarios.
 
 Antes cada petición borraba "de paso" lo vencido de todas las empresas: con mucha carga varias
 peticiones competían por las mismas filas y se formaban filas de espera. Ahora:
@@ -28,20 +29,22 @@ from sqlalchemy.orm import InstrumentedAttribute, Session
 from app.core.config import settings
 from app.core.database import SessionLocal, engine
 from app.models import (
-    AssistantQuery,
     AuthSession,
     CaptureFingerprint,
     EmployeeQr,
     ErrorOccurrence,
     ErrorReport,
     ErrorStatus,
+    FaceAttemptMetric,
     FaceChallenge,
     FaceEmbedding,
     RateLimitCounter,
     RememberedAccount,
 )
 from app.models.face_embedding import last_useful
+from app.repositories.attendance_repository import close_missed_checkouts
 from app.repositories.maintenance_repository import delete_batch
+from app.services.face_security import recalibrate_if_due
 
 logger = logging.getLogger(__name__)
 
@@ -95,9 +98,9 @@ PURGES: tuple[Purge, ...] = (
         ),
     ),
     Purge(
-        "preguntas al asistente de reportes",
-        AssistantQuery.id,
-        lambda now: AssistantQuery.created_at < now - timedelta(days=settings.REPORT_QUERY_RETENTION_DAYS),
+        "métricas de intentos faciales",
+        FaceAttemptMetric.id,
+        lambda now: FaceAttemptMetric.created_at < now - timedelta(days=settings.FACE_METRICS_RETENTION_DAYS),
     ),
     Purge(
         "límites de peticiones",
@@ -127,7 +130,33 @@ def purge_expired(db: Session, *, batch_size: int | None = None, now: datetime |
             db.rollback()
             logger.exception("Falló la depuración de %s (se reintenta en la siguiente vuelta)", purge.name)
         removed[purge.name] = total
+    removed["jornadas sin salida"] = _close_missed_checkouts(db, moment)
+    removed["umbrales recalibrados"] = _recalibrate(db, moment)
     return removed
+
+
+def _recalibrate(db: Session, now: datetime) -> int:
+    """La autocalibración de la seguridad facial (face_security), si ya toca; falla sola (no detiene el
+    resto del mantenimiento) y se reintenta en la siguiente vuelta."""
+    try:
+        return recalibrate_if_due(db, now)
+    except SQLAlchemyError:
+        db.rollback()
+        logger.exception("Falló la autocalibración de la seguridad facial (se reintenta en la siguiente vuelta)")
+        return 0
+
+
+def _close_missed_checkouts(db: Session, now: datetime) -> int:
+    """Las jornadas abiertas cuyo límite de salida venció quedan "sin salida" (falla sola: no
+    detiene el resto del mantenimiento)."""
+    try:
+        closed = close_missed_checkouts(db, now)
+        db.commit()
+    except SQLAlchemyError:
+        db.rollback()
+        logger.exception("Falló el cierre de jornadas sin salida (se reintenta en la siguiente vuelta)")
+        return 0
+    return closed
 
 
 def run_once() -> dict[str, int] | None:

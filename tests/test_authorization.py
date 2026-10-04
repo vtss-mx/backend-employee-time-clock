@@ -21,8 +21,11 @@ from tests.test_validators import validator_headers
 
 PREFIX = "/api"
 
-#: Sin sesión: salud, iniciar y renovar sesión, cuenta recordada y llaves públicas de los JWT.
+#: Sin sesión: salud, iniciar y renovar sesión, cuenta recordada, llaves públicas de los JWT y el
+#: reporte de fallas de la app web (una pantalla puede romperse en el login: no puede exigir sesión;
+#: va limitado por IP, con tope de tamaño, y si trae un token válido anota quién).
 PUBLIC = {
+    ("POST", "/client-errors"),
     ("GET", "/health"),
     ("GET", "/health/live"),
     ("GET", "/health/ready"),

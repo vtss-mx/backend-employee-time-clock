@@ -4,6 +4,7 @@ Revision ID: 0005
 Revises: 0004
 Create Date: 2026-10-01 07:00:00
 """
+
 from collections.abc import Sequence
 
 import sqlalchemy as sa
@@ -30,7 +31,9 @@ def upgrade() -> None:
         sa.Column("revoked_reason", sa.String(length=40), nullable=True),
         sa.Column("ip_address", sa.String(length=64), nullable=True),
         sa.Column("user_agent", sa.String(length=255), nullable=True),
-        sa.ForeignKeyConstraint(["user_id"], ["users.id"], name=op.f("fk_auth_sessions_user_id_users"), ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(
+            ["user_id"], ["users.id"], name=op.f("fk_auth_sessions_user_id_users"), ondelete="CASCADE"
+        ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_auth_sessions")),
     )
     op.create_index(op.f("ix_auth_sessions_user_id"), "auth_sessions", ["user_id"])

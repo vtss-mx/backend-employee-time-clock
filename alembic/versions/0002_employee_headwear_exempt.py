@@ -4,6 +4,7 @@ Revision ID: 0002
 Revises: 0001
 Create Date: 2026-10-01 04:00:00
 """
+
 from collections.abc import Sequence
 
 import sqlalchemy as sa
@@ -17,9 +18,7 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     with op.batch_alter_table("employees", schema=None) as batch_op:
-        batch_op.add_column(
-            sa.Column("headwear_exempt", sa.Boolean(), server_default=sa.false(), nullable=False)
-        )
+        batch_op.add_column(sa.Column("headwear_exempt", sa.Boolean(), server_default=sa.false(), nullable=False))
 
 
 def downgrade() -> None:

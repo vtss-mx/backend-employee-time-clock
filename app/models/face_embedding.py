@@ -39,8 +39,11 @@ class FaceEmbedding(Base):
 
     __tablename__ = "face_embeddings"
     __table_args__ = (
-        # Cada comparación facial lee los embeddings ACTIVOS de un empleado en orden de captura.
-        Index("ix_face_embeddings_employee_active", "employee_id", "active", "created_at"),
+        # Cada comparación facial lee las muestras ACTIVAS del modelo actual de un empleado en orden de
+        # captura (sin ordenar), y "¿a quién le faltan muestras del modelo actual?" (cambio de motor, en
+        # cada identificación 1:N mientras dure la migración) se resuelve sin leer la tabla: 53 → 2 ms
+        # con 265 k muestras (migración 0047). También sirve a la FK del empleado.
+        Index("ix_face_embeddings_employee_active", "employee_id", "active", "model_name", "created_at"),
         # El embedding es del mismo empleado que su registro facial (lo garantiza la base).
         ForeignKeyConstraint(
             ["enrollment_id", "employee_id"],

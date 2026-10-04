@@ -9,6 +9,7 @@ Revision ID: 0014
 Revises: 0013
 Create Date: 2026-10-01 21:00:00
 """
+
 from collections.abc import Sequence
 
 import sqlalchemy as sa
@@ -61,7 +62,9 @@ def upgrade() -> None:
     op.create_index("ix_companies_name", "companies", [sa.text("lower(name)")])
 
     # La empresa existente (si hay usuarios) se vuelve la primera empresa de la plataforma.
-    has_tenant = bind.execute(sa.text("SELECT EXISTS (SELECT 1 FROM users WHERE role IN ('COMPANY', 'EMPLOYEE'))")).scalar()
+    has_tenant = bind.execute(
+        sa.text("SELECT EXISTS (SELECT 1 FROM users WHERE role IN ('COMPANY', 'EMPLOYEE'))")
+    ).scalar()
     company_id = None
     if has_tenant:
         company_id = bind.execute(
@@ -72,7 +75,9 @@ def upgrade() -> None:
     _add_company_fk("users", nullable=True, ondelete="RESTRICT")
     op.create_index("ix_users_company_role", "users", ["company_id", "role"])
     if company_id:
-        bind.execute(sa.text("UPDATE users SET company_id = :c WHERE role IN ('COMPANY', 'EMPLOYEE')"), {"c": company_id})
+        bind.execute(
+            sa.text("UPDATE users SET company_id = :c WHERE role IN ('COMPANY', 'EMPLOYEE')"), {"c": company_id}
+        )
 
     # ---- empleados ----
     op.add_column("employees", sa.Column("company_id", sa.Integer(), nullable=True))
@@ -113,7 +118,9 @@ def upgrade() -> None:
     op.add_column("verification_policy", sa.Column("company_id", sa.Integer(), nullable=True))
     if company_id:
         bind.execute(
-            sa.text("UPDATE verification_policy SET company_id = :c WHERE id = (SELECT min(id) FROM verification_policy)"),
+            sa.text(
+                "UPDATE verification_policy SET company_id = :c WHERE id = (SELECT min(id) FROM verification_policy)"
+            ),
             {"c": company_id},
         )
     bind.execute(sa.text("DELETE FROM verification_policy WHERE company_id IS NULL"))

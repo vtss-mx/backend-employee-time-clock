@@ -45,11 +45,14 @@ class VerificationLogRepository:
         offset: int,
         limit: int,
     ) -> tuple[list[VerificationLog], int]:
-        """Bitácora de UNA empresa con filtros, la más reciente primero (índice company_id + id: el id
-        crece con cada registro, así que es su orden de llegada)."""
+        """Bitácora de UNA empresa con filtros, la más reciente primero.
+
+        Índice (company_id, created_at, id) INCLUDE (employee_id, success): el periodo (`since`/`until`)
+        se recorre directo en el orden pedido y el conteo con tope sale del índice sin leer la tabla.
+        Antes se ordenaba por `id` y, con un periodo, PostgreSQL recorría la llave primaria hacia atrás
+        descartando millones de filas hasta llegar a las del periodo (≈ 0.5 s con 5 M de registros)."""
         stmt = self._company_filters(company_id, since=since, until=until, employee_id=employee_id, success=success)
-        order = (VerificationLog.id.desc(),)
-        return paginate(self.db, stmt, order, offset=offset, limit=limit, count_cap=LOG_COUNT_CAP)
+        return paginate(self.db, stmt, NEWEST_FIRST, offset=offset, limit=limit, count_cap=LOG_COUNT_CAP)
 
     def feed_for_company(
         self,

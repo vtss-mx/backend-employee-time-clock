@@ -1,7 +1,7 @@
-"""Domicilio con su punto en el mapa (hoy lo usan los validadores; reutilizable por otros registros)."""
+"""Domicilio con su punto en el mapa (validadores y sitios de trabajo: columnas de `AddressMixin`)."""
 
 import re
-from typing import Annotated, Self
+from typing import Annotated, Any, Self
 
 from pydantic import AfterValidator, BaseModel, Field, ValidationInfo, field_validator, model_validator
 
@@ -76,3 +76,20 @@ class Address(BaseModel):
         if (self.latitude is None) != (self.longitude is None):
             raise ValueError("Indica la latitud y la longitud del punto en el mapa")
         return self
+
+
+#: Columnas del domicilio en la base (mismos nombres que este esquema y que `AddressMixin`).
+ADDRESS_FIELDS = tuple(Address.model_fields)
+
+
+def apply_address(target: Any, address: Address) -> None:
+    """Copia el domicilio al registro (validador o sitio de trabajo)."""
+    for field in ADDRESS_FIELDS:
+        setattr(target, field, getattr(address, field))
+
+
+def address_of(target: Any) -> Address | None:
+    """El domicilio guardado, sin validarlo de nuevo (un país pudo desactivarse en el catálogo después)."""
+    if not target.street:
+        return None
+    return Address.model_construct(**{field: getattr(target, field) for field in ADDRESS_FIELDS})

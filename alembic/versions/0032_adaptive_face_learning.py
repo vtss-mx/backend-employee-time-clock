@@ -42,9 +42,7 @@ EMBEDDINGS = {"table_name": "face_embeddings", "schema": "biometrics"}
 
 def upgrade() -> None:
     op.add_column(column=sa.Column("learned", sa.Boolean(), server_default=sa.false(), nullable=False), **EMBEDDINGS)
-    op.add_column(
-        column=sa.Column("matches", sa.Integer(), server_default=sa.text("0"), nullable=False), **EMBEDDINGS
-    )
+    op.add_column(column=sa.Column("matches", sa.Integer(), server_default=sa.text("0"), nullable=False), **EMBEDDINGS)
     op.add_column(column=sa.Column("last_matched_at", sa.DateTime(timezone=True), nullable=True), **EMBEDDINGS)
     op.create_check_constraint(op.f("ck_face_embeddings_matches_non_negative"), condition="matches >= 0", **EMBEDDINGS)
     op.execute("UPDATE biometrics.face_embeddings SET learned = true WHERE enrollment_id IS NULL")
