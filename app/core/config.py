@@ -86,6 +86,8 @@ class Settings(BaseSettings):
 
     # --- Cifrado de datos sensibles (embeddings y tokens QR) ---
     DATA_ENCRYPTION_KEY: str
+    # Llaves anteriores (separadas por comas) para LEER datos cifrados antes de rotar la llave.
+    DATA_ENCRYPTION_PREVIOUS_KEYS: str = ""
 
     # --- Reconocimiento facial ---
     # Piso técnico de similitud coseno: ninguna configuración de la empresa puede aceptar por
@@ -96,8 +98,13 @@ class Settings(BaseSettings):
     # Identificación 1:N del validador: la persona identificada debe superar a la segunda más
     # parecida por al menos este margen de similitud (si dos personas se parecen, no se adivina).
     FACE_IDENTIFY_MARGIN: float = Field(default=0.05, ge=0.0, le=0.5)
-    # Galerías faciales por empresa que cada proceso guarda en memoria (LRU) para identificar 1:N.
-    FACE_GALLERY_CACHE_COMPANIES: int = Field(default=16, ge=1, le=1024)
+    # Galerías faciales por empresa que cada proceso guarda en memoria (LRU) para identificar 1:N:
+    # se acota por MEMORIA (FACE_GALLERY_CACHE_MB) y, además, por número de empresas.
+    FACE_GALLERY_CACHE_COMPANIES: int = Field(default=512, ge=1, le=100_000)
+    FACE_GALLERY_CACHE_MB: int = Field(default=256, ge=8, le=65_536)
+    # Muestras nuevas que la galería en memoria descifra sin reconstruirse completa (con más, se
+    # reconstruye): el aprendizaje la cambia seguido, una muestra a la vez.
+    FACE_GALLERY_INCREMENTAL_LIMIT: int = Field(default=500, ge=1, le=100_000)
     # Empleados aprobados sin muestras del modelo actual que se migran por identificación 1:N.
     FACE_GALLERY_MIGRATION_BATCH: int = Field(default=10, ge=1, le=500)
     # fusion = SFace + FaceNet-512 (recomendado: 2.7x menos rechazos erróneos en LFW); sface = solo SFace.
@@ -118,6 +125,24 @@ class Settings(BaseSettings):
     FACE_MIN_BRIGHTNESS: float = Field(default=40.0, ge=0.0, le=255.0)
     FACE_MAX_BRIGHTNESS: float = Field(default=225.0, ge=0.0, le=255.0)
     FACE_MAX_SAMPLES_PER_EMPLOYEE: int = Field(default=5, ge=1, le=20)
+
+    # --- Aprendizaje continuo: la galería de cada empleado mejora con el uso (face_learning) ---
+    # Muestras aprendidas por empleado, además de las de su registro aprobado (que nunca se
+    # reemplazan). 0 = no se aprende. Cada muestra son 2.5 KB en la galería en memoria del validador.
+    FACE_LEARNING_MAX_SAMPLES: int = Field(default=5, ge=0, le=20)
+    # Holgura sobre la similitud que exige la empresa para aprender de una captura: no se aprende de
+    # identificaciones que pasaron justas.
+    FACE_LEARNING_MARGIN: float = Field(default=0.05, ge=0.0, le=0.5)
+    # Una captura así de parecida a una muestra que ya se tiene no enseña nada nuevo.
+    FACE_LEARNING_REDUNDANCY: float = Field(default=0.95, gt=0.0, le=1.0)
+    # Como máximo una muestra aprendida por empleado en este lapso: variedad de días, luz y cámaras.
+    FACE_LEARNING_INTERVAL_HOURS: float = Field(default=12.0, ge=0.0, le=720.0)
+    # Validador (1:N): ventaja mínima sobre la segunda persona más parecida para aprender.
+    FACE_LEARNING_IDENTIFY_MARGIN: float = Field(default=0.10, ge=0.0, le=0.5)
+    # Una muestra aprendida que lleva estos días sin ser la más parecida en ninguna identificación
+    # la retira el mantenimiento: la galería se renueva con cómo luce hoy la persona (el registro
+    # aprobado nunca se retira).
+    FACE_LEARNING_STALE_DAYS: int = Field(default=180, ge=1, le=3650)
 
     # Pose: el rostro debe estar de frente (ratio de giro ≈ 0.4·tan(ángulo)).
     FACE_MAX_YAW_RATIO: float = Field(default=0.15, gt=0.0, le=1.0)
@@ -201,8 +226,18 @@ class Settings(BaseSettings):
     API_WORKERS: int = Field(default=0, ge=0, le=64)  # 0 = automático
     # Peticiones procesándose a la vez en la API. Las que exceden esperan hasta
     # REQUEST_QUEUE_TIMEOUT_SECONDS y después reciben 503 SERVER_BUSY (reintentable).
-    MAX_CONCURRENT_REQUESTS: int = Field(default=100, ge=1)  # por proceso
+    MAX_CONCURRENT_REQUESTS: int = Field(default=100, ge=1)  # por proceso: techo del límite adaptativo
     REQUEST_QUEUE_TIMEOUT_SECONDS: float = Field(default=10.0, gt=0)
+    # Control de admisión adaptativo (app/core/admission.py): el límite se mueve solo entre
+    # MIN_CONCURRENT_REQUESTS y MAX_CONCURRENT_REQUESTS según la latencia real; la fila atiende
+    # primero lo crítico y lo más demandado. REQUEST_QUEUE_MAX = 0: el doble del límite vigente.
+    # Piso alto a propósito: recortar de más baja lo que se atiende sin aliviar nada. Medido con
+    # perf/run.sh a 1 000 pet/s (4 procesos): piso 32 → ~600 respuestas 200/s; piso 25 (el tamaño del
+    # pool) → ~200/s: con el límite al mínimo, rechazar consume el CPU que dejaría de usar lo admitido.
+    MIN_CONCURRENT_REQUESTS: int = Field(default=32, ge=1)
+    REQUEST_QUEUE_MAX: int = Field(default=0, ge=0)
+    # Vida media de la demanda reciente de cada API (s): qué tan rápido "olvida" un pico.
+    ADMISSION_DEMAND_HALF_LIFE_SECONDS: float = Field(default=60.0, gt=0)
     # Argon2id usa ~64 MB por hash: se limita cuántos se calculan a la vez (0 = núcleos).
     PASSWORD_HASH_CONCURRENCY: int = Field(default=0, ge=0)
     PASSWORD_HASH_WAIT_SECONDS: float = Field(default=10.0, gt=0)
@@ -217,6 +252,9 @@ class Settings(BaseSettings):
     WS_IDLE_TIMEOUT_SECONDS: float = Field(default=300.0, gt=0)  # sin mensajes → se cierra
     WS_MAX_MESSAGES_PER_10S: int = Field(default=60, ge=1)  # por conexión
     WS_MAX_MESSAGE_BYTES: int = Field(default=4096, ge=256)
+    # Validaciones simultáneas del canal por proceso (cada una usa una conexión de la BD): menos
+    # que DB_POOL_SIZE para que la API HTTP siempre tenga conexiones libres.
+    WS_MAX_CONCURRENT_VALIDATIONS: int = Field(default=8, ge=1)
 
     # --- Imágenes ---
     MAX_IMAGE_SIZE_MB: float = Field(default=5.0, gt=0, le=20)
@@ -258,6 +296,43 @@ class Settings(BaseSettings):
     # Un validador atiende a muchos empleados seguidos desde el mismo dispositivo.
     RATE_LIMIT_CHECKPOINT_PER_MINUTE: int = Field(default=120, ge=1)
     RATE_LIMIT_FACE_CHECK_PER_MINUTE: int = Field(default=60, ge=1)
+    # Validación en vivo por HTTP (respaldo del WebSocket): consultas por usuario y minuto.
+    RATE_LIMIT_VALIDATION_PER_MINUTE: int = Field(default=120, ge=1)
+    # API de integración: peticiones por llave y minuto.
+    RATE_LIMIT_API_KEY_PER_MINUTE: int = Field(default=120, ge=1)
+
+    # --- Registro de errores del sistema (ops.error_reports, pantalla "Errores del sistema") ---
+    # Se acumulan en memoria y un hilo los guarda en lotes cada ERROR_REPORT_FLUSH_SECONDS (0 = solo
+    # al apagar o a mano: pruebas). Nunca frenan una petición.
+    ERROR_REPORT_FLUSH_SECONDS: float = Field(default=2.0, ge=0)
+    ERROR_REPORT_BUFFER: int = Field(default=10_000, ge=100, le=1_000_000)
+    # Ocurrencias que se guardan por error en cada vuelta (el total siempre se cuenta).
+    ERROR_REPORT_OCCURRENCES_PER_FLUSH: int = Field(default=5, ge=1, le=100)
+    ERROR_OCCURRENCE_RETENTION_DAYS: int = Field(default=30, ge=1, le=3650)
+    # Un error SOLUCIONADO que no ha vuelto a ocurrir en este tiempo se depura (si vuelve, se crea
+    # de nuevo como pendiente): la bandeja no crece sin fin.
+    ERROR_RESOLVED_RETENTION_DAYS: int = Field(default=180, ge=1, le=3650)
+
+    # --- Asistente de reportes (pantalla "Reportes" de cada empresa; app/services/reporting) ---
+    # Filas que muestra el asistente en pantalla (el resto se ve al exportar a Excel).
+    REPORT_PREVIEW_ROWS: int = Field(default=20, ge=1, le=200)
+    # Tope de filas de un archivo de Excel: un reporte mayor se corta y el archivo lo dice.
+    REPORT_EXPORT_MAX_ROWS: int = Field(default=100_000, ge=100, le=1_000_000)
+    # Tope de grupos de un reporte agrupado (p. ej. por empleado o por día).
+    REPORT_GROUPS_MAX: int = Field(default=500, ge=10, le=10_000)
+    # Cuánto recuerda las preguntas de cada empresa (sugerencias y aprendizaje).
+    REPORT_QUERY_RETENTION_DAYS: int = Field(default=180, ge=7, le=3650)
+
+    # --- Mantenimiento (depuración de lo vencido, fuera de las peticiones) ---
+    # Cada cuántos segundos depura cada instancia (solo una a la vez trabaja); 0 = desactivado
+    # (p. ej. si lo ejecuta un cron externo con `python -m app.cli purge`).
+    MAINTENANCE_INTERVAL_SECONDS: int = Field(default=300, ge=0)
+    MAINTENANCE_BATCH_SIZE: int = Field(default=5000, ge=100, le=100_000)
+
+    # --- API de integración (llaves por empresa) ---
+    API_KEYS_MAX_ACTIVE: int = Field(default=10, ge=1, le=100)  # llaves activas por empresa
+    # El último uso de una llave se guarda a lo más cada estos segundos (sin escribir en cada petición).
+    API_KEY_TOUCH_SECONDS: int = Field(default=60, ge=0)
 
     # --- Usuarios iniciales (opcionales, se crean al iniciar si no existen) ---
     # Administrador de la plataforma: da de alta y administra empresas.
@@ -307,7 +382,7 @@ class Settings(BaseSettings):
         return decode_pem(value)
 
     @model_validator(mode="after")
-    def _complete(self) -> "Settings":
+    def _complete(self) -> Settings:
         if self.API_WORKERS == 0:
             self.API_WORKERS = default_api_workers()
         if self.PAGE_SIZE_DEFAULT > self.PAGE_SIZE_MAX:
@@ -327,11 +402,13 @@ class Settings(BaseSettings):
             raise ValueError("JWT_ALGORITHM=HS256 requiere JWT_SECRET_KEY de al menos 32 caracteres")
         return self
 
-    @field_validator("DATA_ENCRYPTION_KEY")
+    @field_validator("DATA_ENCRYPTION_KEY", "DATA_ENCRYPTION_PREVIOUS_KEYS")
     @classmethod
     def _validate_fernet_key(cls, value: str) -> str:
         try:
-            Fernet(value.encode())
+            for key in (k.strip() for k in value.split(",")):
+                if key:
+                    Fernet(key.encode())
         except Exception as exc:
             raise ValueError(
                 "DATA_ENCRYPTION_KEY debe ser una clave Fernet válida "
@@ -339,6 +416,12 @@ class Settings(BaseSettings):
                 'print(Fernet.generate_key().decode())")'
             ) from exc
         return value
+
+    @property
+    def data_encryption_keys(self) -> list[str]:
+        """La llave vigente primero (cifra) y después las anteriores (solo descifran)."""
+        previous = [k.strip() for k in self.DATA_ENCRYPTION_PREVIOUS_KEYS.split(",") if k.strip()]
+        return [self.DATA_ENCRYPTION_KEY, *previous]
 
     @property
     def max_image_bytes(self) -> int:

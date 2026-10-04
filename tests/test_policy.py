@@ -3,8 +3,8 @@
 from app.core.crypto import decrypt_bytes, encrypt_bytes
 from app.core.database import SessionLocal
 from app.facial_recognition.matcher import embedding_from_bytes, embedding_to_bytes
-from app.models import FaceEmbedding
-from tests.conftest import approved_employee, create_employee, login, submit_enrollment
+from app.models import Employee, FaceEmbedding
+from tests.conftest import FakePipeline, approved_employee, create_employee, login, submit_enrollment
 from tests.test_face import _verify
 
 URL = "/api/settings/verification"
@@ -88,9 +88,51 @@ def test_model_change_migrates_from_reference_photo(client, company_headers):
 
     assert _verify(client, headers).json()["data"]["verified"] is True
     with SessionLocal() as db:
-        current = db.query(FaceEmbedding).filter(FaceEmbedding.model_name == "fake-model").count()
-    # 1 desde la foto de referencia + 1 captura verificada para completar muestras.
-    assert current == 2
+        current = db.query(FaceEmbedding).filter(FaceEmbedding.model_name == "fake-model").all()
+    # 1 desde la foto de referencia (ancla, decidió la verificación). La captura es idéntica a ella:
+    # no enseña nada nuevo, así que no se aprende (face_learning).
+    assert [(row.learned, row.matches) for row in current] == [(False, 1)]
+
+
+def _old_model_only(employee_id: int) -> None:
+    with SessionLocal() as db:
+        for row in db.query(FaceEmbedding).filter(FaceEmbedding.employee_id == employee_id):
+            row.model_name = "modelo-anterior"
+        db.commit()
+
+
+def test_migration_without_a_photo_or_with_an_engine_crash_is_not_retried_on_every_capture(
+    client, company_headers, monkeypatch
+):
+    """Un aprobado que no se puede migrar (sin foto o el motor truena) no se reintenta en cada captura
+    ni tumba la verificación: queda bloqueado un rato y la falla del motor se registra."""
+    from app.models import FaceEnrollment
+    from app.services import face_service
+
+    headers = approved_employee(client, company_headers)
+    employee_id = client.get("/api/users/me", headers=headers).json()["data"]["employee"]["id"]
+    _old_model_only(employee_id)
+    with SessionLocal() as db:
+        db.query(FaceEnrollment).update({"photo_encrypted": None})
+        db.commit()
+    assert _verify(client, headers).json()["code"] == "FACE_NOT_REGISTERED"
+    assert face_service.migration_blocked(employee_id)
+
+    face_service.clear_migration_blocks()
+    with SessionLocal() as db:
+        db.query(FaceEnrollment).update({"photo_encrypted": encrypt_bytes(b"face:juan")})
+        db.commit()
+
+    def crash(*_args, **_kwargs):
+        raise RuntimeError("onnxruntime: memoria agotada")
+
+    monkeypatch.setattr(FakePipeline, "analyze_frontal", crash, raising=True)
+    with SessionLocal() as db:
+        employee = db.get(Employee, employee_id)
+        pipeline = FakePipeline()
+        assert face_service.FaceService(db, pipeline).references_for(employee) == []
+    assert face_service.migration_blocked(employee_id)
+    assert employee_id in face_service.blocked_migrations()
 
 
 def test_confidence_calibration_matches_operating_point():

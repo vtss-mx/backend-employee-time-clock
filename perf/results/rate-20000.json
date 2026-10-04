@@ -1,0 +1,129 @@
+{
+    "root_group": {
+        "path": "",
+        "id": "d41d8cd98f00b204e9800998ecf8427e",
+        "groups": {},
+        "checks": {
+                "respuesta 200": {
+                    "name": "respuesta 200",
+                    "path": "::respuesta 200",
+                    "id": "b304736d6fbf81af5836a4c1d2b9d46c",
+                    "passes": 6705,
+                    "fails": 293434
+                }
+            },
+        "name": ""
+    },
+    "metrics": {
+        "dropped_iterations": {
+            "rate": 4718.13346391759,
+            "count": 99862
+        },
+        "iteration_duration": {
+            "avg": 95.14505622608152,
+            "p(50)": 39.204875,
+            "p(95)": 110.5519916999999,
+            "p(99)": 1409.5338404599997,
+            "max": 12834.209089
+        },
+        "iterations": {
+            "count": 300139,
+            "rate": 14180.527725528846
+        },
+        "vus_max": {
+            "value": 1500,
+            "min": 1500,
+            "max": 1500
+        },
+        "data_received": {
+            "count": 195514506,
+            "rate": 9237382.922832673
+        },
+        "http_req_duration": {
+            "avg": 94.7044969723341,
+            "p(50)": 38.9555,
+            "p(95)": 109.45219434999964,
+            "p(99)": 1409.268503999999,
+            "max": 12833.514617
+        },
+        "http_req_blocked": {
+            "p(99)": 0.012334,
+            "max": 39.52675,
+            "avg": 0.03018025470115011,
+            "p(50)": 0.00125,
+            "p(95)": 0.004167
+        },
+        "data_sent": {
+            "rate": 7818091.6296150405,
+            "count": 165474392
+        },
+        "http_req_waiting": {
+            "max": 12833.461367,
+            "avg": 94.26017268945213,
+            "p(50)": 38.64725,
+            "p(95)": 107.94123479999992,
+            "p(99)": 1406.9912899899998
+        },
+        "http_req_tls_handshaking": {
+            "max": 0,
+            "avg": 0,
+            "p(50)": 0,
+            "p(95)": 0,
+            "p(99)": 0
+        },
+        "checks": {
+            "passes": 6705,
+            "fails": 293434,
+            "value": 0.022339649295826266
+        },
+        "shed_503": {
+            "count": 293434,
+            "rate": 13863.73970931079
+        },
+        "http_req_failed": {
+            "fails": 6706,
+            "passes": 293434,
+            "value": 0.9776570933564337
+        },
+        "http_req_sending": {
+            "avg": 0.36070626419002566,
+            "p(50)": 0.003792,
+            "p(95)": 0.453458,
+            "p(99)": 13.359612639999987,
+            "max": 119.423041
+        },
+        "http_req_connecting": {
+            "p(50)": 0,
+            "p(95)": 0,
+            "p(99)": 0,
+            "max": 24.710084,
+            "avg": 0.018353129519557542
+        },
+        "vus": {
+            "value": 52,
+            "min": 52,
+            "max": 1500
+        },
+        "http_reqs": {
+            "rate": 14180.574972063703,
+            "count": 300140
+        },
+        "http_req_receiving": {
+            "p(99)": 0.6949531299999991,
+            "max": 61.328208,
+            "avg": 0.08361801868794412,
+            "p(50)": 0.010083,
+            "p(95)": 0.11654404999999946
+        },
+        "http_req_duration{expected_response:true}": {
+            "avg": 1289.8406292081736,
+            "p(50)": 842.268521,
+            "p(95)": 4136.204386749998,
+            "p(99)": 8064.124554249993,
+            "max": 12833.514617
+        }
+    },
+    "setup_data": {
+        "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6IkZxUUE0UFZTOEszMjBxeTciLCJ0eXAiOiJhdCtqd3QifQ.eyJpc3MiOiJ0aW1lLWNsb2NrLWFwaSIsImF1ZCI6InRpbWUtY2xvY2std2ViIiwic3ViIjoiNSIsInNpZCI6IjQ2NDJhMjk1MTgzYTRlNzk4Mzc4MTUxYjgyNzMyMjJiIiwianRpIjoiMGNhYzc3ZTA1MzUzNGE0NThjOTE0ZTU0ODUxZjhmZDMiLCJyb2xlIjoiQ09NUEFOWSIsImlhdCI6MTc5MTA2NzA3MSwibmJmIjoxNzkxMDY3MDcxLCJleHAiOjE3OTExMTAyNzF9.tLAqCFXXJaLSAYjop-HgB3fcoLRohN_TAecMool8YdWrcMuSwYkYSo3Bb91zkCJO00wZzDviyUz7SSwS0GHsDA"
+    }
+}

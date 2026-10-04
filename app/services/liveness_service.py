@@ -17,13 +17,13 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import delete, or_
 from sqlalchemy.orm import Session
 
-from app.core.clock import as_utc
+from app.core.clock import as_utc, has_passed
 from app.core.config import settings
 from app.facial_recognition import TurnDirection
 from app.models import FaceChallenge
+from app.repositories.challenge_repository import FaceChallengeRepository
 from app.services.face_service import face_rejection
 
 
@@ -55,9 +55,7 @@ class ChallengeStore:
             directions=tuple(TurnDirection(secrets.choice(options)) for _ in range(max(1, min(steps, 2)))),
             expires_at=now + timedelta(seconds=settings.FACE_CHALLENGE_TTL_SECONDS),
         )
-        # Un solo reto vigente por usuario + limpieza de expirados (índice en expires_at).
-        db.execute(delete(FaceChallenge).where(or_(FaceChallenge.user_id == user_id, FaceChallenge.expires_at <= now)))
-        db.add(
+        FaceChallengeRepository(db).replace_for_user(
             FaceChallenge(
                 id=challenge.id,
                 user_id=user_id,
@@ -71,15 +69,9 @@ class ChallengeStore:
 
     def consume(self, db: Session, challenge_id: str, user_id: int) -> Challenge | None:
         """Devuelve el reto si es válido para el usuario; en cualquier caso lo elimina (atómico)."""
-        row = db.execute(
-            delete(FaceChallenge)
-            .where(FaceChallenge.id == challenge_id)
-            .returning(
-                FaceChallenge.user_id, FaceChallenge.direction, FaceChallenge.second_direction, FaceChallenge.expires_at
-            )
-        ).first()
+        row = FaceChallengeRepository(db).take(challenge_id)
         db.commit()
-        if row is None or row.user_id != user_id or as_utc(row.expires_at) <= datetime.now(UTC):
+        if row is None or row.user_id != user_id or has_passed(row.expires_at):
             return None
         directions = tuple(TurnDirection(d) for d in (row.direction, row.second_direction) if d)
         return Challenge(id=challenge_id, user_id=row.user_id, directions=directions, expires_at=row.expires_at)

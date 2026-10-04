@@ -4,7 +4,6 @@ El ADMIN no accede a los empleados ni a los datos biométricos de las empresas: 
 fiscales y de contacto, sus administradores y conteos.
 """
 
-from datetime import UTC, datetime
 from typing import Literal
 
 from sqlalchemy.exc import IntegrityError
@@ -14,6 +13,8 @@ from app.core.exceptions import ConflictError, NotFoundError
 from app.core.passwords import hash_password
 from app.models import Company, SessionRevocationReason, User, UserRole
 from app.repositories.company_repository import CompanyRepository
+from app.repositories.department_repository import DepartmentRepository
+from app.repositories.employee_repository import EmployeeRepository
 from app.repositories.user_repository import UserRepository
 from app.schemas.common import PageParams
 from app.schemas.company import (
@@ -23,6 +24,8 @@ from app.schemas.company import (
     CompanyAdminRead,
     CompanyCreate,
     CompanyDetail,
+    CompanyEmployeeList,
+    CompanyEmployeeRead,
     CompanyList,
     CompanyRead,
     CompanyUpdate,
@@ -31,12 +34,13 @@ from app.schemas.company import (
 from app.schemas.validators import normalize_company_rfc, normalize_email
 from app.services.availability_service import Availability
 from app.services.policy_service import PolicyService, clear_policy_cache
+from app.services.session_service import SessionService
 
 RFC_TAKEN = "Ya existe una empresa con ese RFC"
 EMAIL_TAKEN = "El correo ya está registrado en la plataforma"
 LAST_ADMIN = "La empresa debe conservar al menos un administrador activo"
 HAS_EMPLOYEES = "La empresa tiene empleados registrados: desactívala en lugar de eliminarla"
-_COMPANY_FIELDS = ("name", "legal_name", "rfc", "phone", "max_employees")
+_COMPANY_FIELDS = ("name", "legal_name", "rfc", "phone", "max_employees", "api_enabled")
 
 AvailabilityField = Literal["rfc", "admin_email"]
 
@@ -119,6 +123,34 @@ class CompanyService:
             raise ConflictError("El RFC o el correo ya están registrados", code="DUPLICATE") from exc
         return self.detail(company.id)
 
+    def employees(
+        self, company_id: int, *, search: str | None, active: bool | None, page: PageParams
+    ) -> CompanyEmployeeList:
+        """Empleados de una empresa para el ADMIN (paginados, con búsqueda): solo su ficha de trabajo."""
+        self.get(company_id)  # 404 si la empresa no existe
+        items, total = EmployeeRepository(self.db, company_id).search(
+            search=search, active=active, offset=page.offset, limit=page.size
+        )
+        departments = DepartmentRepository(self.db, company_id).names(e.department_id for e in items if e.department_id)
+        return CompanyEmployeeList.of(
+            [
+                CompanyEmployeeRead(
+                    id=e.id,
+                    employee_number=e.employee_number,
+                    first_name=e.first_name,
+                    last_name=e.last_name,
+                    department_name=departments.get(e.department_id or 0),
+                    email=e.user.email,
+                    phone=e.user.phone,
+                    active=e.active,
+                    face_status=e.face_status,
+                )
+                for e in items
+            ],
+            total,
+            page,
+        )
+
     def update(self, company_id: int, data: CompanyUpdate) -> CompanyDetail:
         company = self.get(company_id)
         changes = data.model_dump(exclude_unset=True)
@@ -140,9 +172,7 @@ class CompanyService:
         company = self.get(company_id)
         company.active = active
         if not active:
-            self.companies.revoke_sessions(
-                datetime.now(UTC), SessionRevocationReason.COMPANY_DEACTIVATED, company_id=company.id
-            )
+            SessionService(self.db).close_company(company.id, SessionRevocationReason.COMPANY_DEACTIVATED)
         self.db.commit()
         clear_policy_cache(company.id)
         return self.detail(company.id)
@@ -175,9 +205,7 @@ class CompanyService:
             raise ConflictError(LAST_ADMIN, code="LAST_COMPANY_ADMIN")
         admin.active = active
         if not active:
-            self.companies.revoke_sessions(
-                datetime.now(UTC), SessionRevocationReason.ACCOUNT_DEACTIVATED, user_id=admin.id
-            )
+            SessionService(self.db).revoke_all(admin.id, SessionRevocationReason.ACCOUNT_DEACTIVATED, commit=False)
         self.db.commit()
         return self.detail(company.id)
 
@@ -185,7 +213,7 @@ class CompanyService:
         """Contraseña olvidada: se asigna una nueva y se cierran las sesiones abiertas del administrador."""
         company, admin = self._company_admin(company_id, user_id)
         admin.password_hash = hash_password(data.admin_password)
-        self.companies.revoke_sessions(datetime.now(UTC), SessionRevocationReason.PASSWORD_RESET, user_id=admin.id)
+        SessionService(self.db).revoke_all(admin.id, SessionRevocationReason.PASSWORD_RESET, commit=False)
         self.db.commit()
         return self.detail(company.id)
 

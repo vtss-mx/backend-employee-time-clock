@@ -10,12 +10,13 @@ Flujo:
 """
 
 import base64
+import logging
 from collections.abc import Sequence
 from datetime import UTC, datetime
 
 from sqlalchemy.orm import Session
 
-from app.core.crypto import decrypt_bytes, encrypt_bytes
+from app.core.crypto import encrypt_bytes, try_decrypt
 from app.core.exceptions import ConflictError, NotFoundError, PermissionDeniedError, UnprocessableError
 from app.facial_recognition import FaceAnalysis, FacePipeline
 from app.models import (
@@ -30,6 +31,7 @@ from app.models import (
 from app.repositories.employee_repository import EmployeeRepository
 from app.repositories.enrollment_repository import FaceEnrollmentRepository
 from app.repositories.face_repository import FaceEmbeddingRepository
+from app.repositories.user_repository import UserRepository
 from app.schemas.common import PageParams
 from app.schemas.enrollment import (
     EnrollmentSubmitResponse,
@@ -38,7 +40,6 @@ from app.schemas.enrollment import (
     FaceEnrollmentRead,
 )
 from app.services.attempt_guard import ensure_unlocked
-from app.services.capture_guard import ensure_real_camera, inspect_take
 from app.services.catalog_service import get_catalogs
 from app.services.face_gallery import duplicate_of, face_galleries
 from app.services.face_service import (
@@ -48,9 +49,11 @@ from app.services.face_service import (
     SuspiciousCapture,
     accessories_rejection,
 )
-from app.services.identity_core import IdentityLog, LivenessCheck, check_liveness, required_similarity
-from app.services.liveness_service import Challenge, challenge_store
+from app.services.identity_core import IdentityLog, LivenessCheck, confirm_live, required_similarity, take_challenge
+from app.services.liveness_service import Challenge
 from app.services.policy_service import PolicyService, PolicySnapshot
+
+logger = logging.getLogger(__name__)
 
 #: Marca de revisión: el rostro ya está aprobado para otro empleado de la empresa.
 DUPLICATE_FLAG = "DUPLICATE_FACE"
@@ -154,7 +157,8 @@ class EnrollmentService:
 
     def list_enrollments(self, *, status: EnrollmentStatus | None, page: PageParams) -> FaceEnrollmentList:
         items, total = self.repo.search(status=status, offset=page.offset, limit=page.size)
-        return FaceEnrollmentList.of([self._to_read(e) for e in items], total, page)
+        emails = UserRepository(self.db).emails_by_ids(i for e in items for i in (e.reviewed_by_id, e.captured_by_id))
+        return FaceEnrollmentList.of([self._to_read(e, emails) for e in items], total, page)
 
     def get(self, enrollment_id: int) -> FaceEnrollment:
         enrollment = self.repo.get(enrollment_id)
@@ -166,12 +170,14 @@ class EnrollmentService:
         enrollment = self.get(enrollment_id)
         photo = None
         if enrollment.photo_encrypted:
-            data = base64.b64encode(decrypt_bytes(enrollment.photo_encrypted)).decode()
-            photo = f"data:{enrollment.photo_content_type or 'image/jpeg'};base64,{data}"
-        return FaceEnrollmentDetail(**self._to_read(enrollment).model_dump(), photo=photo)
-
-    def latest_for_employee(self, employee_id: int) -> FaceEnrollment | None:
-        return self.repo.latest_for_employee(employee_id)
+            raw = try_decrypt(enrollment.photo_encrypted)
+            if raw is None:  # dañada o de otra llave: el revisor ve el registro sin la foto
+                logger.error("La foto del registro facial %s es ilegible", enrollment.id)
+            else:
+                data = base64.b64encode(raw).decode()
+                photo = f"data:{enrollment.photo_content_type or 'image/jpeg'};base64,{data}"
+        emails = UserRepository(self.db).emails_by_ids((enrollment.reviewed_by_id, enrollment.captured_by_id))
+        return FaceEnrollmentDetail(**self._to_read(enrollment, emails).model_dump(), photo=photo)
 
     def approve(self, enrollment_id: int, reviewer: User) -> FaceEnrollmentDetail:
         enrollment = self._pending(enrollment_id)
@@ -278,7 +284,7 @@ class EnrollmentService:
             )
         )
         # Inactivos hasta que COMPANY valide la identidad.
-        face_service.store(employee.id, analyses, replace=False, active=False, enrollment_id=enrollment.id)
+        face_service.store(employee.id, analyses, active=False, enrollment_id=enrollment.id)
         employee.face_status = FaceStatus.PENDING_REVIEW
         employee.face_rejection_reason = None
         return enrollment
@@ -300,21 +306,24 @@ class EnrollmentService:
         Suplantación: en el autoregistro se marca al revisor; en el registro asistido bloquea (se
         aprueba al momento, no habrá revisión que la descarte).
         """
-        ensure_real_camera(camera_label, policy)
-        challenge_id, challenge_images = challenge
-        issued = challenge_store.require(
-            self.db, actor.id, challenge_id, challenge_images, required=policy.liveness_required
-        )
+        issued = take_challenge(self.db, actor.id, challenge, camera_label, policy)
         face_policy = policy.face_policy(employee)
         analyses, flags = FaceService(self.db, pipeline).analyze_enrollment(
             frontal_images, policy=face_policy, allow_review=True
         )
-        liveness = check_liveness(pipeline, issued, challenge_images, analyses, policy, face_policy)
+        liveness = confirm_live(
+            self.db,
+            self.company_id,
+            pipeline,
+            (issued, challenge[1]),
+            analyses,
+            policy,
+            face_policy,
+            block_spoof=in_person,
+            flagged_spoof=SPOOF_FLAG in flags,
+        )
         if liveness.spoofed and SPOOF_FLAG not in flags:
             flags = (*flags, SPOOF_FLAG)
-        if in_person and SPOOF_FLAG in flags:
-            raise SuspiciousCapture("SPOOF_DETECTED")
-        inspect_take(self.db, self.company_id, analyses, liveness.turns, policy)
         return analyses, flags, issued, liveness
 
     def _duplicate_of(
@@ -339,14 +348,16 @@ class EnrollmentService:
         enrollment.employee.face_rejection_reason = None
 
     def _pending(self, enrollment_id: int) -> FaceEnrollment:
-        enrollment = self.get(enrollment_id)
+        """El registro por revisar, bloqueado hasta el commit (sin carreras entre aprobar y rechazar)."""
+        enrollment = self.repo.get(enrollment_id, for_update=True)
+        if enrollment is None:
+            raise NotFoundError("Registro facial no encontrado", code="ENROLLMENT_NOT_FOUND")
         if enrollment.status != EnrollmentStatus.PENDING:
             raise ConflictError("Este registro ya fue revisado", code="ENROLLMENT_ALREADY_REVIEWED")
         return enrollment
 
-    def _to_read(self, e: FaceEnrollment) -> FaceEnrollmentRead:
-        reviewer = self.db.get(User, e.reviewed_by_id) if e.reviewed_by_id else None
-        operator = self.db.get(User, e.captured_by_id) if e.captured_by_id else None
+    @staticmethod
+    def _to_read(e: FaceEnrollment, emails: dict[int, str]) -> FaceEnrollmentRead:
         emp = e.employee
         return FaceEnrollmentRead(
             id=e.id,
@@ -363,7 +374,7 @@ class EnrollmentService:
             flagged_accessories=e.flag_codes,
             submitted_at=e.submitted_at,
             reviewed_at=e.reviewed_at,
-            reviewed_by=reviewer.email if reviewer else None,
-            captured_by=operator.email if operator else None,
+            reviewed_by=emails.get(e.reviewed_by_id) if e.reviewed_by_id else None,
+            captured_by=emails.get(e.captured_by_id) if e.captured_by_id else None,
             rejection_reason=e.rejection_reason,
         )

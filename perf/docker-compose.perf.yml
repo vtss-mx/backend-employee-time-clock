@@ -1,0 +1,52 @@
+# Entorno AISLADO para las pruebas de carga (perf/run.sh): su propia base en memoria (tmpfs), la
+# misma imagen de la API y el generador k6. Nunca toca la base ni el .env de trabajo.
+name: timeclock-perf
+
+services:
+  db:
+    image: postgres:16-alpine
+    env_file: ${PERF_ENV_FILE:?perf/run.sh genera el archivo de secretos}
+    command: ["postgres", "-c", "max_connections=200", "-c", "shared_buffers=256MB"]
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  backend:
+    image: time-clock-backend
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file: ${PERF_ENV_FILE}
+    environment:
+      POSTGRES_HOST: db
+      DATABASE_URL: ""
+      PERF_ENVIRONMENT: "1"
+      # Todas las peticiones vienen de la misma IP (el generador): sin esto mediría el límite por IP.
+      RATE_LIMIT_BACKEND: memory
+      API_WORKERS: ${PERF_API_WORKERS:-4}
+      FIRST_COMPANY_EMAIL: carga@carga-timeclock.com
+      FIRST_COMPANY_PASSWORD: Carga12345
+      # Solo para leer el estado del servidor (capacidad adaptativa) al terminar las etapas.
+      FIRST_ADMIN_EMAIL: admin@carga-timeclock.com
+      FIRST_ADMIN_PASSWORD: Admin123456
+      MAINTENANCE_INTERVAL_SECONDS: "0"
+    ports:
+      - "127.0.0.1:8100:8000"
+    ulimits:
+      nofile: { soft: 65535, hard: 65535 }
+
+  k6:
+    image: grafana/k6:latest
+    profiles: ["load"]
+    depends_on:
+      - backend
+    volumes:
+      - ./:/perf
+    environment:
+      BASE_URL: http://backend:8000
+    ulimits:
+      nofile: { soft: 65535, hard: 65535 }

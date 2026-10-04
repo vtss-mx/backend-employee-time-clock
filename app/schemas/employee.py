@@ -103,8 +103,21 @@ class IdentityReverifyRequest(BaseModel):
     reason: str | None = Field(default=None, max_length=500, description="Motivo visible para el empleado (opcional)")
 
 
+class IdentityReverifySummary(BaseModel):
+    """Resultado de solicitar nueva verificación de identidad a toda la empresa."""
+
+    employees: int = Field(description="Empleados con registro facial que deberán registrar su rostro de nuevo")
+
+
 class EmployeeStatusUpdate(BaseModel):
     active: bool
+
+
+class DepartmentRef(BaseModel):
+    """Departamento (id y nombre) para mostrarlo junto al empleado."""
+
+    id: int
+    name: str
 
 
 class EmployeeRead(BaseModel):
@@ -131,7 +144,16 @@ class EmployeeRead(BaseModel):
     face_rejection_reason: str | None = None
     latest_enrollment_id: int | None = None
     has_face: bool
+    #: Muestras activas del rostro: las del registro aprobado más las aprendidas del uso.
     face_samples: int
+    #: Muestras que la galería aprendió de identificaciones seguras (face_learning).
+    face_learned_samples: int = 0
+    face_last_learned_at: datetime | None = None
+    #: Departamento al que está asignado (a lo más uno).
+    department_id: int | None = None
+    department_name: str | None = None
+    #: Departamentos de los que es responsable (solo en el detalle).
+    managed_departments: list[DepartmentRef] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
 

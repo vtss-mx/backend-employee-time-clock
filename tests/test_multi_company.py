@@ -13,7 +13,6 @@ from tests.conftest import (
     phone_for,
     rfc_for,
 )
-from tests.test_policy import set_policy
 
 EMAIL = "juan@empresa.com"
 PASSWORD = "Empleado123"
@@ -192,12 +191,9 @@ def test_removing_from_one_company_keeps_the_account(client, two_companies):
     assert client.post("/api/auth/login", json={"email": EMAIL, "password": PASSWORD}).status_code == 401
 
 
-def test_each_company_applies_its_own_device_policy(client, two_companies):
-    set_policy(client, two_companies["b_headers"], employee_mobile_only=True)
-    set_policy(client, two_companies["a_headers"], employee_mobile_only=False)
-    headers, _ = _login(client, **{"User-Agent": DESKTOP_UA})  # aún sin empresa: no se exige dispositivo
+def test_an_employee_enters_any_of_its_companies_from_any_device(client, two_companies):
+    headers, _ = _login(client, **{"User-Agent": DESKTOP_UA})
     desktop = {**headers, "User-Agent": DESKTOP_UA}
-    blocked = client.post("/api/auth/company", json={"company_id": two_companies["b"]}, headers=desktop)
-    assert blocked.status_code == 403 and blocked.json()["code"] == "MOBILE_DEVICE_REQUIRED"
-    allowed = client.post("/api/auth/company", json={"company_id": two_companies["a"]}, headers=desktop)
-    assert allowed.status_code == 200
+    for company in ("a", "b"):  # los empleados no tienen restricción de dispositivo (solo los validadores)
+        entered = client.post("/api/auth/company", json={"company_id": two_companies[company]}, headers=desktop)
+        assert entered.status_code == 200

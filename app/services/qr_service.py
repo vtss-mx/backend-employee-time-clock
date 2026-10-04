@@ -16,23 +16,21 @@ Ciclo de vida:
 Los QR fijos anteriores ("TCQR1:", impresos o descargados) ya no se aceptan (motivo STATIC_QR).
 """
 
-import base64
-import io
 import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
-import qrcode
-from qrcode.constants import ERROR_CORRECT_M
 from sqlalchemy.orm import Session
 
-from app.core.clock import as_utc
+from app.core.clock import as_utc, has_passed
 from app.core.config import settings
 from app.core.crypto import hash_token
 from app.core.exceptions import NotFoundError
-from app.models import Employee, EmployeeQr
+from app.models import Employee, EmployeeQr, User
 from app.repositories.qr_repository import EmployeeQrRepository
 from app.schemas.qr import DynamicQrRead, EmployeeQrSummary, QrState, QrStatusRead
+from app.services.employee_access import approved_employee
+from app.services.policy_service import PolicyService
 
 QR_PREFIX = "TCQR2:"
 #: QR fijo de la versión anterior (credencial impresa): se rechaza con un motivo propio.
@@ -54,7 +52,7 @@ def qr_state(qr: EmployeeQr, now: datetime | None = None) -> QrState:
         return "USED"
     if not qr.active:
         return "REVOKED"
-    if qr.expires_at is None or as_utc(qr.expires_at) <= (now or datetime.now(UTC)):
+    if qr.expires_at is None or has_passed(qr.expires_at, now):
         return "EXPIRED"
     return "ACTIVE"
 
@@ -70,10 +68,23 @@ class QrService:
 
     # ---------- Empleado: emitir y seguir su QR ----------
 
+    def issue_for(self, user: User) -> DynamicQrRead:
+        """El empleado (con identidad aprobada) genera su QR con la vigencia de la política de su empresa."""
+        employee = approved_employee(user)
+        policies = PolicyService(self.db, employee.company_id)
+        policies.ensure_qr_enabled()
+        lifetime = policies.current().qr_lifetime_seconds
+        qr, content = self.issue(employee, lifetime)
+        self.db.commit()
+        self.db.refresh(qr)
+        return self.to_read(employee, qr, content, lifetime)
+
+    def status_for(self, user: User, qr_id: int) -> QrStatusRead:
+        return self.status(approved_employee(user), qr_id)
+
     def issue(self, employee: Employee, lifetime_seconds: int) -> tuple[EmployeeQr, str]:
         """Reemplaza el QR vigente del empleado por uno nuevo; devuelve el registro y su contenido."""
         now = datetime.now(UTC)
-        self.repo.purge_expired(now - timedelta(days=settings.QR_TOKEN_RETENTION_DAYS))
         self.repo.revoke_all_for_employee(employee.id)
         token = secrets.token_urlsafe(TOKEN_BYTES)
         qr = self.repo.add(
@@ -93,7 +104,7 @@ class QrService:
             created_at=qr.created_at,
             expires_at=as_utc(qr.expires_at) or datetime.now(UTC),
             lifetime_seconds=lifetime_seconds,
-            image_base64="data:image/png;base64," + self._render_png(content),
+            content=content,
         )
 
     def status(self, employee: Employee, qr_id: int) -> QrStatusRead:
@@ -115,9 +126,11 @@ class QrService:
             last_used_at=used.used_at if used else None,
         )
 
-    def revoke(self, employee: Employee) -> None:
-        """Invalida el QR vigente (la webapp del empleado muestra otro de inmediato)."""
+    def revoke(self, employee: Employee) -> EmployeeQrSummary:
+        """Invalida el QR vigente (el teléfono del empleado podrá mostrar otro)."""
         self.repo.revoke_all_for_employee(employee.id)
+        self.db.commit()
+        return self.summary(employee)
 
     # ---------- Punto de control: usar un QR ----------
 
@@ -146,7 +159,7 @@ class QrService:
         window = timedelta(seconds=settings.QR_FACE_WINDOW_SECONDS)
         if qr.used_by_id != actor_id or qr.completed_at is not None:
             return QrUse(None, "ALREADY_USED")
-        if as_utc(qr.used_at) + window <= datetime.now(UTC):
+        if has_passed(as_utc(qr.used_at) + window):
             return QrUse(None, "EXPIRED")
         if not self.repo.mark_completed(qr.id, actor_id):
             return QrUse(None, "ALREADY_USED")
@@ -169,13 +182,3 @@ class QrService:
         if qr.employee.company_id != company_id:
             return None, "OTHER_COMPANY"  # se informa como "QR no reconocido" y no se consume
         return qr, None
-
-    @staticmethod
-    def _render_png(data: str) -> str:
-        qr = qrcode.QRCode(error_correction=ERROR_CORRECT_M, box_size=10, border=4)
-        qr.add_data(data)
-        qr.make(fit=True)
-        image = qr.make_image(fill_color="black", back_color="white")
-        buffer = io.BytesIO()
-        image.save(buffer, format="PNG")
-        return base64.b64encode(buffer.getvalue()).decode()

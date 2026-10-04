@@ -1,6 +1,3 @@
-from datetime import datetime
-
-from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
 from app.models import RememberedAccount
@@ -18,10 +15,3 @@ class RememberedAccountRepository:
 
     def delete(self, account: RememberedAccount) -> None:
         self.db.delete(account)
-
-    def purge_expired(self, now: datetime) -> None:
-        self.db.execute(
-            delete(RememberedAccount)
-            .where(RememberedAccount.expires_at <= now)
-            .execution_options(synchronize_session=False)
-        )

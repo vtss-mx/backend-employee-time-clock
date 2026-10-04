@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 from app.core.config import settings
 from app.core.database import SessionLocal
 from app.models import Employee, EmployeeQr, VerificationLog
+from app.services.maintenance_service import purge_expired
 from app.services.qr_service import LEGACY_PREFIX, QrService
 from tests.conftest import approved_employee, qr_content
 from tests.test_policy import URL as POLICY
@@ -173,8 +174,8 @@ def test_issuing_codes_is_rate_limited_and_old_ones_are_purged(client, company_h
     old = _latest(employee_id)
     qr_content(employee_id)  # reemplaza al anterior
     _change(old, expires_at=datetime.now(UTC) - timedelta(days=settings.QR_TOKEN_RETENTION_DAYS + 1))
-    qr_content(employee_id)  # al emitir se depuran los vencidos hace tiempo
-    with SessionLocal() as db:
+    with SessionLocal() as db:  # el mantenimiento (fuera de las peticiones) depura los vencidos hace tiempo
+        assert purge_expired(db)["códigos QR"] == 1
         assert db.get(EmployeeQr, old) is None
 
     monkeypatch.setattr(settings, "RATE_LIMIT_QR_PER_MINUTE", 2)

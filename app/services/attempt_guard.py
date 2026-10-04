@@ -15,12 +15,12 @@ más antiguo de esos salga de la ventana.
 import math
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.clock import as_utc
 from app.core.exceptions import AppError
-from app.models import VerificationLog, VerificationMethod
+from app.models import VerificationMethod
+from app.repositories.verification_repository import VerificationLogRepository
 from app.services.catalog_service import get_catalogs
 from app.services.face_service import SECURITY_REASONS
 from app.services.policy_service import PolicySnapshot
@@ -55,22 +55,23 @@ def ensure_unlocked(
 
     Intentos y minutos los define la empresa (lockout_max_failures, lockout_minutes); puede desactivarlo.
     """
-    column = VerificationLog.employee_id if employee_id is not None else VerificationLog.user_id
     key = employee_id if employee_id is not None else actor_id
     if key is None or not policy.lockout_enabled:
         return
     window = timedelta(minutes=policy.lockout_minutes)
     now = datetime.now(UTC)
-    recent = [column == key, VerificationLog.method.in_(FACE_METHODS), VerificationLog.created_at >= now - window]
-    # El orden lo da el id de la bitácora (estrictamente creciente): varias horas pueden coincidir.
-    last_success = db.scalar(select(func.max(VerificationLog.id)).where(*recent, VerificationLog.success.is_(True)))
-    query = select(VerificationLog.created_at).where(
-        *recent, VerificationLog.success.is_(False), VerificationLog.reason.in_(reasons)
-    )
-    if last_success is not None:
-        query = query.where(VerificationLog.id > last_success)
-    failures = [as_utc(at) for at in db.scalars(query.order_by(VerificationLog.id.desc()))]
     limit = policy.lockout_max_failures
+    failures = [
+        as_utc(at)
+        for at in VerificationLogRepository(db).recent_failures(
+            employee_id=employee_id,
+            actor_id=actor_id,
+            methods=FACE_METHODS,
+            reasons=reasons,
+            since=now - window,
+            limit=limit,
+        )
+    ]
     if len(failures) < limit:
         return
     # Se libera cuando el más antiguo de los `limit` fallos más recientes sale de la ventana.

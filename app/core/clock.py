@@ -16,6 +16,12 @@ def as_utc(value: datetime | None) -> datetime | None:
     return value if value is None or value.tzinfo else value.replace(tzinfo=UTC)
 
 
+def has_passed(moment: datetime, now: datetime | None = None) -> bool:
+    """¿Ya llegó ese momento? (vencimientos de QR, llaves, retos, cuentas recordadas...). Acepta
+    fechas sin zona (SQLite) y un `now` fijo para evaluar varias con el mismo instante."""
+    return as_utc(moment) <= (now or datetime.now(UTC))
+
+
 def business_now() -> datetime:
     """Ahora en la zona horaria del negocio (APP_TIMEZONE), no la del servidor."""
     return datetime.now(ZoneInfo(settings.APP_TIMEZONE))

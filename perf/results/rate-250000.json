@@ -1,0 +1,129 @@
+{
+    "setup_data": {
+        "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6IkZxUUE0UFZTOEszMjBxeTciLCJ0eXAiOiJhdCtqd3QifQ.eyJpc3MiOiJ0aW1lLWNsb2NrLWFwaSIsImF1ZCI6InRpbWUtY2xvY2std2ViIiwic3ViIjoiNSIsInNpZCI6IjkzZjc3YjA1ZjVlMzQxMzQ4ZDlmZDA5Y2JmMmE3YThjIiwianRpIjoiODJhNmY4OTk4ZDI0NDg3NTk5ZWY3MDA4MTIyZTZhMjYiLCJyb2xlIjoiQ09NUEFOWSIsImlhdCI6MTc5MTA2NzE1MCwibmJmIjoxNzkxMDY3MTUwLCJleHAiOjE3OTExMTAzNTB9.FB41As9IYF136AqiDkgLT_2Wf9jTEugCnzxNBgtE5pel4pvsETgfIZjMvVyIWvu7GBiHJv6G0rRhbcV6UZSENQ"
+    },
+    "root_group": {
+        "name": "",
+        "path": "",
+        "id": "d41d8cd98f00b204e9800998ecf8427e",
+        "groups": {},
+        "checks": {
+                "respuesta 200": {
+                    "name": "respuesta 200",
+                    "path": "::respuesta 200",
+                    "id": "b304736d6fbf81af5836a4c1d2b9d46c",
+                    "passes": 4090,
+                    "fails": 344715
+                }
+            }
+    },
+    "metrics": {
+        "http_req_connecting": {
+            "avg": 0.060219908467744124,
+            "p(50)": 0,
+            "p(95)": 0,
+            "p(99)": 0,
+            "max": 62.065792
+        },
+        "shed_503": {
+            "count": 344715,
+            "rate": 16732.88379332058
+        },
+        "http_req_failed": {
+            "passes": 344715,
+            "fails": 4091,
+            "value": 0.9882714173494722
+        },
+        "data_sent": {
+            "count": 192315648,
+            "rate": 9335234.583992995
+        },
+        "http_req_sending": {
+            "avg": 0.4882352975723503,
+            "p(50)": 0.004583,
+            "p(95)": 0.4459792499999987,
+            "p(99)": 18.556850649999994,
+            "max": 77.32275
+        },
+        "http_req_tls_handshaking": {
+            "p(50)": 0,
+            "p(95)": 0,
+            "p(99)": 0,
+            "max": 0,
+            "avg": 0
+        },
+        "iterations": {
+            "count": 348805,
+            "rate": 16931.41734919915
+        },
+        "dropped_iterations": {
+            "count": 4651913,
+            "rate": 225809.49377206483
+        },
+        "http_req_duration{expected_response:true}": {
+            "avg": 1428.2417138440471,
+            "p(50)": 1091.881751,
+            "p(95)": 4962.314988,
+            "p(99)": 7561.669032499998,
+            "max": 10597.942172
+        },
+        "data_received": {
+            "count": 216345865,
+            "rate": 10501690.434737166
+        },
+        "checks": {
+            "passes": 4090,
+            "fails": 344715,
+            "value": 0.011725749344189447
+        },
+        "http_reqs": {
+            "count": 348806,
+            "rate": 16931.46589041086
+        },
+        "http_req_waiting": {
+            "avg": 79.13735561598685,
+            "p(50)": 46.869375500000004,
+            "p(95)": 109.42998949999999,
+            "p(99)": 960.4582235499994,
+            "max": 10591.78613
+        },
+        "http_req_receiving": {
+            "max": 87.1745,
+            "avg": 0.19146806876314987,
+            "p(50)": 0.010125,
+            "p(95)": 0.148,
+            "p(99)": 3.2392104499999976
+        },
+        "vus_max": {
+            "value": 1500,
+            "min": 1500,
+            "max": 1500
+        },
+        "iteration_duration": {
+            "p(95)": 121.96967499999997,
+            "p(99)": 973.1430683599984,
+            "max": 10624.897213,
+            "avg": 82.30554437296513,
+            "p(50)": 48.305459
+        },
+        "http_req_duration": {
+            "p(95)": 113.28924999999992,
+            "p(99)": 965.3498957999996,
+            "max": 10597.942172,
+            "avg": 79.8170589823211,
+            "p(50)": 47.1867715
+        },
+        "http_req_blocked": {
+            "avg": 0.06828362656027497,
+            "p(50)": 0.001209,
+            "p(95)": 0.004125,
+            "p(99)": 0.011292,
+            "max": 72.584666
+        },
+        "vus": {
+            "max": 1500,
+            "value": 1491,
+            "min": 1336
+        }
+    }
+}

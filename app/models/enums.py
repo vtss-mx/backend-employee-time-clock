@@ -69,6 +69,39 @@ class DeviceStatus(StrEnum):
     REVOKED = "REVOKED"
 
 
+class ApiScope(StrEnum):
+    """Permiso de una llave de la API de integración (catalog.api_scopes)."""
+
+    EMPLOYEES_READ = "EMPLOYEES_READ"
+    ATTENDANCE_READ = "ATTENDANCE_READ"
+    VALIDATORS_READ = "VALIDATORS_READ"
+
+
+class ErrorStatus(StrEnum):
+    """Seguimiento de un error del sistema (catalog.error_statuses): lo decide el ADMIN."""
+
+    PENDING = "PENDING"
+    IN_PROGRESS = "IN_PROGRESS"
+    IN_REVIEW = "IN_REVIEW"
+    RESOLVED = "RESOLVED"
+
+
+class ErrorSeverity(StrEnum):
+    """Gravedad de un error del sistema (catalog.error_severities)."""
+
+    CRITICAL = "CRITICAL"  # falla no controlada (500) o en segundo plano
+    ERROR = "ERROR"  # servicio no disponible u ocupado (5xx controlado)
+    WARNING = "WARNING"  # solicitud rechazada (4xx: validación, permisos, reglas de negocio)
+
+
+class ApiKeyStatus(StrEnum):
+    """Estado de una llave de la API (catalog.api_key_statuses): se deriva de sus fechas."""
+
+    ACTIVE = "ACTIVE"
+    EXPIRED = "EXPIRED"
+    REVOKED = "REVOKED"
+
+
 class EnrollmentStatus(StrEnum):
     PENDING = "PENDING"
     APPROVED = "APPROVED"
@@ -80,11 +113,15 @@ class Screen(StrEnum):
 
     ADMIN_DASHBOARD = "ADMIN_DASHBOARD"
     ADMIN_COMPANIES = "ADMIN_COMPANIES"
+    ADMIN_ERRORS = "ADMIN_ERRORS"
     COMPANY_DASHBOARD = "COMPANY_DASHBOARD"
     COMPANY_EMPLOYEES = "COMPANY_EMPLOYEES"
+    COMPANY_DEPARTMENTS = "COMPANY_DEPARTMENTS"
     COMPANY_VALIDATIONS = "COMPANY_VALIDATIONS"
     COMPANY_VALIDATORS = "COMPANY_VALIDATORS"
     COMPANY_SETTINGS = "COMPANY_SETTINGS"
+    COMPANY_API = "COMPANY_API"
+    COMPANY_REPORTS = "COMPANY_REPORTS"
     VALIDATOR_CHECKPOINT = "VALIDATOR_CHECKPOINT"
     EMPLOYEE_ENROLL = "EMPLOYEE_ENROLL"
     EMPLOYEE_PENDING = "EMPLOYEE_PENDING"

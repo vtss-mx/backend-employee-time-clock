@@ -22,6 +22,7 @@ from app.services.availability_service import Availability, AvailabilityService
 from app.services.availability_service import Field as EmployeeField
 from app.services.catalog_service import get_catalogs
 from app.services.company_service import CompanyService
+from app.services.department_service import DepartmentService
 
 #: (BD, usuario, valor, id excluido al editar, valor relacionado) → resultado.
 Checker = Callable[[Session, User, str, int | None, str | None], Availability]
@@ -57,6 +58,13 @@ def _company(field: str, kind: str) -> Checker:
     return check
 
 
+def _department_name(db: Session, user: User, value: str, exclude_id: int | None, _related: str | None) -> Availability:
+    """Nombre de departamento: único en la empresa (sin distinguir mayúsculas)."""
+    if user.company_id is None:
+        raise PermissionDeniedError("Esta validación corresponde a una empresa", code="COMPANY_REQUIRED")
+    return DepartmentService(db, user.company_id).name_availability(value, exclude_id)
+
+
 def _format_only(field: str, normalize: Callable[[str], str], empty: str, valid: str) -> Checker:
     """Datos que no son únicos (teléfono de la empresa): solo el formato, con la misma regla que al guardar."""
 
@@ -76,6 +84,7 @@ def _format_only(field: str, normalize: Callable[[str], str], empty: str, valid:
 FIELDS: dict[str, LiveField] = {
     **{field: LiveField((Screen.COMPANY_EMPLOYEES,), _employee(field)) for field in EMPLOYEE_FIELDS},
     "validator_email": LiveField((Screen.COMPANY_VALIDATORS,), _company("validator_email", "email")),
+    "department_name": LiveField((Screen.COMPANY_DEPARTMENTS,), _department_name),
     "company_rfc": LiveField((Screen.ADMIN_COMPANIES,), _company("company_rfc", "rfc")),
     "company_admin_email": LiveField((Screen.ADMIN_COMPANIES,), _company("company_admin_email", "email")),
     "company_phone": LiveField(
@@ -85,9 +94,9 @@ FIELDS: dict[str, LiveField] = {
 }
 
 
-def fields_for(user: User, db: Session | None = None) -> list[str]:
+def fields_for(user: User) -> list[str]:
     """Campos que el usuario puede validar (según las pantallas de su rol)."""
-    catalogs = get_catalogs(db)
+    catalogs = get_catalogs()
     return [name for name, spec in FIELDS.items() if catalogs.grants(user.role.value, spec.screens)]
 
 
@@ -100,6 +109,6 @@ def validate_field(
     teléfono de un empleado nuevo: si la persona ya trabaja en otra empresa, deben ser de ella).
     """
     spec = FIELDS.get(field)
-    if spec is None or not get_catalogs(db).grants(user.role.value, spec.screens):
+    if spec is None or not get_catalogs().grants(user.role.value, spec.screens):
         raise PermissionDeniedError("No puedes validar este campo", code="FIELD_NOT_ALLOWED")
     return spec.check(db, user, value, exclude_id, related)

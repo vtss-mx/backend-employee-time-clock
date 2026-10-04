@@ -3,6 +3,7 @@
 python -m app.cli create-admin --email admin@plataforma.com
 python -m app.cli create-company --email admin@empresa.com
 python -m app.cli create-company --email admin@empresa.com --password 'Admin1234'
+python -m app.cli purge          (depura lo vencido ahora; útil desde un cron externo)
 """
 
 import argparse
@@ -11,6 +12,7 @@ import sys
 
 from app.core.database import SessionLocal
 from app.services.bootstrap import UserFactory, create_admin_user, create_company_user
+from app.services.maintenance_service import run_once
 
 
 def _create_admin(args: argparse.Namespace) -> int:
@@ -36,6 +38,15 @@ def _create(args: argparse.Namespace, label: str, create: UserFactory) -> int:
     return 0
 
 
+def _purge(_: argparse.Namespace) -> int:
+    removed = run_once()
+    if removed is None:
+        print("Otra instancia está depurando en este momento; no se hizo nada.")
+        return 0
+    print("Depurado: " + ", ".join(f"{name}={count}" for name, count in removed.items()))
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(prog="python -m app.cli")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -47,6 +58,8 @@ def main() -> int:
     create.add_argument("--email", required=True)
     create.add_argument("--password", help="Si se omite se solicita de forma interactiva")
     create.set_defaults(func=_create_company)
+    purge = sub.add_parser("purge", help="Depurar lo vencido (sesiones, retos, huellas, QR, contadores)")
+    purge.set_defaults(func=_purge)
     args = parser.parse_args()
     return args.func(args)
 

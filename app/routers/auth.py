@@ -5,16 +5,27 @@
   JavaScript, no viaja a otros endpoints). Rota en cada uso con detección de reutilización.
 """
 
+import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Cookie, Depends, Request, Response
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.config import settings
+from app.core.opaque_tokens import split_token
 from app.core.responses import ApiResponse, ok
 from app.core.tokens import jwks
-from app.dependencies import CurrentUser, DbSession, EmployeeAccount, OptionalTokenPayload, Pagination, request_meta
+from app.dependencies import (
+    CurrentUser,
+    DbSession,
+    EmployeeAccount,
+    OptionalTokenPayload,
+    Pagination,
+    request_meta,
+    require_screen,
+)
 from app.middleware.rate_limit import enforce, ip_rate_limit
-from app.models import SessionRevocationReason
+from app.models import Screen, SessionRevocationReason
 from app.schemas.auth import (
     ChangePasswordRequest,
     CompanySelection,
@@ -23,6 +34,7 @@ from app.schemas.auth import (
     RememberedAccountRead,
     SessionList,
     SessionRead,
+    SessionStatus,
     TokenResponse,
 )
 from app.schemas.common import ErrorResponse
@@ -34,6 +46,8 @@ from app.services.navigation_service import user_read
 from app.services.policy_service import ensure_device_allowed
 from app.services.remembered_account_service import RememberedAccountService
 from app.services.session_service import IssuedSession, SessionService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["Autenticación"])
 
@@ -105,14 +119,38 @@ def login(
     ensure_location_allowed(user, payload.location)
     issued = SessionService(db).create(user, ip=ip, user_agent=user_agent, persistent=payload.remember)
     _set_refresh_cookie(response, request, issued, issued.refresh_token or "")
-    accounts = RememberedAccountService(db)
-    if payload.remember:
-        days = settings.REMEMBER_ACCOUNT_DAYS
-        _set_cookie(response, request, settings.REMEMBER_COOKIE_NAME, accounts.remember(user, remembered), days * 86400)
-    elif remembered:
-        accounts.forget(remembered)
-        _clear_cookie(response, request, settings.REMEMBER_COOKIE_NAME)
+    try:  # recordar la cuenta es un extra: si falla, la sesión (ya creada) no se pierde
+        accounts = RememberedAccountService(db)
+        if payload.remember:
+            days = settings.REMEMBER_ACCOUNT_DAYS
+            token = accounts.remember(user, remembered)
+            _set_cookie(response, request, settings.REMEMBER_COOKIE_NAME, token, days * 86400)
+        elif remembered:
+            accounts.forget(remembered)
+            _clear_cookie(response, request, settings.REMEMBER_COOKIE_NAME)
+    except SQLAlchemyError:
+        db.rollback()
+        logger.warning("No se pudo recordar la cuenta en este dispositivo; la sesión sí se inició", exc_info=True)
     return ok(_token_response(issued), "Sesión iniciada correctamente", code="LOGIN_SUCCESS")
+
+
+@router.get(
+    "/session",
+    response_model=ApiResponse[SessionStatus],
+    summary="¿Hay una sesión vigente? (sin renovarla)",
+    description=(
+        "Lo consulta la aplicación al cargar para decidir si restaura la sesión con `/auth/refresh`. "
+        "Lee la cookie HttpOnly sin rotarla ni cerrarla; sin sesión responde `signed_in: false` (no es "
+        "un error). El navegador no guarda nada propio para saberlo."
+    ),
+    responses={429: {"model": ErrorResponse}},
+    dependencies=[Depends(ip_rate_limit("session", lambda: settings.RATE_LIMIT_LOGIN_IP_PER_MINUTE))],
+)
+def session_status(db: DbSession, token: RefreshCookie = None) -> ApiResponse[SessionStatus]:
+    signed_in = SessionService(db).has_session(token)
+    return ok(
+        SessionStatus(signed_in=signed_in), "Sesión vigente" if signed_in else "Sin sesión", code="SESSION_STATUS"
+    )
 
 
 @router.post(
@@ -124,11 +162,15 @@ def login(
         "revoca la sesión: 401 `REFRESH_TOKEN_REUSED`."
     ),
     responses={401: {"model": ErrorResponse}, 429: {"model": ErrorResponse}},
-    dependencies=[Depends(ip_rate_limit("refresh", lambda: settings.RATE_LIMIT_REFRESH_PER_MINUTE))],
+    dependencies=[Depends(ip_rate_limit("refresh", lambda: settings.RATE_LIMIT_LOGIN_IP_PER_MINUTE))],
 )
 def refresh(
     request: Request, response: Response, db: DbSession, token: RefreshCookie = None
 ) -> ApiResponse[TokenResponse]:
+    # Por sesión (la cookie): una oficina entera detrás de una sola IP no se bloquea entre sí.
+    sid, _ = split_token(token)
+    if sid:
+        enforce(f"refresh:sid:{sid}", settings.RATE_LIMIT_REFRESH_PER_MINUTE)
     issued = SessionService(db).refresh(token)
     if issued.refresh_token:
         _set_refresh_cookie(response, request, issued, issued.refresh_token)
@@ -145,6 +187,7 @@ def refresh(
         "cambiar en cualquier momento sin volver a iniciar sesión."
     ),
     responses={403: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
+    dependencies=[Depends(require_screen(Screen.EMPLOYEE_SELECT_COMPANY))],
 )
 def select_company(
     payload: CompanySelection, request: Request, user: EmployeeAccount, db: DbSession
@@ -225,9 +268,8 @@ def change_password(
     payload: ChangePasswordRequest, request: Request, user: CurrentUser, db: DbSession
 ) -> ApiResponse[dict]:
     enforce(f"change-password:user:{user.id}", settings.RATE_LIMIT_LOGIN_PER_MINUTE)
-    AuthService(db).change_password(user, payload.current_password, payload.new_password)
     current = getattr(request.state, "session_id", None)
-    revoked = SessionService(db).revoke_all(user.id, SessionRevocationReason.PASSWORD_CHANGED, except_id=current)
+    revoked = SessionService(db).change_password(user, payload.current_password, payload.new_password, keep=current)
     message = "Contraseña actualizada." + (
         f" Se cerraron {revoked} sesión(es) en otros dispositivos." if revoked else ""
     )

@@ -1,0 +1,36 @@
+ Container timeclock-perf-k6-run-34d321f7bc2f Creating 
+ Container timeclock-perf-k6-run-34d321f7bc2f Created 
+time="2026-10-03T22:39:37Z" level=warning msg="Insufficient VUs, reached 1500 active VUs and cannot initialize more" executor=constant-arrival-rate scenario=load
+
+
+  █ TOTAL RESULTS 
+
+    checks_total.......: 366978 17544.124431/s
+    checks_succeeded...: 1.09%  4005 out of 366978
+    checks_failed......: 98.90% 362973 out of 366978
+
+    ✗ respuesta 200
+      ↳  1% — ✓ 4005 / ✗ 362973
+
+    CUSTOM
+    shed_503.......................: 362973  17352.657318/s
+
+    HTTP
+    http_req_duration..............: avg=75.68ms p(50)=47.52ms p(95)=121.57ms p(99)=726.6ms  max=10.71s
+      { expected_response:true }...: avg=1.35s   p(50)=1s      p(95)=3.87s    p(99)=5.5s     max=10.71s
+    http_req_failed................: 98.90%  362973 out of 366979
+    http_reqs......................: 366979  17544.172238/s
+
+    EXECUTION
+    dropped_iterations.............: 9611755 459509.359478/s
+    iteration_duration.............: avg=77.93ms p(50)=48.92ms p(95)=126.95ms p(99)=733.19ms max=10.71s
+    iterations.....................: 366978  17544.124431/s
+    vus............................: 942     min=670              max=1500
+    vus_max........................: 1500    min=1500             max=1500
+
+    NETWORK
+    data_received..................: 227 MB  11 MB/s
+    data_sent......................: 202 MB  9.7 MB/s
+
+
+

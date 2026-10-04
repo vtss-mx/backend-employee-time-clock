@@ -9,5 +9,7 @@ WORKFORCE = "workforce"  # empleados, su credencial QR y los validadores de iden
 BIOMETRICS = "biometrics"  # registros faciales, embeddings cifrados y retos de prueba de vida
 ATTENDANCE = "attendance"  # bitácora de verificaciones (checadas)
 CATALOG = "catalog"  # catálogos: roles, estados, motivos, métodos, accesorios, países...
+OPS = "ops"  # operación de la plataforma: errores del sistema que revisa el ADMIN
+REPORTING = "reporting"  # asistente de reportes: lo que aprende de cada empresa y sus reportes guardados
 
-ALL_SCHEMAS = (AUTH, TENANCY, WORKFORCE, BIOMETRICS, ATTENDANCE, CATALOG)
+ALL_SCHEMAS = (AUTH, TENANCY, WORKFORCE, BIOMETRICS, ATTENDANCE, CATALOG, OPS, REPORTING)

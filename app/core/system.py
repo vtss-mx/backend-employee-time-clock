@@ -7,14 +7,14 @@ def available_cpus() -> int:
     """Núcleos realmente disponibles: afinidad del proceso y cuota de cgroups (Docker --cpus)."""
     try:
         cpus = len(os.sched_getaffinity(0))
-    except (AttributeError, OSError):
+    except AttributeError, OSError:
         cpus = os.cpu_count() or 1
     try:
         with open("/sys/fs/cgroup/cpu.max") as fh:  # cgroups v2
             quota, period = fh.read().split()
         if quota != "max":
             cpus = min(cpus, max(1, int(int(quota) / int(period))))
-    except (OSError, ValueError):
+    except OSError, ValueError:
         pass
     return max(1, cpus)
 

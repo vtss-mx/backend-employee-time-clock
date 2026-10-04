@@ -3,7 +3,7 @@
 from fastapi import APIRouter
 
 from app.core.responses import ApiResponse, ok
-from app.dependencies import CurrentUser, DbSession
+from app.dependencies import CurrentUser
 from app.schemas.catalog import CatalogsRead
 from app.schemas.common import ErrorResponse
 from app.services.catalog_service import get_catalogs
@@ -23,8 +23,8 @@ router = APIRouter(prefix="/catalogs", tags=["Catálogos"], responses={401: {"mo
         "(esquema `catalog`); incluye los inactivos para nombrar registros históricos."
     ),
 )
-def list_catalogs(_: CurrentUser, db: DbSession) -> ApiResponse[CatalogsRead]:
-    catalogs = get_catalogs(db)
+def list_catalogs(_: CurrentUser) -> ApiResponse[CatalogsRead]:
+    catalogs = get_catalogs()
     entries = dict(catalogs.entries)
     modes = [
         {**mode, "methods": list(catalogs.mode_methods.get(mode["code"], ()))} for mode in entries["validator_modes"]

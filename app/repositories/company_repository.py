@@ -1,10 +1,9 @@
 from collections.abc import Iterable
-from datetime import datetime
 
-from sqlalchemy import delete, func, or_, select, update
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
-from app.models import AuthSession, Company, Employee, SessionRevocationReason, User, UserRole
+from app.models import Company, Employee, User, UserRole
 from app.models.company import company_search_text
 from app.repositories.aggregates import group_counts, paginate
 
@@ -22,6 +21,13 @@ class CompanyRepository:
         self.db.add(company)
         self.db.flush()
         return company
+
+    def names_by_ids(self, company_ids: Iterable[int]) -> dict[int, str]:
+        """Nombre de varias empresas en UNA consulta (p. ej. dónde ocurrió cada error)."""
+        ids = set(company_ids)
+        if not ids:
+            return {}
+        return {int(i): str(n) for i, n in self.db.execute(select(Company.id, Company.name).where(Company.id.in_(ids)))}
 
     def rfc_exists(self, rfc: str, exclude_id: int | None = None) -> bool:
         stmt = select(Company.id).where(Company.rfc == rfc.upper())
@@ -78,27 +84,6 @@ class CompanyRepository:
         ):
             self.db.execute(stmt.execution_options(synchronize_session=False))
         self.db.expunge(company)
-
-    def revoke_sessions(
-        self,
-        now: datetime,
-        reason: SessionRevocationReason,
-        *,
-        company_id: int | None = None,
-        user_id: int | None = None,
-    ) -> None:
-        """Cierra de una vez las sesiones de una empresa (o de un usuario): un solo UPDATE.
-
-        De una empresa: las de sus administradores y las de los empleados que entraron a ELLA (un
-        empleado que también trabaja en otra empresa conserva su sesión de esa otra).
-        """
-        stmt = update(AuthSession).where(AuthSession.revoked_at.is_(None))
-        if company_id is not None:
-            admins = select(User.id).where(User.company_id == company_id)
-            stmt = stmt.where(or_(AuthSession.company_id == company_id, AuthSession.user_id.in_(admins)))
-        else:
-            stmt = stmt.where(AuthSession.user_id == user_id)
-        self.db.execute(stmt.values(revoked_at=now, revoked_reason=reason).execution_options(synchronize_session=False))
 
     def stats(self) -> tuple[int, int, int, int]:
         """(empresas, empresas activas, empleados, administradores de empresa) en una consulta."""

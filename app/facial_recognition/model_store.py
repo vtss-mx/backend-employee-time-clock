@@ -10,6 +10,7 @@ Uso manual:  python -m app.facial_recognition.model_store
 import hashlib
 import logging
 import os
+import shutil
 import sys
 import tempfile
 import urllib.request
@@ -17,6 +18,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+#: Tiempo máximo sin recibir datos al descargar un modelo (s).
+DOWNLOAD_TIMEOUT_SECONDS = 60
 
 
 BUNDLED_DIR = Path(__file__).parent / "data" / "models"
@@ -102,7 +106,10 @@ def ensure_models(
         with tempfile.NamedTemporaryFile(dir=directory, delete=False) as tmp:
             tmp_path = Path(tmp.name)
         try:
-            urllib.request.urlretrieve(model.url, tmp_path)  # noqa: S310 (URL fija https)
+            # Con tiempo límite: sin red, la descarga falla en segundos en vez de colgar el arranque.
+            response = urllib.request.urlopen(model.url, timeout=DOWNLOAD_TIMEOUT_SECONDS)  # noqa: S310 (URL fija https)
+            with response as source, tmp_path.open("wb") as out:
+                shutil.copyfileobj(source, out)
             actual = _sha256(tmp_path)
             if actual != model.sha256:
                 raise RuntimeError(f"Hash inválido para {model.filename}: esperado {model.sha256}, obtenido {actual}")

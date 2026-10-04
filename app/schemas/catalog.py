@@ -79,3 +79,7 @@ class CatalogsRead(BaseModel):
     antispoof_levels: list[AntispoofLevelItem]
     face_errors: list[FaceErrorItem]
     enrollment_flags: list[CatalogItem]
+    api_scopes: list[CatalogItem]
+    api_key_statuses: list[StatusItem]
+    error_statuses: list[StatusItem]
+    error_severities: list[StatusItem]

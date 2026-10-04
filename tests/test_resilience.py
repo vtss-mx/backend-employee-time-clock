@@ -9,11 +9,29 @@ from app.main import app
 from tests.conftest import approved_employee
 
 
-def test_health_probes(client):
+def test_health_probes(client, monkeypatch):
+    from app.services import health_service
+
     assert client.get("/api/health/live").json()["data"] == {"status": "ok"}
+    health_service.clear_cache()
     ready = client.get("/api/health/ready")
     assert ready.status_code == 200
     assert ready.json()["data"]["components"]["database"]["status"] == "ok"
+
+    class DownEngine:
+        def connect(self):
+            raise OperationalError("SELECT 1", {}, Exception("conexión rechazada"))
+
+    # BD caída: 503 reintentable con el sobre de siempre, sin el texto del error (es público).
+    monkeypatch.setattr(health_service, "engine", DownEngine())
+    health_service.clear_cache()
+    down = client.get("/api/health")
+    body = down.json()
+    assert down.status_code == 503 and down.headers["Retry-After"] == "5"
+    assert body["errors"][0]["code"] == "DATABASE_UNAVAILABLE"
+    assert body["data"]["components"]["database"] == {"status": "unavailable"}
+    assert health_service.components()["database"]["error"] == "OperationalError"  # el detalle, para el ADMIN
+    health_service.clear_cache()
 
 
 def test_face_engine_down_returns_503_but_qr_and_admin_keep_working(client, company_headers):
@@ -120,41 +138,6 @@ def test_request_id_is_propagated(client):
     assert response.headers["X-Request-ID"] == "abc12345-test"
     response = client.post("/api/auth/login", json={"email": "x@y.com", "password": "bad"})
     assert response.json()["traceId"] == response.headers["X-Request-ID"]
-
-
-def test_admission_control_rejects_with_envelope_when_saturated():
-    import asyncio
-    import json
-
-    from app.middleware.concurrency import ConcurrencyLimitMiddleware
-
-    async def slow_app(scope, receive, send):
-        await asyncio.sleep(0.3)
-        await send({"type": "http.response.start", "status": 200, "headers": []})
-        await send({"type": "http.response.body", "body": b"{}"})
-
-    middleware = ConcurrencyLimitMiddleware(slow_app, max_concurrent=1, queue_timeout=0.05)
-
-    async def call(path="/api/employees"):
-        messages = []
-
-        async def send(message):
-            messages.append(message)
-
-        async def receive():
-            return {"type": "http.request", "body": b""}
-
-        await middleware({"type": "http", "path": path, "method": "GET", "headers": []}, receive, send)
-        return messages
-
-    async def scenario():
-        return await asyncio.gather(call(), call(), call("/api/health/live"))
-
-    first, second, health = asyncio.run(scenario())
-    assert first[0]["status"] == 200 and health[0]["status"] == 200  # salud nunca se limita
-    assert second[0]["status"] == 503
-    body = json.loads(second[1]["body"])
-    assert body["code"] == "SERVER_BUSY" and body["success"] is False and body["statusCode"] == 503
 
 
 def test_password_hashing_is_bounded(client, monkeypatch):

@@ -19,6 +19,7 @@ from app.schemas.company import (
     CompanyAdminRead,
     CompanyCreate,
     CompanyDetail,
+    CompanyEmployeeList,
     CompanyList,
     CompanyStatusUpdate,
     CompanyUpdate,
@@ -89,6 +90,29 @@ def create_company(payload: CompanyCreate, _: AdminUser, db: DbSession) -> ApiRe
 )
 def get_company(company_id: int, _: AdminUser, db: DbSession) -> ApiResponse[CompanyDetail]:
     return ok(CompanyService(db).detail(company_id), "Empresa encontrada", code="COMPANY_FOUND")
+
+
+@router.get(
+    "/companies/{company_id}/employees",
+    response_model=ApiResponse[CompanyEmployeeList],
+    summary="Empleados de una empresa (paginado, solo lectura)",
+    description=(
+        "Su ficha de trabajo: número, nombre, departamento, correo, teléfono, si está activo y el estado de su "
+        "registro facial. Sin datos fiscales, fecha de nacimiento ni nada biométrico."
+    ),
+    responses=NOT_FOUND,
+    dependencies=[Depends(require_screen(Screen.ADMIN_COMPANIES))],
+)
+def company_employees(
+    company_id: int,
+    _: AdminUser,
+    db: DbSession,
+    page: Pagination,
+    search: Annotated[str | None, Query(max_length=100, description="Nombre, número o correo")] = None,
+    active: Annotated[bool | None, Query(description="Solo activos o inactivos")] = None,
+) -> ApiResponse[CompanyEmployeeList]:
+    result = CompanyService(db).employees(company_id, search=search, active=active, page=page)
+    return ok(result, f"{result.total} empleado(s)", code="COMPANY_EMPLOYEES")
 
 
 @router.put(

@@ -14,9 +14,12 @@ from app.core.system import available_cpus
 _password_hasher = PasswordHasher()
 
 # Argon2id es costoso a propósito (~64 MB y decenas de ms por hash). Sin límite, una ráfaga de
-# miles de inicios de sesión agotaría la memoria y la CPU. Se calculan a lo sumo N a la vez
-# (1 por núcleo); el resto espera en orden y, si se excede la espera, recibe 503 reintentable.
-_hash_slots = threading.BoundedSemaphore(settings.PASSWORD_HASH_CONCURRENCY or available_cpus())
+# miles de inicios de sesión agotaría la memoria y la CPU. Se calculan a lo sumo N a la vez por
+# SERVIDOR (los núcleos repartidos entre los API_WORKERS procesos, como el motor facial); el resto
+# espera en orden y, si se excede la espera, recibe 503 reintentable.
+_hash_slots = threading.BoundedSemaphore(
+    settings.PASSWORD_HASH_CONCURRENCY or max(1, available_cpus() // max(1, settings.API_WORKERS))
+)
 
 
 @contextmanager
@@ -47,7 +50,7 @@ def verify_password(password: str, password_hash: str | None) -> bool:
     with _hash_slot():
         try:
             return _password_hasher.verify(password_hash or _DUMMY_HASH, password) and password_hash is not None
-        except (VerificationError, InvalidHashError):
+        except VerificationError, InvalidHashError:
             return False
 
 

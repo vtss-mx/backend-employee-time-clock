@@ -22,6 +22,15 @@ class ValidatorRepository:
         validator = self.db.get(Validator, validator_id)
         return validator if validator is not None and validator.company_id == self.company_id else None
 
+    def by_user_ids(self, user_ids: set[int]) -> dict[int, Validator]:
+        """Validadores de la empresa por su cuenta de usuario (quién hizo cada identificación)."""
+        if not user_ids:
+            return {}
+        rows = self.db.scalars(
+            select(Validator).where(Validator.company_id == self.company_id, Validator.user_id.in_(user_ids))
+        )
+        return {v.user_id: v for v in rows}
+
     def add(self, validator: Validator) -> Validator:
         validator.company_id = self.company_id
         self.db.add(validator)

@@ -252,3 +252,44 @@ def test_employee_limit_of_the_plan(client, admin_headers, company_headers):
     assert create_employee(client, company_headers).status_code == 201
     over = create_employee(client, company_headers, number="EMP-002", email="otro@empresa.com")
     assert over.status_code == 409 and over.json()["code"] == "EMPLOYEE_LIMIT_REACHED"
+
+
+def test_admin_sees_the_employees_of_a_company_paginated_and_read_only(
+    client, admin_headers, company_headers, second_company
+):
+    """El ADMIN ve la ficha de trabajo de los empleados de cada empresa, paginada y con búsqueda; sin
+    datos fiscales, fecha de nacimiento ni nada biométrico."""
+    for number, email in (
+        ("EMP-001", "juan@empresa.com"),
+        ("EMP-002", "ana@empresa.com"),
+        ("EMP-003", "luis@empresa.com"),
+    ):
+        assert create_employee(client, company_headers, number=number, email=email).status_code == 201
+    companies = client.get("/api/admin/companies", headers=admin_headers).json()["data"]["items"]
+    other_id = second_company[0]["id"]
+    mine = next(c["id"] for c in companies if c["id"] != other_id)
+    url = f"/api/admin/companies/{mine}/employees"
+
+    page = client.get(url, params={"size": 2}, headers=admin_headers).json()["data"]
+    assert page["total"] == 3 and len(page["items"]) == 2
+    item = page["items"][0]
+    assert set(item) == {
+        "id",
+        "employee_number",
+        "first_name",
+        "last_name",
+        "department_name",
+        "email",
+        "phone",
+        "active",
+        "face_status",
+    }
+    found = client.get(url, params={"search": "ana@"}, headers=admin_headers).json()["data"]
+    assert [e["email"] for e in found["items"]] == ["ana@empresa.com"]
+    assert client.get(url, params={"active": False}, headers=admin_headers).json()["data"]["total"] == 0
+
+    other = client.get(f"/api/admin/companies/{other_id}/employees", headers=admin_headers).json()["data"]
+    assert other["total"] == 0  # cada empresa con los suyos
+    missing = client.get("/api/admin/companies/999999/employees", headers=admin_headers)
+    assert missing.status_code == 404
+    assert client.get(url, headers=company_headers).status_code == 403  # solo el ADMIN de la plataforma

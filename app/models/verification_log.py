@@ -15,17 +15,17 @@ class VerificationLog(Base):
     __table_args__ = (
         # Historial de un empleado: WHERE employee_id ORDER BY created_at DESC, id DESC LIMIT n.
         Index("ix_verification_logs_employee_created", "employee_id", "created_at", "id"),
-        # Tabla de solo inserción en orden de tiempo: un índice BRIN ocupa una fracción mínima de
-        # un B-tree y casi no cuesta al insertar (reportes y depuración por rango de fechas).
-        Index("ix_verification_logs_created_at_brin", "created_at", postgresql_using="brin"),
-        # Reportes de una empresa por fecha.
-        Index("ix_verification_logs_company_created", "company_id", "created_at"),
+        # Bitácora de una empresa en orden de llegada (API de integración: listado y cursor por id).
+        Index("ix_verification_logs_company_log", "company_id", "id"),
         # Quién hizo el intento (el empleado o el validador): historial reciente de un validador
-        # (WHERE user_id ORDER BY created_at DESC LIMIT n) y la FK con ON DELETE SET NULL.
+        # (WHERE user_id ORDER BY created_at DESC, id DESC), sus identificaciones del día y el
+        # bloqueo por fallos seguidos. INCLUDE: esos conteos se resuelven sin leer la tabla.
         Index(
             "ix_verification_logs_user_created",
             "user_id",
             "created_at",
+            "id",
+            postgresql_include=["success", "method"],
             postgresql_where=text("user_id IS NOT NULL"),
             sqlite_where=text("user_id IS NOT NULL"),
         ),

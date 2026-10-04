@@ -1,17 +1,14 @@
 from fastapi import APIRouter, Depends, status
 
-from app.core.config import settings
 from app.core.responses import ApiResponse, ok
-from app.dependencies import CurrentUser, DbSession, EmployeeUser, require_screen
-from app.middleware.rate_limit import enforce
+from app.dependencies import CurrentUser, DbSession, EmployeeUser, qr_rate_limit, require_screen
 from app.models import Screen
 from app.schemas.common import ErrorResponse
 from app.schemas.qr import DynamicQrRead, QrStatusRead
 from app.schemas.user import UserPreferences, UserPreferencesUpdate, UserRead
 from app.services.navigation_service import user_read
-from app.services.policy_service import PolicyService
+from app.services.preferences_service import update_preferences
 from app.services.qr_service import QrService
-from app.services.verification_service import VerificationService
 
 router = APIRouter(prefix="/users", tags=["Usuarios"])
 
@@ -30,11 +27,7 @@ def me(user: CurrentUser) -> ApiResponse[UserRead]:
 def update_my_preferences(
     changes: UserPreferencesUpdate, user: CurrentUser, db: DbSession
 ) -> ApiResponse[UserPreferences]:
-    current = UserPreferences.model_validate(user.preferences or {})
-    updated = current.model_copy(update=changes.model_dump(exclude_unset=True, exclude_none=True))
-    user.preferences = updated.model_dump()  # nuevo dict: SQLAlchemy detecta el cambio del JSON
-    db.commit()
-    return ok(updated, "Preferencias guardadas", code="PREFERENCES_UPDATED")
+    return ok(update_preferences(db, user, changes), "Preferencias guardadas", code="PREFERENCES_UPDATED")
 
 
 @router.post(
@@ -50,19 +43,10 @@ def update_my_preferences(
         "del que la BD guarda su hash."
     ),
     responses={403: {"model": ErrorResponse}, 429: {"model": ErrorResponse}},
-    dependencies=[Depends(require_screen(Screen.EMPLOYEE_QR))],
+    dependencies=[Depends(require_screen(Screen.EMPLOYEE_QR)), Depends(qr_rate_limit)],
 )
 def issue_my_qr(user: EmployeeUser, db: DbSession) -> ApiResponse[DynamicQrRead]:
-    employee = VerificationService._employee_of(user)  # activo + identidad aprobada
-    enforce(f"qr:user:{user.id}", settings.RATE_LIMIT_QR_PER_MINUTE)
-    policies = PolicyService(db, employee.company_id)
-    policies.ensure_qr_enabled()
-    lifetime = policies.current().qr_lifetime_seconds
-    qr_service = QrService(db)
-    qr, content = qr_service.issue(employee, lifetime)
-    db.commit()
-    db.refresh(qr)
-    return ok(qr_service.to_read(employee, qr, content, lifetime), "Tu código QR", code="MY_QR", status_code=201)
+    return ok(QrService(db).issue_for(user), "Tu código QR", code="MY_QR", status_code=201)
 
 
 @router.get(
@@ -74,5 +58,4 @@ def issue_my_qr(user: EmployeeUser, db: DbSession) -> ApiResponse[DynamicQrRead]
     dependencies=[Depends(require_screen(Screen.EMPLOYEE_QR))],
 )
 def my_qr_status(qr_id: int, user: EmployeeUser, db: DbSession) -> ApiResponse[QrStatusRead]:
-    employee = VerificationService._employee_of(user)
-    return ok(QrService(db).status(employee, qr_id), "Estado de tu código QR", code="MY_QR_STATUS")
+    return ok(QrService(db).status_for(user, qr_id), "Estado de tu código QR", code="MY_QR_STATUS")

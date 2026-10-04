@@ -11,6 +11,7 @@ from sqlalchemy import (
     Integer,
     String,
     false,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -40,8 +41,8 @@ class Validator(TimestampMixin, Base):
 
     __tablename__ = "validators"
     __table_args__ = (
-        # Listado de la empresa en orden alfabético.
-        Index("ix_validators_company_name", "company_id", "name"),
+        # Listado de la empresa en orden alfabético sin distinguir mayúsculas (ORDER BY lower(name), id).
+        Index("ix_validators_company_name", "company_id", text("lower(name)"), "id"),
         Index("ix_validators_country_code", "country_code"),
         # Latitud y longitud van juntas y dentro de sus rangos (WGS84).
         CheckConstraint(
@@ -99,5 +100,5 @@ class Validator(TimestampMixin, Base):
     location_required: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false(), nullable=False)
     location_radius_m: Mapped[int | None] = mapped_column(Integer)
 
-    user: Mapped["User"] = relationship(back_populates="validator", foreign_keys=[user_id], lazy="joined")
-    company: Mapped["Company"] = relationship(lazy="joined")
+    user: Mapped[User] = relationship(back_populates="validator", foreign_keys=[user_id], lazy="joined")
+    company: Mapped[Company] = relationship(lazy="joined")

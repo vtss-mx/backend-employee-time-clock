@@ -1,0 +1,36 @@
+ Container timeclock-perf-k6-run-f7ecc24bd062 Creating 
+ Container timeclock-perf-k6-run-f7ecc24bd062 Created 
+time="2026-10-03T22:36:30Z" level=warning msg="Insufficient VUs, reached 1500 active VUs and cannot initialize more" executor=constant-arrival-rate scenario=load
+
+
+  █ TOTAL RESULTS 
+
+    checks_total.......: 53745  2492.494801/s
+    checks_succeeded...: 31.73% 17058 out of 53745
+    checks_failed......: 68.26% 36687 out of 53745
+
+    ✗ respuesta 200
+      ↳  31% — ✓ 17058 / ✗ 36687
+
+    CUSTOM
+    shed_503.......................: 36687  1701.407699/s
+
+    HTTP
+    http_req_duration..............: avg=450.35ms p(50)=77.82ms p(95)=2.41s p(99)=5.06s max=12.65s
+      { expected_response:true }...: avg=801.57ms p(50)=491.4ms p(95)=3.05s p(99)=4.74s max=9.82s 
+    http_req_failed................: 68.25% 36687 out of 53746
+    http_reqs......................: 53746  2492.541178/s
+
+    EXECUTION
+    dropped_iterations.............: 6256   290.130198/s
+    iteration_duration.............: avg=450.7ms  p(50)=77.93ms p(95)=2.41s p(99)=5.06s max=12.65s
+    iterations.....................: 53745  2492.494801/s
+    vus............................: 337    min=337            max=1500
+    vus_max........................: 1500   min=1336           max=1500
+
+    NETWORK
+    data_received..................: 79 MB  3.7 MB/s
+    data_sent......................: 30 MB  1.4 MB/s
+
+
+

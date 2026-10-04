@@ -32,12 +32,15 @@ from app.schemas.employee import (
     EmployeeStatusUpdate,
     EmployeeUpdate,
     IdentityReverifyRequest,
+    IdentityReverifySummary,
 )
 from app.schemas.enrollment import EnrollmentSubmitResponse
+from app.schemas.face import FaceLearningSummary
 from app.schemas.qr import EmployeeQrSummary
 from app.schemas.verification import VerificationLogList, VerificationResult
 from app.services.employee_service import EmployeeService
 from app.services.enrollment_service import EnrollmentService
+from app.services.face_learning import learning_summary
 from app.services.qr_service import QrService
 from app.services.verification_service import VerificationService
 
@@ -57,7 +60,10 @@ NOT_FOUND: dict[int | str, dict[str, Any]] = {404: {"model": ErrorResponse, "des
     "",
     response_model=ApiResponse[EmployeeList],
     summary="Listar/buscar empleados",
-    dependencies=[Depends(require_screen(Screen.COMPANY_EMPLOYEES, Screen.COMPANY_DASHBOARD))],
+    description="También la usa Departamentos: sus empleados (`department_id`) y a quién asignar o nombrar.",
+    dependencies=[
+        Depends(require_screen(Screen.COMPANY_EMPLOYEES, Screen.COMPANY_DASHBOARD, Screen.COMPANY_DEPARTMENTS))
+    ],
 )
 def list_employees(
     company: CompanyScope,
@@ -65,8 +71,11 @@ def list_employees(
     page: Pagination,
     search: Annotated[str | None, Query(max_length=100, description="Nombre, número o correo")] = None,
     active: Annotated[bool | None, Query(description="Filtrar por estado")] = None,
+    department_id: Annotated[int | None, Query(gt=0, description="Solo los asignados a ese departamento")] = None,
 ) -> ApiResponse[EmployeeList]:
-    result = EmployeeService(db, company).list_employees(search=search, active=active, page=page)
+    result = EmployeeService(db, company).list_employees(
+        search=search, active=active, page=page, department_id=department_id
+    )
     return ok(result, f"{result.total} empleado(s) encontrado(s)", code="EMPLOYEES_LISTED")
 
 
@@ -151,6 +160,43 @@ def delete_employee(employee_id: int, company: CompanyScope, db: DbSession) -> A
 # ---------------- Rostro ----------------
 
 
+@router.get(
+    "/face/learning",
+    response_model=ApiResponse[FaceLearningSummary],
+    summary="Evolución del reconocimiento facial de la empresa",
+    description=(
+        "Lo que la galería de la empresa aprendió de sus identificaciones seguras: empleados que ya "
+        "aprenden, muestras aprendidas vigentes y cuántas identificaciones decidieron."
+    ),
+    dependencies=[Depends(require_screen(Screen.COMPANY_DASHBOARD, Screen.COMPANY_EMPLOYEES))],
+)
+def face_learning(company: CompanyScope, db: DbSession) -> ApiResponse[FaceLearningSummary]:
+    return ok(learning_summary(db, company), "Evolución del reconocimiento facial", code="FACE_LEARNING_SUMMARY")
+
+
+@router.post(
+    "/face/reset",
+    response_model=ApiResponse[IdentityReverifySummary],
+    summary="Solicitar nueva verificación de identidad a TODOS los empleados",
+    description=(
+        "Para toda la empresa (p. ej. tras un incidente de seguridad o un cambio de cámaras): elimina los "
+        "datos faciales de cada empleado con registro (aprobado, en validación o rechazado) y los regresa a "
+        "`NOT_ENROLLED`. En su próximo acceso cada uno registra su rostro con prueba de vida y COMPANY lo "
+        "valida otra vez. `reason` (opcional) se les muestra. Los que aún no tenían registro no cambian."
+    ),
+    dependencies=[Depends(require_screen(Screen.COMPANY_EMPLOYEES))],
+)
+def reset_all_faces(
+    company: CompanyScope, db: DbSession, payload: IdentityReverifyRequest | None = None
+) -> ApiResponse[IdentityReverifySummary]:
+    changed = EmployeeService(db, company).reset_all_faces(payload.reason if payload else None)
+    return ok(
+        IdentityReverifySummary(employees=changed),
+        f"Se solicitó verificar nuevamente su identidad a {changed} empleado(s).",
+        code="IDENTITY_REVERIFY_REQUESTED_ALL",
+    )
+
+
 @router.post(
     "/{employee_id}/face/reset",
     response_model=ApiResponse[EmployeeRead],
@@ -172,6 +218,28 @@ def reset_face(
         employee,
         "Se solicitó al empleado verificar nuevamente su identidad.",
         code="IDENTITY_REVERIFY_REQUESTED",
+    )
+
+
+@router.delete(
+    "/{employee_id}/face/learned",
+    response_model=ApiResponse[EmployeeRead],
+    summary="Olvidar lo que aprendió el reconocimiento facial del empleado",
+    description=(
+        "La galería de cada empleado aprende de sus identificaciones seguras. Si la empresa duda de "
+        "alguna, olvida esas muestras aprendidas: el empleado vuelve a compararse solo con su registro "
+        "aprobado, que no se toca. No cambia su estado facial."
+    ),
+    responses=NOT_FOUND,
+    dependencies=[Depends(require_screen(Screen.COMPANY_EMPLOYEES))],
+)
+def forget_learned_face(employee_id: int, company: CompanyScope, db: DbSession) -> ApiResponse[EmployeeRead]:
+    service = EmployeeService(db, company)
+    employee, removed = service.forget_learned_face(employee_id)
+    return ok(
+        service.read(employee),
+        f"Se olvidaron {removed} muestra(s) aprendida(s): el empleado se compara solo con su registro aprobado.",
+        code="FACE_LEARNING_FORGOTTEN",
     )
 
 
@@ -288,10 +356,7 @@ def qr_summary(employee_id: int, company: CompanyScope, db: DbSession) -> ApiRes
 )
 def revoke_qr(employee_id: int, company: CompanyScope, db: DbSession) -> ApiResponse[EmployeeQrSummary]:
     employee = EmployeeService(db, company).get(employee_id)
-    qr_service = QrService(db)
-    qr_service.revoke(employee)
-    db.commit()
-    return ok(qr_service.summary(employee), "Código QR invalidado", code="QR_REVOKED")
+    return ok(QrService(db).revoke(employee), "Código QR invalidado", code="QR_REVOKED")
 
 
 # ---------------- Historial ----------------

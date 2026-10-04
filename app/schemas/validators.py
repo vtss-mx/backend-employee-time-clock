@@ -125,9 +125,8 @@ def normalize_company_rfc(value: str) -> str:
     if not value:
         raise ValueError("El RFC es obligatorio")
     if len(value) == RFC_LENGTH:
+        # 13 caracteres: persona física (también rechaza los RFC genéricos, que tienen 13).
         return normalize_rfc(value)
-    if value in _GENERIC_RFCS:
-        raise ValueError("Captura el RFC de la empresa; el RFC genérico no es válido")
     match = _COMPANY_RFC_RE.match(value)
     if not match:
         raise ValueError("El RFC debe tener 12 caracteres (persona moral) o 13 (persona física)")
@@ -166,11 +165,6 @@ def normalize_curp(value: str) -> str:
     if curp_check_digit(value[:17]) != value[17]:
         raise ValueError("La CURP no es válida: el dígito verificador no corresponde")
     return value
-
-
-def curp_matches_birth_date(curp: str, birth_date: date) -> bool:
-    """Fecha aammdd y siglo: el carácter 17 es dígito si nació antes de 2000 y letra después."""
-    return curp_birth_date_error(curp, birth_date) is None
 
 
 def _document_date(yymmdd: str, birth_date: date) -> str:

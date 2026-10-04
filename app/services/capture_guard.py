@@ -24,12 +24,11 @@ from datetime import UTC, datetime, timedelta
 from itertools import combinations
 
 import numpy as np
-from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.facial_recognition import FaceAnalysis, FacePolicy
-from app.models import CaptureFingerprint
+from app.repositories.capture_repository import CaptureFingerprintRepository
 from app.services.face_service import SuspiciousCapture, looks_spoofed, spoof_consensus
 from app.services.liveness_service import Challenge
 from app.services.policy_service import PolicySnapshot
@@ -120,19 +119,16 @@ def ensure_continuity(frontal: FaceAnalysis, turn: FaceAnalysis) -> None:
 def ensure_not_replayed(db: Session, company_id: int, captures: Sequence[FaceAnalysis]) -> None:
     """Ninguna captura se había recibido antes; se recuerdan para rechazar su reenvío.
 
-    Las huellas se guardan con la bitácora del intento (mismo commit) y vencen a los
-    FACE_REPLAY_RETENTION_DAYS días.
+    Las huellas se guardan con la bitácora del intento (mismo commit) y cuentan durante
+    FACE_REPLAY_RETENTION_DAYS días; las más viejas las depura el mantenimiento (fuera de la petición).
     """
     digests = {c.capture_digest for c in captures if c.capture_digest is not None}
     if not digests:
         return
-    cutoff = datetime.now(UTC) - timedelta(days=settings.FACE_REPLAY_RETENTION_DAYS)
-    db.execute(delete(CaptureFingerprint).where(CaptureFingerprint.created_at < cutoff))  # vencidas
-    seen = db.scalar(select(func.count()).select_from(CaptureFingerprint).where(CaptureFingerprint.digest.in_(digests)))
-    if seen:
+    now = datetime.now(UTC)
+    since = now - timedelta(days=settings.FACE_REPLAY_RETENTION_DAYS)
+    if not CaptureFingerprintRepository(db).claim(digests, company_id, now, since):
         raise SuspiciousCapture("REPLAY_DETECTED")
-    db.add_all(CaptureFingerprint(digest=digest, company_id=company_id) for digest in sorted(digests))
-    db.flush()
 
 
 def inspect_take(

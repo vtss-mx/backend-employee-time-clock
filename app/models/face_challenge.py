@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Index, String
+from sqlalchemy import DateTime, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -15,10 +15,7 @@ class FaceChallenge(Base):
     """
 
     __tablename__ = "face_challenges"
-    __table_args__ = (
-        Index("ix_face_challenges_second_direction", "second_direction"),
-        {"schema": BIOMETRICS},
-    )
+    __table_args__ = ({"schema": BIOMETRICS},)
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey(f"{AUTH}.users.id", ondelete="CASCADE"), index=True, nullable=False)

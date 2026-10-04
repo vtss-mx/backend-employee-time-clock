@@ -32,12 +32,13 @@ from app.core.config import settings
 from app.core.devices import classify_device
 from app.core.exceptions import ConflictError, NotFoundError, PermissionDeniedError
 from app.models import DeviceStatus, SessionRevocationReason, User, UserRole, Validator, ValidatorDevice
-from app.repositories.company_repository import CompanyRepository
+from app.repositories.user_repository import UserRepository
 from app.repositories.validator_device_repository import ValidatorDeviceRepository
 from app.schemas.auth import DeviceProof
 from app.schemas.common import PageParams
 from app.schemas.validator import ValidatorDeviceList, ValidatorDeviceRead
 from app.services.policy_service import PolicyService
+from app.services.session_service import SessionService
 
 #: Vigencia del reto que firma el dispositivo (cubre la pausa por el permiso de ubicación).
 DEVICE_NONCE_SECONDS = 300
@@ -80,7 +81,7 @@ def nonce_is_valid(user_id: int, nonce: str) -> bool:
 def _public_key(public_key_b64: str) -> ec.EllipticCurvePublicKey | None:
     try:
         key = serialization.load_der_public_key(base64.b64decode(public_key_b64, validate=True))
-    except (ValueError, binascii.Error):
+    except ValueError, binascii.Error:
         return None
     return key if isinstance(key, ec.EllipticCurvePublicKey) and isinstance(key.curve, ec.SECP256R1) else None
 
@@ -90,7 +91,7 @@ def signature_is_valid(public_key_b64: str, nonce: str, signature_b64: str) -> b
     key = _public_key(public_key_b64)
     try:
         raw = base64.b64decode(signature_b64, validate=True)
-    except (ValueError, binascii.Error):
+    except ValueError, binascii.Error:
         return False
     if key is None or len(raw) != 64:
         return False
@@ -174,12 +175,16 @@ class DeviceService:
 
     def list(self, validator_id: int, page: PageParams) -> ValidatorDeviceList:
         items, total = self.devices.page(validator_id, offset=page.offset, limit=page.size)
-        return ValidatorDeviceList.of([self.read(d) for d in items], total, page)
+        emails = UserRepository(self.db).emails_by_ids(d.reviewed_by_id for d in items)
+        return ValidatorDeviceList.of([self.read(d, emails) for d in items], total, page)
 
-    def read(self, device: ValidatorDevice) -> ValidatorDeviceRead:
-        reviewer = self.db.get(User, device.reviewed_by_id) if device.reviewed_by_id else None
+    def read(self, device: ValidatorDevice, emails: dict[int, str] | None = None) -> ValidatorDeviceRead:
+        if emails is None:
+            emails = UserRepository(self.db).emails_by_ids((device.reviewed_by_id,))
         data = ValidatorDeviceRead.model_validate(device)
-        return data.model_copy(update={"reviewed_by": reviewer.email if reviewer else None})
+        return data.model_copy(
+            update={"reviewed_by": emails.get(device.reviewed_by_id) if device.reviewed_by_id else None}
+        )
 
     def set_status(
         self, validator_id: int, device_id: int, status: DeviceStatus, reviewer: User
@@ -197,8 +202,6 @@ class DeviceService:
         device.reviewed_by_id = reviewer.id
         validator = self.db.get(Validator, device.validator_id)
         if was_approved and validator is not None:  # sus sesiones ya no tienen un dispositivo autorizado
-            CompanyRepository(self.db).revoke_sessions(
-                datetime.now(UTC), SessionRevocationReason.DEVICE_REVOKED, user_id=validator.user_id
-            )
+            SessionService(self.db).revoke_all(validator.user_id, SessionRevocationReason.DEVICE_REVOKED, commit=False)
         self.db.commit()
         return self.read(device)

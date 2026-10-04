@@ -7,6 +7,7 @@ from sqlalchemy import (
     Date,
     Enum,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     String,
     UniqueConstraint,
@@ -54,6 +55,24 @@ class Employee(TimestampMixin, Base):
         ),
         # Destino de la FK compuesta de los registros faciales: empleado y empresa van juntos.
         UniqueConstraint("id", "company_id", name="uq_employees_id_company"),
+        # El departamento es de la MISMA empresa (la BD lo garantiza). No se borra uno con empleados.
+        ForeignKeyConstraint(
+            ["department_id", "company_id"],
+            [f"{WORKFORCE}.departments.id", f"{WORKFORCE}.departments.company_id"],
+            name="fk_employees_department_company",
+            ondelete="RESTRICT",
+        ),
+        # Empleados de un departamento en el orden del listado, y su conteo por departamento.
+        Index(
+            "ix_employees_company_department",
+            "company_id",
+            "department_id",
+            "last_name",
+            "first_name",
+            "id",
+            postgresql_where=text("department_id IS NOT NULL"),
+            sqlite_where=text("department_id IS NOT NULL"),
+        ),
         {"schema": WORKFORCE},
     )
 
@@ -84,13 +103,15 @@ class Employee(TimestampMixin, Base):
         nullable=False,
     )
     face_rejection_reason: Mapped[str | None] = mapped_column(String(500))
+    # Departamento al que está asignado (a lo más uno; de su misma empresa).
+    department_id: Mapped[int | None] = mapped_column()
 
-    user: Mapped["User"] = relationship(back_populates="employees", lazy="joined")
-    company: Mapped["Company"] = relationship(lazy="joined")
-    face_embeddings: Mapped[list["FaceEmbedding"]] = relationship(
+    user: Mapped[User] = relationship(back_populates="employees", lazy="joined")
+    company: Mapped[Company] = relationship(lazy="joined")
+    face_embeddings: Mapped[list[FaceEmbedding]] = relationship(
         back_populates="employee", cascade="all, delete-orphan", passive_deletes=True
     )
-    qr_codes: Mapped[list["EmployeeQr"]] = relationship(
+    qr_codes: Mapped[list[EmployeeQr]] = relationship(
         back_populates="employee", cascade="all, delete-orphan", passive_deletes=True
     )
 

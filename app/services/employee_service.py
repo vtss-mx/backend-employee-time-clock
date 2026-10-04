@@ -7,14 +7,15 @@ from sqlalchemy.orm import Session
 
 from app.core.exceptions import ConflictError, NotFoundError, UnprocessableError
 from app.core.passwords import hash_password
-from app.models import Company, Employee, EnrollmentStatus, FaceStatus, SessionRevocationReason, UserRole
+from app.models import Company, Employee, FaceStatus, SessionRevocationReason, UserRole
+from app.repositories.department_repository import DepartmentRepository
 from app.repositories.employee_repository import EmployeeRepository, UniqueDocument
 from app.repositories.enrollment_repository import FaceEnrollmentRepository
-from app.repositories.face_repository import FaceEmbeddingRepository
+from app.repositories.face_repository import FaceEmbeddingRepository, SampleStats
 from app.repositories.user_repository import UserRepository
 from app.repositories.verification_repository import VerificationLogRepository
 from app.schemas.common import PageParams
-from app.schemas.employee import EmployeeCreate, EmployeeList, EmployeeRead, EmployeeUpdate
+from app.schemas.employee import DepartmentRef, EmployeeCreate, EmployeeList, EmployeeRead, EmployeeUpdate
 from app.schemas.validators import (
     curp_birth_date_error,
     rfc_birth_date_error,
@@ -24,6 +25,8 @@ from app.services.availability_service import CURP_TAKEN, NSS_TAKEN, NUMBER_TAKE
 from app.services.people_service import SHARED_ACCOUNT, PeopleService
 from app.services.session_service import SessionService
 
+NO_SAMPLES = SampleStats()
+RESET_BY_COMPANY = "Registro reiniciado por la empresa"
 REVERIFY_DEFAULT_REASON = "Tu empresa solicitó que verifiques nuevamente tu identidad."
 DUPLICATE_MESSAGE = "El correo, teléfono, número de empleado, RFC, CURP o NSS ya está registrado"
 NEW_PERSON_CREDENTIAL = "La contraseña es obligatoria para una persona nueva"
@@ -57,6 +60,7 @@ class EmployeeService:
         self.users = UserRepository(db)
         self.employees = EmployeeRepository(db, company_id)
         self.faces = FaceEmbeddingRepository(db)
+        self.departments = DepartmentRepository(db, company_id)
         self.people = PeopleService(db, company_id)
 
     # ---------- Consultas ----------
@@ -67,16 +71,39 @@ class EmployeeService:
             raise NotFoundError("Empleado no encontrado", code="EMPLOYEE_NOT_FOUND")
         return employee
 
-    def list_employees(self, *, search: str | None, active: bool | None, page: PageParams) -> EmployeeList:
-        items, total = self.employees.search(search=search, active=active, offset=page.offset, limit=page.size)
-        ids = [e.id for e in items]
-        face_counts = self.faces.count_active_by_employee(ids)
-        return EmployeeList.of([self._to_read(e, face_counts.get(e.id, 0)) for e in items], total, page)
+    def list_employees(
+        self, *, search: str | None, active: bool | None, page: PageParams, department_id: int | None = None
+    ) -> EmployeeList:
+        items, total = self.employees.search(
+            search=search, active=active, offset=page.offset, limit=page.size, department_id=department_id
+        )
+        samples = self.faces.sample_stats(e.id for e in items)
+        shared = self.employees.shared_accounts({e.user_id for e in items})
+        departments = self.departments.names(e.department_id for e in items if e.department_id is not None)
+        return EmployeeList.of(
+            [
+                self._to_read(
+                    e, samples.get(e.id, NO_SAMPLES), e.user_id in shared, departments.get(e.department_id or 0)
+                )
+                for e in items
+            ],
+            total,
+            page,
+        )
 
     def read(self, employee: Employee) -> EmployeeRead:
-        data = self._to_read(employee, self.faces.count_active(employee.id))
-        latest = FaceEnrollmentRepository(self.db, self.company_id).latest_for_employee(employee.id)
-        data.latest_enrollment_id = latest.id if latest else None
+        department = self.departments.names((employee.department_id,)) if employee.department_id else {}
+        data = self._to_read(
+            employee,
+            self.faces.sample_stats((employee.id,)).get(employee.id, NO_SAMPLES),
+            department_name=department.get(employee.department_id or 0),
+        )
+        data.managed_departments = [
+            DepartmentRef(id=d.id, name=d.name) for d in self.departments.managed_by(employee.id)
+        ]
+        data.latest_enrollment_id = FaceEnrollmentRepository(self.db, self.company_id).latest_id_for_employee(
+            employee.id
+        )
         return data
 
     def history(self, employee_id: int, page: PageParams) -> VerificationLogList:
@@ -198,18 +225,38 @@ class EmployeeService:
         El motivo (o uno genérico) se le muestra al empleado al entrar al registro facial.
         """
         employee = self.get(employee_id)
-        for enrollment in FaceEnrollmentRepository(self.db, self.company_id).pending_for_employee(employee.id):
-            enrollment.status = EnrollmentStatus.REJECTED
-            enrollment.rejection_reason = "Registro reiniciado por la empresa"
-            enrollment.photo_encrypted = None
-        self.faces.delete_all(employee.id)
-        employee.face_status = FaceStatus.NOT_ENROLLED
-        employee.face_rejection_reason = (reason or "").strip() or REVERIFY_DEFAULT_REASON
+        self._request_reverification(reason, employee.id)
         self.db.commit()
         self.db.refresh(employee)
         return employee
 
+    def reset_all_faces(self, reason: str | None = None) -> int:
+        """Solicita a TODOS los empleados de la empresa con un registro facial (aprobado, en
+        validación o rechazado) verificar de nuevo su identidad: p. ej. tras un incidente de
+        seguridad, un cambio de cámaras o una auditoría. Mismas reglas que `reset_face`, en unas
+        cuantas sentencias para toda la empresa (no una por empleado). Devuelve cuántos cambiaron."""
+        changed = self._request_reverification(reason)
+        self.db.commit()
+        return changed
+
+    def forget_learned_face(self, employee_id: int) -> tuple[Employee, int]:
+        """Olvida lo que la galería del empleado aprendió del uso (face_learning): vuelve a compararse
+        solo con su registro aprobado, que no se toca. Para cuando la empresa duda de alguna
+        identificación. Devuelve el empleado y cuántas muestras se olvidaron."""
+        employee = self.get(employee_id)
+        removed = self.faces.delete_learned(employee.id)
+        self.db.commit()
+        return employee, removed
+
     # ---------- Internos ----------
+
+    def _request_reverification(self, reason: str | None, employee_id: int | None = None) -> int:
+        """Rechaza lo que estaba en validación, borra los datos faciales (aprobados y aprendidos) y
+        regresa a los empleados a "sin registro facial" con el motivo que verán al entrar."""
+        message = (reason or "").strip() or REVERIFY_DEFAULT_REASON
+        FaceEnrollmentRepository(self.db, self.company_id).reject_pending(RESET_BY_COMPANY, employee_id)
+        self.faces.delete_for_company(self.company_id, employee_id)
+        return self.employees.request_reenrollment(message, employee_id)
 
     def _ensure_account_changes(self, employee: Employee, changes: dict[str, object]) -> None:
         """Correo, teléfono y contraseña son de la cuenta de la persona: únicos en la plataforma y,
@@ -268,7 +315,9 @@ class EmployeeService:
             raise UnprocessableError(curp_error, code="CURP_BIRTH_DATE_MISMATCH", field="curp")
 
     @staticmethod
-    def _to_read(employee: Employee, face_count: int) -> EmployeeRead:
+    def _to_read(
+        employee: Employee, samples: SampleStats, shared: bool | None = None, department_name: str | None = None
+    ) -> EmployeeRead:
         return EmployeeRead(
             id=employee.id,
             user_id=employee.user_id,
@@ -282,13 +331,17 @@ class EmployeeService:
             nss=employee.nss,
             phone=employee.user.phone,
             email=employee.user.email,
-            shared_account=employee.shared_account,
+            shared_account=employee.shared_account if shared is None else shared,
             active=employee.active,
             headwear_exempt=employee.headwear_exempt,
             face_status=employee.face_status,
             face_rejection_reason=employee.face_rejection_reason,
-            has_face=face_count > 0,
-            face_samples=face_count,
+            has_face=samples.total > 0,
+            face_samples=samples.total,
+            face_learned_samples=samples.learned,
+            face_last_learned_at=samples.last_learned_at,
+            department_id=employee.department_id,
+            department_name=department_name,
             created_at=employee.created_at,
             updated_at=employee.updated_at,
         )

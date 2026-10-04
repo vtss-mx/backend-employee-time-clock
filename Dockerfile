@@ -1,4 +1,4 @@
-FROM python:3.12-slim AS runtime
+FROM python:3.14-slim AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -38,6 +38,11 @@ FROM runtime AS dev
 USER root
 COPY requirements-dev.txt .
 RUN pip install -r requirements-dev.txt
+# Los modelos ONNX fuera de /app: al montar el código del proyecto en /app para las pruebas siguen
+# disponibles y el motor facial REAL también se prueba (tests/test_face_engine_real.py).
+# Legibles para cualquier usuario: las pruebas corren con el uid de quien las lanza (-u).
+RUN cp -r /app/models /opt/models && chmod -R a+rX /opt/models
+ENV TEST_FACE_MODELS_DIR=/opt/models
 USER appuser
 ENTRYPOINT []
 CMD ["python", "scripts/quality.py"]

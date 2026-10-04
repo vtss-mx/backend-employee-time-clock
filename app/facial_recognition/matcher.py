@@ -1,16 +1,8 @@
 """Comparación de embeddings mediante similitud coseno."""
 
 from collections.abc import Sequence
-from dataclasses import dataclass
 
 import numpy as np
-
-
-@dataclass(frozen=True)
-class MatchResult:
-    matched: bool
-    similarity: float
-    threshold: float
 
 
 def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
@@ -20,12 +12,17 @@ def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.dot(a, b) / denom)
 
 
-def best_match(probe: np.ndarray, references: Sequence[np.ndarray], threshold: float) -> MatchResult:
-    """Compara el embedding capturado contra todas las muestras registradas y toma la mejor."""
-    if not references:
-        return MatchResult(matched=False, similarity=0.0, threshold=threshold)
-    best = max(cosine_similarity(probe, ref) for ref in references)
-    return MatchResult(matched=best >= threshold, similarity=round(best, 4), threshold=threshold)
+def normalize_rows(vectors: np.ndarray) -> np.ndarray:
+    """Vectores de norma 1 (por fila): la similitud coseno queda como un producto punto."""
+    norms = np.linalg.norm(vectors, axis=-1, keepdims=True)
+    return vectors / np.maximum(norms, 1e-12)
+
+
+def similarity_matrix(probes: Sequence[np.ndarray], references: Sequence[np.ndarray]) -> np.ndarray:
+    """Similitud coseno de cada captura (filas) contra cada muestra (columnas), en una sola operación."""
+    left = normalize_rows(np.stack(probes).astype(np.float32))
+    right = normalize_rows(np.stack(references).astype(np.float32))
+    return left @ right.T
 
 
 def embedding_to_bytes(vector: np.ndarray) -> bytes:

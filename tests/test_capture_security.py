@@ -16,9 +16,10 @@ from app.core.database import SessionLocal
 from app.facial_recognition import FacePolicy, FaceValidationError
 from app.facial_recognition.image_utils import decode_image
 from app.facial_recognition.pipeline import capture_traits
-from app.models import CaptureFingerprint, VerificationLog
+from app.models import CaptureFingerprint, Company, VerificationLog
 from app.services.capture_guard import (
     ensure_continuity,
+    ensure_not_replayed,
     ensure_not_static,
     ensure_same_take,
     is_virtual_camera,
@@ -106,6 +107,26 @@ def test_take_rules_static_frames_sizes_and_continuity():
     for jump in ({"face_box": (0, 0, 300, 300)}, {"face_box": (500, 0, 100, 100)}, {"brightness": 220.0}):
         with pytest.raises(SuspiciousCapture):  # tamaño, lugar o luz imposibles en la misma toma
             ensure_continuity(frame, replace(frame, **jump))
+
+
+def test_continuity_needs_a_frontal_frame_to_compare_with():
+    """Sin capturas frontales no hay contra qué medir el giro (no se inventa un fallo), pero la toma
+    sigue obligada a salir de una sola cámara (misma resolución)."""
+    turn = replace(_analysis("juan"), face_box=(600, 400, 100, 100), image_size=(640, 480))
+    ensure_same_take([], [turn])
+    with pytest.raises(SuspiciousCapture) as error:
+        ensure_same_take([], [turn, replace(turn, image_size=(1280, 720))])
+    assert error.value.code == "CAPTURE_INCONSISTENT"
+
+
+def test_captures_without_a_fingerprint_are_neither_remembered_nor_replays():
+    """Un motor que no calcula la huella de la captura no provoca un falso reenvío ni escribe huellas."""
+    unmarked = [_analysis("juan"), _analysis("juan")]
+    with SessionLocal() as db:
+        company_id = db.query(Company).one().id
+        ensure_not_replayed(db, company_id, unmarked)
+        ensure_not_replayed(db, company_id, unmarked)  # la misma toma otra vez: sin huella, no hay reenvío
+        assert db.query(CaptureFingerprint).count() == 0
 
 
 def test_spoof_decision_follows_the_company_level():

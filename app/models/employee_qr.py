@@ -45,12 +45,23 @@ class EmployeeQr(TimestampMixin, Base):
             postgresql_where=text("used_by_id IS NOT NULL"),
             sqlite_where=text("used_by_id IS NOT NULL"),
         ),
+        # Último QR generado de un empleado (WHERE employee_id ORDER BY id DESC LIMIT 1).
+        Index("ix_employee_qr_codes_employee_latest", "employee_id", "id"),
+        # Último uso de un empleado (WHERE employee_id AND used_at IS NOT NULL ORDER BY used_at DESC).
+        Index(
+            "ix_employee_qr_codes_employee_used",
+            "employee_id",
+            "used_at",
+            "id",
+            postgresql_where=text("used_at IS NOT NULL"),
+            sqlite_where=text("used_at IS NOT NULL"),
+        ),
         {"schema": WORKFORCE},
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     employee_id: Mapped[int] = mapped_column(
-        ForeignKey(f"{WORKFORCE}.employees.id", ondelete="CASCADE"), index=True, nullable=False
+        ForeignKey(f"{WORKFORCE}.employees.id", ondelete="CASCADE"), nullable=False
     )
     token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
     token_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary)
@@ -62,4 +73,4 @@ class EmployeeQr(TimestampMixin, Base):
     used_by_id: Mapped[int | None] = mapped_column(ForeignKey(f"{AUTH}.users.id", ondelete="SET NULL"))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
-    employee: Mapped["Employee"] = relationship(back_populates="qr_codes")
+    employee: Mapped[Employee] = relationship(back_populates="qr_codes")

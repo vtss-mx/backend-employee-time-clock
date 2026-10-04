@@ -1,4 +1,15 @@
-from sqlalchemy import Boolean, CheckConstraint, ColumnElement, Index, Integer, String, func, literal_column, true
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    ColumnElement,
+    Index,
+    Integer,
+    String,
+    false,
+    func,
+    literal_column,
+    true,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -29,6 +40,9 @@ class Company(TimestampMixin, Base):
     active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true(), nullable=False)
     #: Límite de empleados del plan (None = sin límite).
     max_employees: Mapped[int | None] = mapped_column(Integer)
+    #: Acceso al módulo de Integraciones (API): lo decide el ADMIN de la plataforma. Sin él, la
+    #: pantalla no aparece, no se administran llaves y las que existan dejan de funcionar (no se borran).
+    api_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false(), nullable=False)
 
 
 _SPACE = literal_column("' '", String)

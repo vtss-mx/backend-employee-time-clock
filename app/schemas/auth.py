@@ -105,3 +105,9 @@ class ChangePasswordRequest(BaseModel):
     @classmethod
     def _strong(cls, value: str) -> str:
         return validate_password_strength(value)
+
+
+class SessionStatus(BaseModel):
+    """¿Hay una sesión vigente en este navegador? (según su cookie HttpOnly)."""
+
+    signed_in: bool

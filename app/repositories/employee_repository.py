@@ -1,11 +1,11 @@
 from typing import Literal
 
-from sqlalchemy import ColumnElement, func, select, union
+from sqlalchemy import ColumnElement, func, select, union, update
 from sqlalchemy.orm import Session
 
-from app.models import Employee, User
+from app.models import Employee, FaceStatus, User
 from app.models.employee import employee_search_text
-from app.repositories.aggregates import paginate
+from app.repositories.aggregates import affected_rows, paginate
 
 UniqueDocument = Literal["rfc", "curp", "nss"]
 
@@ -28,8 +28,28 @@ class EmployeeRepository:
         employee = self.db.get(Employee, employee_id)
         return employee if employee is not None and employee.company_id == self.company_id else None
 
-    def get_by_user_id(self, user_id: int) -> Employee | None:
-        return self.db.scalar(select(Employee).where(self._scoped(), Employee.user_id == user_id))
+    def by_ids(self, employee_ids: set[int]) -> dict[int, Employee]:
+        """Varios empleados de la empresa en una consulta (p. ej. para nombrar una bitácora)."""
+        if not employee_ids:
+            return {}
+        rows = self.db.scalars(select(Employee).where(self._scoped(), Employee.id.in_(employee_ids)))
+        return {e.id: e for e in rows}
+
+    def shared_accounts(self, user_ids: set[int]) -> set[int]:
+        """Cuentas (de esta página) que también trabajan en otra empresa, en UNA consulta.
+
+        Es el único dato que cruza empresas y solo dice "tiene otro empleo" (un conteo, ningún dato
+        de la otra empresa).
+        """
+        if not user_ids:
+            return set()
+        rows = self.db.execute(
+            select(Employee.user_id)
+            .where(Employee.user_id.in_(user_ids))
+            .group_by(Employee.user_id)
+            .having(func.count() > 1)
+        )
+        return {row.user_id for row in rows}
 
     def count(self) -> int:
         return int(self.db.scalar(select(func.count()).select_from(Employee).where(self._scoped())) or 0)
@@ -49,7 +69,9 @@ class EmployeeRepository:
             stmt = stmt.where(Employee.id != exclude_id)
         return self.db.scalar(stmt.limit(1)) is not None
 
-    def search(self, *, search: str | None, active: bool | None, offset: int, limit: int) -> tuple[list[Employee], int]:
+    def search(
+        self, *, search: str | None, active: bool | None, offset: int, limit: int, department_id: int | None = None
+    ) -> tuple[list[Employee], int]:
         stmt = select(Employee).join(User, Employee.user_id == User.id).where(self._scoped())
         term = " ".join((search or "").split()).lower()
         if term:
@@ -65,6 +87,8 @@ class EmployeeRepository:
             stmt = stmt.where(Employee.id.in_(matches))
         if active is not None:
             stmt = stmt.where(Employee.active.is_(active))
+        if department_id is not None:  # índice (company_id, department_id, apellidos, nombre, id)
+            stmt = stmt.where(Employee.department_id == department_id)
 
         order = (Employee.last_name, Employee.first_name, Employee.id)
         return paginate(self.db, stmt, order, offset=offset, limit=limit)
@@ -77,3 +101,13 @@ class EmployeeRepository:
 
     def delete(self, employee: Employee) -> None:
         self.db.delete(employee)
+
+    def request_reenrollment(self, reason: str, employee_id: int | None = None) -> int:
+        """Regresa a "sin registro facial" (con el motivo que verán) a un empleado o a todos los que
+        tenían un registro, en una sola sentencia. Cuántos cambiaron."""
+        stmt = update(Employee).where(self._scoped())
+        if employee_id is not None:
+            stmt = stmt.where(Employee.id == employee_id)
+        else:
+            stmt = stmt.where(Employee.face_status != FaceStatus.NOT_ENROLLED)
+        return affected_rows(self.db, stmt.values(face_status=FaceStatus.NOT_ENROLLED, face_rejection_reason=reason))

@@ -1,6 +1,13 @@
 """Auto-registro facial, validación por COMPANY, accesorios, prueba de vida y verificación."""
 
-from tests.conftest import approved_employee, create_employee, login, submit_enrollment, turn_files
+from tests.conftest import (
+    approved_employee,
+    create_company,
+    create_employee,
+    login,
+    submit_enrollment,
+    turn_files,
+)
 
 
 def _verify(client, headers, *, frontal=(b"face:juan", b"face:juan"), turn_person="juan", wrong_turn=False):
@@ -94,6 +101,37 @@ def test_company_can_reset_face(client, company_headers):
     assert _verify(client, headers).status_code == 403
 
 
+def test_company_requests_reverification_from_all_employees(client, admin_headers, company_headers):
+    """Toda la empresa a la vez: quien tenía registro (aprobado, en validación o rechazado) lo pierde
+    y lo vuelve a hacer; quien aún no se registraba no cambia. Las demás empresas no se tocan."""
+    juan = approved_employee(client, company_headers)  # aprobado
+    create_employee(client, company_headers, number="EMP-2", email="ana@empresa.com")
+    ana = login(client, "ana@empresa.com", "Empleado123")
+    assert submit_enrollment(client, ana, frontal=(b"face:ana",) * 3, turn_person="ana").status_code == 201
+    create_employee(client, company_headers, number="EMP-3", email="luis@empresa.com")  # sin registro
+    create_company(client, admin_headers)
+    other_headers = login(client, "admin@panificadora.com", "Empresa1234")
+    approved_employee(client, other_headers, number="PAN-1", email="eva@panificadora.com")
+
+    url = "/api/employees/face/reset"
+    assert client.post(url, headers=juan).status_code == 403  # solo la empresa
+    done = client.post(url, json={"reason": "Cambiamos las cámaras del acceso"}, headers=company_headers)
+    assert done.status_code == 200 and done.json()["code"] == "IDENTITY_REVERIFY_REQUESTED_ALL"
+    assert done.json()["data"]["employees"] == 2
+
+    people = client.get("/api/employees", headers=company_headers).json()["data"]["items"]
+    by_number = {p["employee_number"]: p for p in people}
+    assert {p["face_status"] for p in people} == {"NOT_ENROLLED"} and not any(p["has_face"] for p in people)
+    assert by_number["EMP-001"]["face_rejection_reason"] == "Cambiamos las cámaras del acceso"
+    assert by_number["EMP-3"]["face_rejection_reason"] is None  # no tenía registro: no cambió
+    pending = client.get("/api/enrollments", params={"status": "PENDING"}, headers=company_headers)
+    assert pending.json()["data"]["total"] == 0  # lo que esperaba validación se rechazó
+    assert _verify(client, juan).status_code == 403  # debe registrarse de nuevo
+
+    other = client.get("/api/employees", headers=other_headers).json()["data"]["items"]
+    assert [p["face_status"] for p in other] == ["APPROVED"] and other[0]["face_samples"] == 3
+
+
 # ---------------- Validaciones del registro ----------------
 
 
@@ -169,8 +207,8 @@ def test_employee_generates_dynamic_qr_only_after_approval(client, company_heade
     response = client.post("/api/users/me/qr", headers=headers)
     assert response.status_code == 201 and response.json()["code"] == "MY_QR"
     qr = response.json()["data"]
-    assert qr["image_base64"].startswith("data:image/png;base64,") and qr["employee_number"] == "EMP-001"
-    assert qr["lifetime_seconds"] == 30 and "content" not in qr  # el token solo viaja en la imagen
+    assert qr["content"].startswith("TCQR2:") and qr["employee_number"] == "EMP-001"
+    assert qr["lifetime_seconds"] == 30 and "image_base64" not in qr  # el teléfono dibuja el código
     # COMPANY no genera QR de empleados (ni los ve: son del teléfono del empleado).
     assert client.post("/api/users/me/qr", headers=company_headers).status_code == 403
 

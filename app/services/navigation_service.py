@@ -35,6 +35,8 @@ AVAILABILITY: dict[Screen, Callable[[User], bool]] = {
     Screen.EMPLOYEE_VERIFY: lambda user: _face_status(user) == FaceStatus.APPROVED,
     Screen.EMPLOYEE_QR: lambda user: _face_status(user) == FaceStatus.APPROVED,
     Screen.EMPLOYEE_SELECT_COMPANY: lambda user: len(user.employees) > 1,
+    # Integraciones (API): solo si el ADMIN le dio acceso a la empresa.
+    Screen.COMPANY_API: lambda user: bool(user.company and user.company.api_enabled),
 }
 
 

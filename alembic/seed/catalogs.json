@@ -40,6 +40,16 @@
     {"code": "REJECTED", "name": "Rechazado", "description": "La empresa no autorizó el dispositivo.", "tone": "danger", "sort_order": 3, "active": true},
     {"code": "REVOKED", "name": "Revocado", "description": "La empresa retiró la autorización: sus sesiones se cerraron.", "tone": "muted", "sort_order": 4, "active": true}
   ],
+  "api_scopes": [
+    {"code": "EMPLOYEES_READ", "name": "Empleados", "description": "Consultar los empleados (GET /employees y /employees/{id}): datos laborales y de contacto, estado y registro facial. Nunca fotos ni datos biométricos.", "sort_order": 1, "active": true},
+    {"code": "ATTENDANCE_READ", "name": "Identificaciones", "description": "Consultar la bitácora de identificaciones (GET /attendance): quién, cuándo, con qué método, en qué validador y el resultado.", "sort_order": 2, "active": true},
+    {"code": "VALIDATORS_READ", "name": "Validadores", "description": "Consultar los validadores de identidad (GET /validators): nombre, modo, domicilio y estado.", "sort_order": 3, "active": true}
+  ],
+  "api_key_statuses": [
+    {"code": "ACTIVE", "name": "Activa", "description": "La llave da acceso a la API con sus permisos.", "tone": "success", "sort_order": 1, "active": true},
+    {"code": "EXPIRED", "name": "Vencida", "description": "Llegó a su fecha de vencimiento: ya no da acceso.", "tone": "warning", "sort_order": 2, "active": true},
+    {"code": "REVOKED", "name": "Revocada", "description": "La empresa la revocó (o la rotó): ya no da acceso.", "tone": "muted", "sort_order": 3, "active": true}
+  ],
   "verification_reasons": [
     {"code": "NO_MATCH", "name": "Rostro no coincide", "description": null, "message": "Rostro no reconocido", "sort_order": 1, "active": true},
     {"code": "LIVENESS_FAILED", "name": "Prueba de vida no superada", "description": null, "message": "No fue posible verificar tu identidad: no se detectó el giro de cabeza solicitado", "sort_order": 2, "active": true},
@@ -419,31 +429,50 @@
     {"code": "SPOOF", "name": "Posible foto o pantalla", "description": "El anti-spoofing sugiere que las capturas podrían ser de una foto o una pantalla.", "sort_order": 4, "active": true},
     {"code": "DUPLICATE_FACE", "name": "Rostro ya registrado en otro empleado", "description": "El rostro se parece al registro aprobado de otro empleado de la empresa: confirma que no sea la misma persona con dos cuentas.", "sort_order": 5, "active": true}
   ],
+  "error_statuses": [
+    {"code": "PENDING", "name": "Pendiente", "description": "Nadie lo ha tomado todavía (o volvió a ocurrir después de solucionarse).", "tone": "danger", "sort_order": 1, "active": true},
+    {"code": "IN_PROGRESS", "name": "En proceso", "description": "Alguien está trabajando en la causa.", "tone": "warning", "sort_order": 2, "active": true},
+    {"code": "IN_REVIEW", "name": "En revisión", "description": "La corrección está hecha y se está verificando.", "tone": "info", "sort_order": 3, "active": true},
+    {"code": "RESOLVED", "name": "Solucionado", "description": "Corregido. Si vuelve a ocurrir, se reabre solo como pendiente.", "tone": "success", "sort_order": 4, "active": true}
+  ],
+  "error_severities": [
+    {"code": "CRITICAL", "name": "Crítico", "description": "Falla no controlada (500) o en un proceso en segundo plano.", "tone": "danger", "sort_order": 1, "active": true},
+    {"code": "ERROR", "name": "Error", "description": "Servicio no disponible u ocupado (5xx controlado).", "tone": "warning", "sort_order": 2, "active": true},
+    {"code": "WARNING", "name": "Advertencia", "description": "Solicitud rechazada: validación, permisos o reglas de negocio (4xx).", "tone": "info", "sort_order": 3, "active": true}
+  ],
   "screens": [
     {"code": "ADMIN_DASHBOARD", "name": "Panel", "description": "Indicadores de la plataforma y empresas recientes.", "sort_order": 1, "active": true, "path": "/admin/dashboard", "short_name": null, "icon": "LayoutDashboard", "badge": null},
     {"code": "ADMIN_COMPANIES", "name": "Empresas", "description": "Alta, consulta, edición, activación y eliminación de empresas y sus administradores.", "sort_order": 2, "active": true, "path": "/admin/companies", "short_name": null, "icon": "Building2", "badge": null},
-    {"code": "COMPANY_DASHBOARD", "name": "Dashboard", "description": "Resumen de la empresa: empleados y validaciones pendientes.", "sort_order": 3, "active": true, "path": "/company/dashboard", "short_name": "Inicio", "icon": "LayoutDashboard", "badge": null},
-    {"code": "COMPANY_EMPLOYEES", "name": "Empleados", "description": "Alta, consulta y edición de los empleados de la empresa.", "sort_order": 4, "active": true, "path": "/company/employees", "short_name": null, "icon": "Users", "badge": null},
-    {"code": "COMPANY_VALIDATIONS", "name": "Validaciones", "description": "Revisión de los registros faciales pendientes.", "sort_order": 5, "active": true, "path": "/company/validations", "short_name": "Validar", "icon": "ClipboardCheck", "badge": "PENDING_ENROLLMENTS"},
-    {"code": "COMPANY_VALIDATORS", "name": "Validadores", "description": "Tabletas o teléfonos que identifican a los empleados en un acceso.", "sort_order": 6, "active": true, "path": "/company/validators", "short_name": null, "icon": "ScanLine", "badge": null},
-    {"code": "COMPANY_SETTINGS", "name": "Configuración", "description": "Política de verificación de identidad de la empresa.", "sort_order": 7, "active": true, "path": "/company/settings", "short_name": "Ajustes", "icon": "Settings2", "badge": null},
-    {"code": "VALIDATOR_CHECKPOINT", "name": "Identificar empleados", "description": "Punto de control: identifica a los empleados con rostro o QR.", "sort_order": 8, "active": true, "path": "/validator/checkpoint", "short_name": "Identificar", "icon": "ScanFace", "badge": null},
-    {"code": "EMPLOYEE_ENROLL", "name": "Registro facial", "description": "El empleado registra su rostro (aún sin registro o rechazado).", "sort_order": 9, "active": true, "path": "/employee/enroll", "short_name": "Mi rostro", "icon": "ScanFace", "badge": null},
-    {"code": "EMPLOYEE_PENDING", "name": "Registro facial", "description": "El registro facial del empleado espera la validación de la empresa.", "sort_order": 10, "active": true, "path": "/employee/pending", "short_name": "Mi rostro", "icon": "ScanFace", "badge": null},
-    {"code": "EMPLOYEE_VERIFY", "name": "Identificación", "description": "El empleado se identifica con su rostro o su código QR.", "sort_order": 11, "active": true, "path": "/employee/dashboard", "short_name": "Identificar", "icon": "ScanFace", "badge": null},
-    {"code": "EMPLOYEE_QR", "name": "Mi código QR", "description": "Credencial QR del empleado (solo con identidad aprobada).", "sort_order": 12, "active": true, "path": "/employee/qr", "short_name": "Mi QR", "icon": "QrCode", "badge": null},
-    {"code": "EMPLOYEE_SELECT_COMPANY", "name": "Cambiar de empresa", "description": "Para quien trabaja en varias empresas: elegir a cuál entrar.", "sort_order": 13, "active": true, "path": "/select-company", "short_name": "Empresa", "icon": "Building2", "badge": null},
-    {"code": "PROFILE", "name": "Mi perfil", "description": "Cuenta, contraseña y sesiones abiertas.", "sort_order": 14, "active": true, "path": "/profile", "short_name": "Perfil", "icon": "UserCircle2", "badge": null}
+    {"code": "ADMIN_ERRORS", "name": "Errores del sistema", "description": "Errores registrados en el backend (cualquiera, hasta el más pequeño) y su seguimiento.", "sort_order": 3, "active": true, "path": "/admin/errors", "short_name": "Errores", "icon": "Bug", "badge": "PENDING_ERRORS"},
+    {"code": "COMPANY_DASHBOARD", "name": "Dashboard", "description": "Resumen de la empresa: empleados y validaciones pendientes.", "sort_order": 4, "active": true, "path": "/company/dashboard", "short_name": "Inicio", "icon": "LayoutDashboard", "badge": null},
+    {"code": "COMPANY_EMPLOYEES", "name": "Empleados", "description": "Alta, consulta y edición de los empleados de la empresa.", "sort_order": 5, "active": true, "path": "/company/employees", "short_name": null, "icon": "Users", "badge": null},
+    {"code": "COMPANY_DEPARTMENTS", "name": "Departamentos", "description": "Departamentos de la empresa con sus responsables y empleados asignados.", "sort_order": 6, "active": true, "path": "/company/departments", "short_name": "Áreas", "icon": "Network", "badge": null},
+    {"code": "COMPANY_VALIDATIONS", "name": "Validaciones", "description": "Revisión de los registros faciales pendientes.", "sort_order": 7, "active": true, "path": "/company/validations", "short_name": "Validar", "icon": "ClipboardCheck", "badge": "PENDING_ENROLLMENTS"},
+    {"code": "COMPANY_VALIDATORS", "name": "Validadores", "description": "Tabletas o teléfonos que identifican a los empleados en un acceso.", "sort_order": 8, "active": true, "path": "/company/validators", "short_name": null, "icon": "ScanLine", "badge": null},
+    {"code": "COMPANY_REPORTS", "name": "Reportes", "description": "Asistente de reportes: preguntas sobre los datos de la empresa y exportación a Excel.", "sort_order": 9, "active": true, "path": "/company/reports", "short_name": null, "icon": "FileSpreadsheet", "badge": null},
+    {"code": "COMPANY_SETTINGS", "name": "Configuración", "description": "Política de verificación de identidad de la empresa.", "sort_order": 10, "active": true, "path": "/company/settings", "short_name": "Ajustes", "icon": "Settings2", "badge": null},
+    {"code": "COMPANY_API", "name": "Integraciones (API)", "description": "Llaves de la API para conectar los sistemas de la empresa (nómina, ERP) con su información.", "sort_order": 11, "active": true, "path": "/company/integrations", "short_name": "API", "icon": "KeyRound", "badge": null},
+    {"code": "VALIDATOR_CHECKPOINT", "name": "Identificar empleados", "description": "Punto de control: identifica a los empleados con rostro o QR.", "sort_order": 12, "active": true, "path": "/validator/checkpoint", "short_name": "Identificar", "icon": "ScanFace", "badge": null},
+    {"code": "EMPLOYEE_ENROLL", "name": "Registro facial", "description": "El empleado registra su rostro (aún sin registro o rechazado).", "sort_order": 13, "active": true, "path": "/employee/enroll", "short_name": "Mi rostro", "icon": "ScanFace", "badge": null},
+    {"code": "EMPLOYEE_PENDING", "name": "Registro facial", "description": "El registro facial del empleado espera la validación de la empresa.", "sort_order": 14, "active": true, "path": "/employee/pending", "short_name": "Mi rostro", "icon": "ScanFace", "badge": null},
+    {"code": "EMPLOYEE_VERIFY", "name": "Identificación", "description": "El empleado se identifica con su rostro o su código QR.", "sort_order": 15, "active": true, "path": "/employee/dashboard", "short_name": "Identificar", "icon": "ScanFace", "badge": null},
+    {"code": "EMPLOYEE_QR", "name": "Mi código QR", "description": "Credencial QR del empleado (solo con identidad aprobada).", "sort_order": 16, "active": true, "path": "/employee/qr", "short_name": "Mi QR", "icon": "QrCode", "badge": null},
+    {"code": "EMPLOYEE_SELECT_COMPANY", "name": "Cambiar de empresa", "description": "Para quien trabaja en varias empresas: elegir a cuál entrar.", "sort_order": 17, "active": true, "path": "/select-company", "short_name": "Empresa", "icon": "Building2", "badge": null},
+    {"code": "PROFILE", "name": "Mi perfil", "description": "Cuenta, contraseña y sesiones abiertas.", "sort_order": 18, "active": true, "path": "/profile", "short_name": "Perfil", "icon": "UserCircle2", "badge": null}
   ],
   "role_screens": [
     {"role_code": "ADMIN", "screen_code": "ADMIN_DASHBOARD"},
     {"role_code": "ADMIN", "screen_code": "ADMIN_COMPANIES"},
+    {"role_code": "ADMIN", "screen_code": "ADMIN_ERRORS"},
     {"role_code": "ADMIN", "screen_code": "PROFILE"},
     {"role_code": "COMPANY", "screen_code": "COMPANY_DASHBOARD"},
     {"role_code": "COMPANY", "screen_code": "COMPANY_EMPLOYEES"},
+    {"role_code": "COMPANY", "screen_code": "COMPANY_DEPARTMENTS"},
     {"role_code": "COMPANY", "screen_code": "COMPANY_VALIDATIONS"},
     {"role_code": "COMPANY", "screen_code": "COMPANY_VALIDATORS"},
+    {"role_code": "COMPANY", "screen_code": "COMPANY_REPORTS"},
     {"role_code": "COMPANY", "screen_code": "COMPANY_SETTINGS"},
+    {"role_code": "COMPANY", "screen_code": "COMPANY_API"},
     {"role_code": "COMPANY", "screen_code": "PROFILE"},
     {"role_code": "VALIDATOR", "screen_code": "VALIDATOR_CHECKPOINT"},
     {"role_code": "VALIDATOR", "screen_code": "PROFILE"},

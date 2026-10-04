@@ -7,6 +7,7 @@ import tempfile
 import uuid
 from dataclasses import replace
 
+import cv2
 import numpy as np
 import pytest
 from cryptography.fernet import Fernet
@@ -36,6 +37,10 @@ os.environ.update(
         "FACE_MODELS_AUTO_DOWNLOAD": "false",
         # Las pruebas responden al reto al instante; test_capture_security lo vuelve a exigir.
         "FACE_CHALLENGE_MIN_SECONDS": "0",
+        # La depuración se prueba llamándola directamente (sin el hilo en segundo plano).
+        "MAINTENANCE_INTERVAL_SECONDS": "0",
+        # Los errores registrados se guardan llamando a error_reporter.flush() (sin hilo).
+        "ERROR_REPORT_FLUSH_SECONDS": "0",
     }
 )
 
@@ -51,6 +56,8 @@ from app.models import DeviceStatus, Employee, ValidatorDevice  # noqa: E402
 from app.models.catalog_seed import create_schema  # noqa: E402
 from app.services.bootstrap import create_admin_user, create_company_user  # noqa: E402
 from app.services.catalog_service import clear_catalog_cache  # noqa: E402
+from app.services.error_reporter import error_reporter  # noqa: E402
+from app.services.face_service import clear_migration_blocks  # noqa: E402
 from app.services.policy_service import clear_policy_cache  # noqa: E402
 from app.services.qr_service import QrService  # noqa: E402
 
@@ -60,15 +67,36 @@ ADMIN_EMAIL = "superadmin@plataforma.com"
 ADMIN_PASSWORD = "Plataforma1234"
 
 
-def _embedding(name: str) -> np.ndarray:
+def _seeded(name: str) -> np.ndarray:
     seed = int(hashlib.sha256(name.encode()).hexdigest()[:8], 16)
-    vector = np.random.default_rng(seed).standard_normal(128).astype(np.float32)
-    return vector / np.linalg.norm(vector)
+    return np.random.default_rng(seed).standard_normal(128)
+
+
+def face_vector(name: str) -> np.ndarray:
+    """Embedding simulado de una persona.
+
+    "juan~0.80~luz" es otra captura de juan con similitud EXACTA 0.80 a su rostro ("luz" es la
+    variación: otra dirección). Se encadena: "juan~0.75~luz~0.85~noche" se parece 0.85 a
+    "juan~0.75~luz" y 0.85 × 0.75 a juan (la variación es perpendicular a todo su linaje).
+    """
+    if "~" not in name:
+        vector = _seeded(name)
+        return (vector / np.linalg.norm(vector)).astype(np.float32)
+    base, similarity, _ = name.rsplit("~", 2)
+    lineage = [base]
+    while "~" in lineage[-1]:
+        lineage.append(lineage[-1].rsplit("~", 2)[0])
+    basis, _ = np.linalg.qr(np.stack([face_vector(n).astype(np.float64) for n in lineage]).T)
+    direction = _seeded(name)
+    direction -= basis @ (basis.T @ direction)
+    direction /= np.linalg.norm(direction)
+    s = float(similarity)
+    return (s * face_vector(base).astype(np.float64) + np.sqrt(1 - s * s) * direction).astype(np.float32)
 
 
 def _analysis(name: str) -> FaceAnalysis:
     return FaceAnalysis(
-        embedding=_embedding(name),
+        embedding=face_vector(name),
         detection_score=0.95,
         quality_score=0.9,
         sharpness=100.0,
@@ -129,6 +157,8 @@ class FakePipeline:
         self, image_bytes: bytes, direction: TurnDirection, *, policy: FacePolicy = DEFAULT_POLICY
     ) -> FaceAnalysis:
         kind, name = _parse(image_bytes)
+        if kind.startswith("broken-"):  # una captura que el motor no puede leer (cv2.error)
+            raise cv2.error("captura ilegible")
         spoofed, moved = kind.startswith("spoof-"), kind.endswith("-moved")
         kind = kind.removeprefix("spoof-").removesuffix("-moved")
         if kind == "exif" and policy.reject_foreign_images:
@@ -152,13 +182,18 @@ def _db():
     limiter.reset()
     clear_policy_cache()
     clear_catalog_cache()
+    error_reporter.clear()  # sin errores pendientes de la prueba anterior
+    clear_migration_blocks()
     with SessionLocal() as db:
-        create_company_user(db, COMPANY_EMAIL, COMPANY_PASSWORD)
+        company = create_company_user(db, COMPANY_EMAIL, COMPANY_PASSWORD).company
         create_admin_user(db, ADMIN_EMAIL, ADMIN_PASSWORD)
+        # La empresa de las pruebas tiene el módulo de Integraciones (API); las pruebas sin él lo apagan.
+        company.api_enabled = True  # type: ignore[union-attr]
+        db.commit()
     yield
 
 
-# Los empleados solo pueden usar la app desde un teléfono (política por defecto): el cliente de
+# Los validadores solo operan desde una tableta o un teléfono (política por defecto): el cliente de
 # pruebas se presenta como iPhone. Las pruebas de dispositivo cambian la cabecera explícitamente.
 IPHONE_UA = (
     "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 "

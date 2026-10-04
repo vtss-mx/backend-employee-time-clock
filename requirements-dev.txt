@@ -6,5 +6,5 @@ httpx2==2.13.1     # cliente del TestClient de Starlette (httpx está deprecado 
 # --- Detección de anomalías (scripts/quality.py) ---
 ruff==0.16.10         # lint: tipado faltante (ANN), sintaxis obsoleta (UP), bugs (B), complejidad (C90)
 mypy==2.4.0         # verificación estática de tipos
-pylint==4.1.1        # duplicidad de código (duplicate-code)
-pip-audit==2.7.3     # vulnerabilidades en dependencias
+pylint==4.1.2        # duplicidad de código (duplicate-code)
+pip-audit==2.10.1     # vulnerabilidades en dependencias

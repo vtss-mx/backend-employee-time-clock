@@ -1,11 +1,23 @@
 from datetime import datetime
-from typing import Any, cast
 
-from sqlalchemy import CursorResult, delete, select, update
-from sqlalchemy.orm import Session
+from sqlalchemy import or_, select, update
+from sqlalchemy.orm import Session, joinedload, lazyload, selectinload
 
-from app.models import AuthSession, SessionRevocationReason
-from app.repositories.aggregates import paginate
+from app.models import AuthSession, Employee, SessionRevocationReason, User
+from app.repositories.aggregates import affected_rows, paginate
+
+#: Lo que necesita validar una sesión en CADA petición, en 2 consultas: la sesión con su usuario y
+#: la empresa de este (una), y los empleos con su empresa (otra). Sin estas opciones las relaciones
+#: de los modelos se cargaban en ciclo (usuario → empleos → usuario...) con 3 o 4 consultas y la
+#: configuración del validador para todos los roles; ahora esta se carga solo si se usa, y la
+#: referencia del empleo a su usuario sale del mapa de identidad (sin consulta).
+_AUTH_LOAD = (
+    joinedload(AuthSession.user).options(
+        joinedload(User.company),
+        selectinload(User.employees).options(joinedload(Employee.company), lazyload(Employee.user)),
+        lazyload(User.validator),
+    ),
+)
 
 
 class SessionRepository:
@@ -15,7 +27,7 @@ class SessionRepository:
     def get(self, session_id: str, *, for_update: bool = False) -> AuthSession | None:
         # Se bloquea solo la fila de la sesión (no la del usuario unido por el eager load).
         lock = {"of": AuthSession} if for_update else None
-        return self.db.get(AuthSession, session_id, with_for_update=lock)
+        return self.db.get(AuthSession, session_id, with_for_update=lock, options=_AUTH_LOAD)
 
     def add(self, session: AuthSession) -> None:
         self.db.add(session)
@@ -51,15 +63,19 @@ class SessionRepository:
             stmt = stmt.where(AuthSession.id != except_id)
         if company_id is not None:
             stmt = stmt.where(AuthSession.company_id == company_id)
-        result = cast(
-            CursorResult[Any],
-            self.db.execute(
-                stmt.values(revoked_at=now, revoked_reason=reason).execution_options(synchronize_session="fetch")
-            ),
-        )
-        return result.rowcount or 0
+        return affected_rows(self.db, stmt.values(revoked_at=now, revoked_reason=reason), synchronize="fetch")
 
-    def purge_expired(self, before: datetime) -> None:
-        self.db.execute(
-            delete(AuthSession).where(AuthSession.expires_at < before).execution_options(synchronize_session=False)
+    def revoke_company(self, company_id: int, now: datetime, reason: SessionRevocationReason) -> None:
+        """Las sesiones de una empresa en un solo UPDATE: las de sus administradores y las de los
+        empleados que entraron a ELLA (un empleado que también trabaja en otra empresa conserva su
+        sesión de esa otra). Sin sincronizar la sesión ORM: pueden ser miles de filas."""
+        admins = select(User.id).where(User.company_id == company_id)
+        stmt = (
+            update(AuthSession)
+            .where(
+                AuthSession.revoked_at.is_(None),
+                or_(AuthSession.company_id == company_id, AuthSession.user_id.in_(admins)),
+            )
+            .values(revoked_at=now, revoked_reason=reason)
         )
+        self.db.execute(stmt.execution_options(synchronize_session=False))

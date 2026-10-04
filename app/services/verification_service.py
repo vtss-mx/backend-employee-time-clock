@@ -11,34 +11,28 @@ identity_core.
 import logging
 from collections.abc import Sequence
 
-import numpy as np
 from sqlalchemy.orm import Session
 
-from app.core.config import settings
-from app.core.crypto import decrypt_bytes
-from app.core.exceptions import ConflictError, PermissionDeniedError
+from app.core.exceptions import ConflictError
 from app.facial_recognition import FacePipeline
-from app.models import Employee, EnrollmentStatus, FaceStatus, User, VerificationMethod
-from app.repositories.enrollment_repository import FaceEnrollmentRepository
-from app.schemas.verification import FaceChallengeResponse, VerificationResult
+from app.models import Employee, FaceStatus, User, VerificationMethod
+from app.schemas.verification import VerificationResult
 from app.services.attempt_guard import ensure_unlocked
-from app.services.capture_guard import ensure_real_camera, inspect_take
 from app.services.catalog_service import get_catalogs
+from app.services.employee_access import approved_employee
+from app.services.face_learning import Evidence, FaceLearning
 from app.services.face_service import FaceService, SuspiciousCapture
 from app.services.identity_core import (
     FACE_SUCCESS,
     IdentityLog,
-    check_liveness,
+    confirm_live,
     ensure_frame_count,
     failed,
-    issue_challenge,
-    match_references,
-    mean_confidence,
+    match_one,
     reason_message,
-    required_similarity,
     succeeded,
+    take_challenge,
 )
-from app.services.liveness_service import challenge_store
 from app.services.policy_service import PolicyService
 
 logger = logging.getLogger(__name__)
@@ -48,12 +42,6 @@ class VerificationService:
     def __init__(self, db: Session, *, ip: str | None = None, user_agent: str | None = None) -> None:
         self.db = db
         self.log = IdentityLog(db, ip=ip, user_agent=user_agent)
-
-    def issue_face_challenge(self, user: User) -> FaceChallengeResponse:
-        """Se usa tanto en el registro facial como en la verificación."""
-        if user.employee is None or not user.employee.active:
-            raise PermissionDeniedError("Solo empleados activos")
-        return issue_challenge(self.db, user.id, PolicyService(self.db, user.employee.company_id).current())
 
     def verify_face(
         self,
@@ -71,9 +59,10 @@ class VerificationService:
         2. Cada frame frontal: un rostro, calidad, pose frontal y sin accesorios (422 si no).
         3. Frame del reto: la cabeza girada en la dirección solicitada y misma persona.
         4. Cada frame frontal debe alcanzar la confianza de la empresa contra sus muestras.
+        5. Si fue holgada y segura, la galería del empleado aprende de ella (face_learning).
         """
         return self.verify_employee_face(
-            self._employee_of(user),
+            approved_employee(user),
             user,
             frontal_images,
             pipeline,
@@ -130,22 +119,18 @@ class VerificationService:
         policy = PolicyService(self.db, employee.company_id).current()
         ensure_unlocked(self.db, policy, employee_id=employee.id)
         face_service = FaceService(self.db, pipeline)
-        references = face_service.load_references(employee.id) or self.migrate_references(employee, face_service)
+        references = face_service.references_for(employee)
         if not references:
             raise ConflictError(get_catalogs().face_error_message("FACE_NOT_REGISTERED"), code="FACE_NOT_REGISTERED")
 
         try:
-            ensure_real_camera(camera_label, policy)
-            challenge = challenge_store.require(
-                self.db, actor.id, challenge_id, challenge_images, required=policy.liveness_required
-            )
+            challenge = take_challenge(self.db, actor.id, (challenge_id, challenge_images), camera_label, policy)
             # Errores de calidad/accesorios -> 422 (no cuentan como intento fallido).
             face_policy = policy.face_policy(employee)
             frontal, _ = face_service.analyze_frames(frontal_images, policy=face_policy)
-            liveness = check_liveness(pipeline, challenge, challenge_images, frontal, policy, face_policy)
-            if liveness.spoofed:
-                raise SuspiciousCapture("SPOOF_DETECTED")
-            inspect_take(self.db, employee.company_id, frontal, liveness.turns, policy)
+            liveness = confirm_live(
+                self.db, employee.company_id, pipeline, (challenge, challenge_images), frontal, policy, face_policy
+            )
         except SuspiciousCapture as exc:
             logger.warning("Intento sospechoso (empleado %s, operador %s): %s", employee.id, actor.id, exc.code)
             self._record(employee, actor, VerificationMethod.FACE, False, None, exc.code)
@@ -157,47 +142,18 @@ class VerificationService:
             self._record(employee, actor, VerificationMethod.FACE, False, failure.score, failure.reason)
             return failed(VerificationMethod.FACE, failure.message)
 
-        required = required_similarity(policy)
-        similarities = match_references(frontal, references, required)
-        matched = min(similarities) >= required
-        score = mean_confidence(similarities)
-
-        self._record(employee, actor, VerificationMethod.FACE, matched, score, None if matched else "NO_MATCH")
-        if not matched:
+        match = match_one(frontal, references, policy)
+        if not match.matched:
+            self._record(employee, actor, VerificationMethod.FACE, False, match.score, "NO_MATCH")
             return failed(VerificationMethod.FACE, reason_message("NO_MATCH"))
-        if len(references) < settings.FACE_MAX_SAMPLES_PER_EMPLOYEE and challenge is not None:
-            # Tras una migración de modelo el empleado tiene pocas muestras: se completan con
-            # capturas ya verificadas (identidad + prueba de vida superadas), hasta el máximo.
-            best = max(frontal, key=lambda a: a.quality_score)
-            face_service.store(employee.id, [best], replace=False, active=True)
-            self.db.commit()
-        return succeeded(employee, VerificationMethod.FACE, FACE_SUCCESS, confidence=score)
-
-    def migrate_references(self, employee: Employee, face_service: FaceService) -> list[np.ndarray]:
-        """Sin embeddings del modelo actual: se generan desde la foto de referencia aprobada."""
-        enrollment = FaceEnrollmentRepository(self.db, employee.company_id).latest_for_employee(employee.id)
-        if enrollment is None or enrollment.status != EnrollmentStatus.APPROVED or enrollment.photo_encrypted is None:
-            return []
-        return face_service.migrate_from_photo(employee.id, enrollment.id, decrypt_bytes(enrollment.photo_encrypted))
+        # La galería del empleado evoluciona: suma utilidad a la muestra que decidió y, si la captura
+        # es segura, aprende de ella (se guarda junto con el intento en la bitácora).
+        evidence = Evidence(frontal, live=bool(liveness.turns))
+        FaceLearning(face_service, policy).reinforce(employee, match.closest, evidence, references)
+        self._record(employee, actor, VerificationMethod.FACE, True, match.score, None)
+        return succeeded(employee, VerificationMethod.FACE, FACE_SUCCESS, confidence=match.score)
 
     # ---------- Internos ----------
-
-    @staticmethod
-    def _employee_of(user: User) -> Employee:
-        employee = user.employee
-        if employee is None:
-            raise PermissionDeniedError("Solo los empleados pueden verificarse")
-        if not employee.active or not user.active:
-            raise PermissionDeniedError("El empleado está inactivo", code="USER_INACTIVE")
-        if employee.face_status != FaceStatus.APPROVED:
-            raise PermissionDeniedError(
-                {
-                    FaceStatus.PENDING_REVIEW: "Tu registro facial está en validación por tu empresa",
-                    FaceStatus.REJECTED: "Tu registro facial fue rechazado. Regístrate de nuevo",
-                }.get(employee.face_status, "Primero debes registrar tu rostro"),
-                code="FACE_NOT_APPROVED",
-            )
-        return employee
 
     def _record(
         self,

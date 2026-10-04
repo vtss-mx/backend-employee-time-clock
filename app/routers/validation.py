@@ -8,8 +8,10 @@ from typing import Annotated
 
 from fastapi import APIRouter, Query
 
+from app.core.config import settings
 from app.core.responses import ApiResponse, ok
 from app.dependencies import CurrentUser, DbSession
+from app.middleware.rate_limit import enforce
 from app.schemas.common import ErrorResponse
 from app.services.live_validation import validate_field
 
@@ -36,5 +38,7 @@ def validate(
         str | None, Query(max_length=255, description="Valor relacionado (el correo, al validar el teléfono)")
     ] = None,
 ) -> ApiResponse[dict]:
+    # Cada consulta pregunta por correos/teléfonos de toda la plataforma: con límite por usuario.
+    enforce(f"validation:user:{user.id}", settings.RATE_LIMIT_VALIDATION_PER_MINUTE)
     result = validate_field(db, user, field, value, exclude_id, related)
     return ok(result.as_dict(), result.message, code=result.code)

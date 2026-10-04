@@ -87,6 +87,30 @@ class CatalogDeviceStatus(ToneMixin, CatalogEntry, Base):
     __tablename__ = "device_statuses"
 
 
+class CatalogApiScope(CatalogEntry, Base):
+    """Permisos que puede tener una llave de la API de integración (solo lectura de la propia empresa)."""
+
+    __tablename__ = "api_scopes"
+
+
+class CatalogApiKeyStatus(ToneMixin, CatalogEntry, Base):
+    """Estado de una llave de la API: activa, vencida o revocada (se deriva de sus fechas)."""
+
+    __tablename__ = "api_key_statuses"
+
+
+class CatalogErrorStatus(ToneMixin, CatalogEntry, Base):
+    """Seguimiento de un error del sistema: pendiente, en proceso, en revisión o solucionado."""
+
+    __tablename__ = "error_statuses"
+
+
+class CatalogErrorSeverity(ToneMixin, CatalogEntry, Base):
+    """Gravedad de un error del sistema: crítico, error o advertencia."""
+
+    __tablename__ = "error_severities"
+
+
 class CatalogVerificationReason(CatalogEntry, Base):
     """Motivos de un intento fallido (bitácora); `message` es lo que se le muestra a la persona."""
 

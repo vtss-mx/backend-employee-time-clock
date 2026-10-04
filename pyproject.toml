@@ -11,22 +11,18 @@ filterwarnings = [
 [tool.coverage.run]
 source = ["app"]
 branch = true
-omit = [
-  "app/cli.py",
-  # Modelos ONNX/OpenCV reales: se validan con pruebas de integración con modelos (no unitarias).
-  "app/facial_recognition/opencv_engine.py",
-  "app/facial_recognition/accessories.py",
-  "app/facial_recognition/model_store.py",
-]
+# Sin exclusiones: los motores reales (OpenCV/ONNX) se prueban con los modelos de la imagen de
+# desarrollo (tests/test_face_engine_real.py) y la CLI con sus propias pruebas.
 
 [tool.coverage.report]
-fail_under = 85
+# 100 % de líneas y ramas: el código que no se puede ejecutar se elimina (sin `pragma: no cover`).
+fail_under = 100
 show_missing = true
 skip_covered = true
 exclude_also = ["if TYPE_CHECKING:", "raise NotImplementedError", "if __name__ == .__main__.:"]
 
 [tool.ruff]
-target-version = "py312"
+target-version = "py314"
 line-length = 120
 extend-exclude = ["alembic/versions"]
 
@@ -62,7 +58,7 @@ max-complexity = 12
 "app/models/enums.py" = ["S105"]
 
 [tool.mypy]
-python_version = "3.12"
+python_version = "3.14"
 plugins = ["pydantic.mypy"]
 packages = ["app"]
 ignore_missing_imports = true

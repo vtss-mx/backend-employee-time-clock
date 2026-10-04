@@ -5,29 +5,29 @@ El validador identifica a CUALQUIER empleado de su empresa según su modo:
 - FACE: el rostro, con prueba de vida, contra la galería de la empresa (1:N).
 - QR_OR_FACE: cualquiera de los dos.
 - QR_AND_FACE: ambos; el QR dice quién es y el rostro debe ser de esa persona (1:1).
-Cada intento queda en la bitácora (attendance.verification_logs) con el validador que lo hizo.
+Cada intento queda en la bitácora (attendance.verification_logs) con el validador que lo hizo, y cada
+identificación facial segura enseña a la galería del empleado (face_learning).
 """
 
 from collections.abc import Sequence
 
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.exceptions import ConflictError, PermissionDeniedError, UnprocessableError
 from app.facial_recognition import Accessory, FaceAnalysis, FacePipeline
-from app.models import Employee, User, VerificationLog, VerificationMethod
-from app.repositories.aggregates import paginate
+from app.models import Employee, User, VerificationMethod
 from app.repositories.employee_repository import EmployeeRepository
 from app.repositories.face_repository import FaceEmbeddingRepository
+from app.repositories.verification_repository import VerificationLogRepository
 from app.schemas.checkpoint import CheckpointEmployee, CheckpointEvent, CheckpointEventList, CheckpointProfile
 from app.schemas.common import PageParams
 from app.schemas.user import UserCompanyInfo
 from app.schemas.verification import FaceChallengeResponse, VerificationResult
 from app.services.attempt_guard import ensure_unlocked
-from app.services.capture_guard import ensure_real_camera, inspect_take
 from app.services.catalog_service import get_catalogs
 from app.services.face_gallery import face_galleries, identify
+from app.services.face_learning import Evidence, FaceLearning
 from app.services.face_service import (
     SECURITY_REASONS,
     SPOOF_FLAG,
@@ -35,25 +35,25 @@ from app.services.face_service import (
     SuspiciousCapture,
     accessories_rejection,
     analyze_frames,
+    blocked_migrations,
 )
 from app.services.identity_core import (
     FACE_SUCCESS,
     QR_SUCCESS,
     IdentityLog,
-    check_liveness,
+    confirm_live,
     ensure_frame_count,
     failed,
     issue_challenge,
-    match_references,
+    match_one,
     mean_confidence,
     reason_message,
     required_similarity,
     succeeded,
+    take_challenge,
 )
-from app.services.liveness_service import challenge_store
 from app.services.policy_service import PolicyService
 from app.services.qr_service import QrService
-from app.services.verification_service import VerificationService
 
 #: Accesorios que impiden identificar desde la captura (la prenda de cabeza se decide al saber
 #: quién es: puede tener excepción por motivos religiosos o médicos).
@@ -85,15 +85,12 @@ class CheckpointService:
 
     def recent(self, page: PageParams) -> CheckpointEventList:
         """Identificaciones de este validador, paginadas (las más recientes primero)."""
-        logs, total = paginate(
-            self.db,
-            select(VerificationLog).where(VerificationLog.user_id == self.user.id),
-            (VerificationLog.created_at.desc(), VerificationLog.id.desc()),
-            offset=page.offset,
-            limit=page.size,
+        logs, total = VerificationLogRepository(self.db).page_for_actor(
+            self.user.id, offset=page.offset, limit=page.size
         )
-        ids = {log.employee_id for log in logs if log.employee_id is not None}
-        people = {e.id: e for e in self.db.scalars(select(Employee).where(Employee.id.in_(ids)))} if ids else {}
+        people = EmployeeRepository(self.db, self.company_id).by_ids(
+            {log.employee_id for log in logs if log.employee_id is not None}
+        )
         rows = [(log, people.get(log.employee_id) if log.employee_id else None) for log in logs]
         return CheckpointEventList.of(
             [
@@ -165,16 +162,14 @@ class CheckpointService:
         ensure_frame_count(images)
         ensure_unlocked(self.db, self.policy, actor_id=self.user.id, reasons=SECURITY_REASONS)
         try:
-            ensure_real_camera(camera_label, self.policy)
-            challenge = challenge_store.require(
-                self.db, self.user.id, challenge_id, challenge_images, required=self.policy.liveness_required
+            challenge = take_challenge(
+                self.db, self.user.id, (challenge_id, challenge_images), camera_label, self.policy
             )
             frontal, headwear = self._analyze(pipeline, images)
             face_policy = self.policy.face_policy(None)
-            liveness = check_liveness(pipeline, challenge, challenge_images, frontal, self.policy, face_policy)
-            if liveness.spoofed:
-                raise SuspiciousCapture("SPOOF_DETECTED")
-            inspect_take(self.db, self.company_id, frontal, liveness.turns, self.policy)
+            liveness = confirm_live(
+                self.db, self.company_id, pipeline, (challenge, challenge_images), frontal, self.policy, face_policy
+            )
         except SuspiciousCapture as exc:
             self._record(None, method, False, None, exc.code)
             raise
@@ -182,14 +177,15 @@ class CheckpointService:
         if failure is not None:
             self._record(None, method, False, failure.score, failure.reason)
             return failed(method, failure.message)
+        live = bool(liveness.turns)
         if qr_content:
-            return self._confirm_qr_holder(pipeline, qr_content, frontal, headwear)
-        return self._search_gallery(pipeline, frontal, headwear)
+            return self._confirm_qr_holder(pipeline, qr_content, frontal, headwear, live=live)
+        return self._search_gallery(pipeline, frontal, headwear, live=live)
 
     # ---------- Internos ----------
 
     def _search_gallery(
-        self, pipeline: FacePipeline, frontal: list[FaceAnalysis], headwear: bool
+        self, pipeline: FacePipeline, frontal: list[FaceAnalysis], headwear: bool, *, live: bool
     ) -> VerificationResult:
         self._migrate_missing(pipeline)
         gallery = face_galleries.get(self.db, self.company_id, pipeline.model_name)
@@ -207,11 +203,13 @@ class CheckpointService:
             self._record(None, VerificationMethod.FACE, False, score, found.reason or "NO_MATCH")
             return failed(VerificationMethod.FACE, reason_message(found.reason or "NO_MATCH"))
         self._ensure_headwear_allowed(employee, headwear)
+        learning = FaceLearning(FaceService(self.db, pipeline), self.policy)
+        learning.reinforce(employee, found.sample_id, Evidence(frontal, live=live, gap=found.gap))
         self._record(employee, VerificationMethod.FACE, True, score, None)
         return succeeded(employee, VerificationMethod.FACE, FACE_SUCCESS, confidence=score)
 
     def _confirm_qr_holder(
-        self, pipeline: FacePipeline, qr_content: str, frontal: list[FaceAnalysis], headwear: bool
+        self, pipeline: FacePipeline, qr_content: str, frontal: list[FaceAnalysis], headwear: bool, *, live: bool
     ) -> VerificationResult:
         method = VerificationMethod.QR_FACE
         PolicyService(self.db, self.company_id).ensure_qr_enabled()
@@ -221,22 +219,20 @@ class CheckpointService:
             self._record(None, method, False, None, reason)
             return failed(method, reason_message(reason))
         ensure_unlocked(self.db, self.policy, employee_id=employee.id)  # alguien con el QR de otro probando rostros
-        face_service = FaceService(self.db, pipeline)
-        references = face_service.load_references(employee.id) or VerificationService(self.db).migrate_references(
-            employee, face_service
-        )
+        faces = FaceService(self.db, pipeline)
+        references = faces.references_for(employee)
         if not references:
             self._record(employee, method, False, None, "FACE_NOT_REGISTERED")
             return failed(method, reason_message("FACE_NOT_REGISTERED"))
-        required = required_similarity(self.policy)
-        similarities = match_references(frontal, references, required)
-        score = mean_confidence(similarities)
-        if min(similarities) < required:
-            self._record(employee, method, False, score, "NO_MATCH")
+        match = match_one(frontal, references, self.policy)
+        if not match.matched:
+            self._record(employee, method, False, match.score, "NO_MATCH")
             return failed(method, "El rostro no corresponde al dueño del código QR")
         self._ensure_headwear_allowed(employee, headwear)
-        self._record(employee, method, True, score, None)
-        return succeeded(employee, method, FACE_SUCCESS, confidence=score)
+        # El QR ya dijo quién es: la captura enseña con las mismas reglas que una verificación 1:1.
+        FaceLearning(faces, self.policy).reinforce(employee, match.closest, Evidence(frontal, live=live), references)
+        self._record(employee, method, True, match.score, None)
+        return succeeded(employee, method, FACE_SUCCESS, confidence=match.score)
 
     def _analyze(self, pipeline: FacePipeline, images: list[bytes]) -> tuple[list[FaceAnalysis], bool]:
         """Calidad, pose y un solo rostro en cada captura; accesorios y suplantación por consenso.
@@ -258,19 +254,17 @@ class CheckpointService:
 
     def _migrate_missing(self, pipeline: FacePipeline) -> None:
         """Empleados aprobados sin muestras del modelo actual: se generan desde su foto aprobada
-        (por lotes, una sola vez por empleado), para que también se les pueda identificar."""
+        (por lotes, una sola vez por empleado), para que también se les pueda identificar.
+
+        Los empleados del lote se cargan en UNA consulta (sin una por empleado)."""
         pending = FaceEmbeddingRepository(self.db).approved_without_model(
-            self.company_id, pipeline.model_name, settings.FACE_GALLERY_MIGRATION_BATCH
+            self.company_id, pipeline.model_name, settings.FACE_GALLERY_MIGRATION_BATCH, exclude=blocked_migrations()
         )
         if not pending:
             return
-        employees = EmployeeRepository(self.db, self.company_id)
         face_service = FaceService(self.db, pipeline)
-        verification = VerificationService(self.db)
-        for employee_id in pending:
-            employee = employees.get_by_id(employee_id)
-            if employee is not None:
-                verification.migrate_references(employee, face_service)
+        for employee in EmployeeRepository(self.db, self.company_id).by_ids(set(pending)).values():
+            face_service.references_for(employee)
 
     def _employee_from_qr(self, qr_content: str, *, hold: bool = False) -> tuple[Employee | None, str | None]:
         """Empleado activo de ESTA empresa dueño del QR (que queda usado para siempre), o el motivo
@@ -281,11 +275,11 @@ class CheckpointService:
 
     def _allows(self, method: VerificationMethod) -> bool:
         # Métodos permitidos por modo: catalog.validator_mode_methods.
-        return method.value in get_catalogs(self.db).mode_methods.get(self.validator.mode.value, ())
+        return method.value in get_catalogs().mode_methods.get(self.validator.mode.value, ())
 
     def _deny(self) -> None:
         raise ConflictError(
-            f"Este validador identifica en modo «{get_catalogs(self.db).name('validator_modes', self.validator.mode)}»",
+            f"Este validador identifica en modo «{get_catalogs().name('validator_modes', self.validator.mode)}»",
             code="VALIDATOR_METHOD_NOT_ALLOWED",
         )
 

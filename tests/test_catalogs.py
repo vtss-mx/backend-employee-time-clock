@@ -9,11 +9,15 @@ from app.core.database import SessionLocal
 from app.facial_recognition import TurnDirection
 from app.facial_recognition.pipeline import Accessory
 from app.models import (
+    ApiKeyStatus,
+    ApiScope,
     CatalogCountry,
     CatalogFaceError,
     CatalogSessionRevocationReason,
     CatalogVerificationReason,
     EnrollmentStatus,
+    ErrorSeverity,
+    ErrorStatus,
     FaceStatus,
     Screen,
     SessionRevocationReason,
@@ -76,12 +80,16 @@ def test_code_and_catalogs_name_the_same_values():
     assert _codes("validator_modes") == {m.value for m in ValidatorMode}
     assert _codes("face_statuses") == {s.value for s in FaceStatus}
     assert _codes("enrollment_statuses") == {s.value for s in EnrollmentStatus}
+    assert _codes("error_statuses") == {s.value for s in ErrorStatus}
+    assert _codes("error_severities") == {s.value for s in ErrorSeverity}
     assert _codes("accessories") == {a.value for a in Accessory}
     assert _codes("liveness_actions") == {d.value for d in TurnDirection}
     assert _codes("verification_reasons") == REASONS
     assert _codes("session_revocation_reasons") == {r.value for r in SessionRevocationReason}
     assert _codes("enrollment_flags") == {a.value for a in Accessory} | {SPOOF_FLAG, DUPLICATE_FLAG}
     assert _codes("screens") == {s.value for s in Screen}
+    assert _codes("api_scopes") == {s.value for s in ApiScope}
+    assert _codes("api_key_statuses") == {s.value for s in ApiKeyStatus}
 
 
 def test_every_face_error_the_api_raises_has_its_message_in_the_catalog():

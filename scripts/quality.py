@@ -160,7 +160,7 @@ if "deps" not in SKIP:
     code, out = run(sys.executable, "-m", "pip", "list", "--outdated", "--format=json", "--disable-pip-version-check")
     try:
         outdated = json.loads(out.strip().splitlines()[-1]) if code == 0 and out.strip() else []
-    except (json.JSONDecodeError, IndexError):
+    except json.JSONDecodeError, IndexError:
         outdated = []
     required = {
         re.split(r"[=<>\[ ]", line.strip())[0].lower()

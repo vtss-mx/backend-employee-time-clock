@@ -53,13 +53,13 @@ class User(TimestampMixin, Base):
     )
 
     #: Empleos de la persona: uno por empresa (EMPLOYEE puede trabajar en varias).
-    employees: Mapped[list["Employee"]] = relationship(
+    employees: Mapped[list[Employee]] = relationship(
         back_populates="user", lazy="selectin", order_by="Employee.id", passive_deletes=True
     )
     # joined: al validar la sesión en cada petición se sabe si la empresa sigue activa sin otra consulta.
-    company: Mapped["Company | None"] = relationship(lazy="joined")
+    company: Mapped[Company | None] = relationship(lazy="joined")
     #: Configuración del validador de identidad (rol VALIDATOR).
-    validator: Mapped["Validator | None"] = relationship(
+    validator: Mapped[Validator | None] = relationship(
         back_populates="user",
         foreign_keys="Validator.user_id",
         uselist=False,
@@ -80,7 +80,7 @@ class User(TimestampMixin, Base):
         return value if isinstance(value, int) else None
 
     @property
-    def employee(self) -> "Employee | None":
+    def employee(self) -> Employee | None:
         """Empleo en la empresa elegida en la sesión; si la persona solo tiene uno, ese."""
         if self.role != UserRole.EMPLOYEE:
             return None
@@ -90,12 +90,12 @@ class User(TimestampMixin, Base):
         return next((e for e in self.employees if e.company_id == chosen), None)
 
     @property
-    def usable_employees(self) -> list["Employee"]:
+    def usable_employees(self) -> list[Employee]:
         """Empleos con los que puede entrar: activos y en una empresa activa."""
         return [e for e in self.employees if e.active and e.company.active]
 
     @property
-    def current_company(self) -> "Company | None":
+    def current_company(self) -> Company | None:
         """Empresa en la que opera: la suya (COMPANY, VALIDATOR) o la elegida en la sesión (EMPLOYEE)."""
         if self.role in (UserRole.COMPANY, UserRole.VALIDATOR):
             return self.company

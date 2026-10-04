@@ -11,6 +11,8 @@ A la distancia se le descuenta la precisión informada por el dispositivo, hasta
 (`VALIDATOR_LOCATION_TOLERANCE_M`), para no rechazar a quien está en el borde por el error del GPS.
 """
 
+from typing import cast
+
 from app.core.config import settings
 from app.core.exceptions import PermissionDeniedError
 from app.core.geo import distance_m
@@ -42,9 +44,10 @@ def ensure_location_allowed(user: User, location: DeviceLocation | None) -> None
     validator = user.validator if user.role == UserRole.VALIDATOR else None
     if validator is None or not validator.location_required:
         return
-    latitude, longitude, radius = validator.latitude, validator.longitude, validator.location_radius_m
-    if latitude is None or longitude is None or radius is None:
-        return  # imposible: la base exige punto y radio al requerir ubicación (ck_validators_location_point)
+    # Exigir ubicación implica punto y radio: lo validan el alta y la edición del validador
+    # (LOCATION_POINT_REQUIRED / LOCATION_RADIUS_REQUIRED) y la base (ck_validators_location_point).
+    latitude, longitude = cast(float, validator.latitude), cast(float, validator.longitude)
+    radius = cast(int, validator.location_radius_m)
     if location is None:
         raise PermissionDeniedError(LOCATION_REQUIRED, code="LOCATION_REQUIRED", details={"radius_m": radius})
 

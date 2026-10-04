@@ -3,7 +3,7 @@
 from collections.abc import Generator
 from typing import Any
 
-from sqlalchemy import DDL, MetaData, create_engine, event
+from sqlalchemy import DDL, Engine, MetaData, create_engine, event
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from app.core.config import settings
@@ -44,18 +44,30 @@ for _extension in ("pg_trgm", "btree_gin"):
     )
 
 
-_is_sqlite = settings.DATABASE_URL.startswith("sqlite")
+def _enable_sqlite_fk(dbapi_connection: Any, _record: Any) -> None:
+    """SQLite (solo pruebas/desarrollo) necesita activar las FK en cada conexión para respetar
+    ON DELETE CASCADE y las restricciones como PostgreSQL."""
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA foreign_keys=ON")
+    cursor.close()
 
-if _is_sqlite:
-    # SQLite no tiene esquemas: cada tabla se crea y consulta sin él.
-    engine = create_engine(
-        settings.DATABASE_URL,
-        connect_args={"check_same_thread": False},
-        execution_options={"schema_translate_map": dict.fromkeys(ALL_SCHEMAS)},
-    )
-else:
-    engine = create_engine(
-        settings.DATABASE_URL,
+
+def build_engine(url: str) -> Engine:
+    """Motor de la URL dada. PostgreSQL (producción): pool acotado y tiempos límite en todo. SQLite
+    (pruebas): sin esquemas y con FK activas. Crear el motor no abre conexiones."""
+    if url.startswith("sqlite"):
+        # SQLite no tiene esquemas: cada tabla se crea y consulta sin él.
+        sqlite_engine = create_engine(
+            url,
+            hide_parameters=True,  # los errores de SQL nunca llevan datos de las personas
+            connect_args={"check_same_thread": False},
+            execution_options={"schema_translate_map": dict.fromkeys(ALL_SCHEMAS)},
+        )
+        event.listen(sqlite_engine, "connect", _enable_sqlite_fk)
+        return sqlite_engine
+    return create_engine(
+        url,
+        hide_parameters=True,  # los errores de SQL (logs y reportes) nunca llevan datos de las personas
         pool_pre_ping=True,  # descarta conexiones rotas (reinicio de BD, red)
         pool_recycle=1800,
         pool_size=settings.DB_POOL_SIZE,
@@ -68,22 +80,20 @@ else:
             "options": (
                 f"-c statement_timeout={settings.DB_STATEMENT_TIMEOUT_MS} -c search_path={','.join(ALL_SCHEMAS)},public"
             ),
+            # Sin sentencias preparadas del servidor: psycopg 3 las crea tras 5 ejecuciones y el plan
+            # genérico ignoraba índices parciales (p. ej. empleados aprobados de la galería facial).
+            # También permite poner PgBouncer en modo transacción al escalar a varias instancias.
+            "prepare_threshold": None,
         },
     )
 
-if _is_sqlite:
-    # SQLite (solo pruebas/desarrollo) necesita activar las FK para respetar ON DELETE CASCADE.
-    @event.listens_for(engine, "connect")
-    def _enable_sqlite_fk(dbapi_connection: Any, _record: Any) -> None:  # pragma: no cover
-        cursor = dbapi_connection.cursor()
-        cursor.execute("PRAGMA foreign_keys=ON")
-        cursor.close()
 
+engine = build_engine(settings.DATABASE_URL)
 
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 
 
-def get_db() -> Generator[Session, None, None]:
+def get_db() -> Generator[Session]:
     db = SessionLocal()
     try:
         yield db

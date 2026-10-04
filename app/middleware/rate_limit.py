@@ -10,12 +10,11 @@
 
 import logging
 import math
-import random
 import threading
 import time
 from collections import defaultdict, deque
 from collections.abc import Callable
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Protocol
 
 from fastapi import Request
@@ -83,14 +82,9 @@ class DatabaseRateLimiter:
             index_elements=[RateLimitCounter.key], set_={"count": RateLimitCounter.count + 1}
         ).returning(RateLimitCounter.count)
         try:
+            # Solo el conteo (transacción mínima); los contadores viejos los depura el mantenimiento.
             with engine.begin() as conn:
                 count: int = conn.execute(stmt).scalar_one()
-                if random.random() < 0.01:  # noqa: S311 - muestreo de limpieza, no criptográfico
-                    conn.execute(
-                        delete(RateLimitCounter).where(
-                            RateLimitCounter.expires_at < datetime.now(UTC) - timedelta(minutes=5)
-                        )
-                    )
         except SQLAlchemyError as exc:
             # Si la BD no responde, el límite no debe tumbar el login (falla abierto y se registra).
             logger.warning("Rate limit no disponible (%s); se permite la petición", exc.__class__.__name__)

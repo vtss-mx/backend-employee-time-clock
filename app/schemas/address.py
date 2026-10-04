@@ -76,7 +76,3 @@ class Address(BaseModel):
         if (self.latitude is None) != (self.longitude is None):
             raise ValueError("Indica la latitud y la longitud del punto en el mapa")
         return self
-
-    @property
-    def has_point(self) -> bool:
-        return self.latitude is not None

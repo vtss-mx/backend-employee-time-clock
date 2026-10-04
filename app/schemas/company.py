@@ -56,6 +56,7 @@ class CompanyCreate(_CompanyFields):
     )
     admin_email: EmailStr = Field(description="Correo del administrador de la empresa (inicia sesión con él)")
     admin_password: str
+    api_enabled: bool = Field(default=False, description="Acceso al módulo de Integraciones (API)")
 
 
 class CompanyUpdate(_CompanyFields):
@@ -66,6 +67,7 @@ class CompanyUpdate(_CompanyFields):
     rfc: str | None = Field(default=None, max_length=20)
     phone: PhoneNumber | None = None
     max_employees: int | None = Field(default=None, ge=1, le=1_000_000)
+    api_enabled: bool | None = Field(default=None, description="Acceso al módulo de Integraciones (API)")
 
 
 class CompanyStatusUpdate(BaseModel):
@@ -107,6 +109,8 @@ class CompanyRead(BaseModel):
     phone: str | None = None
     active: bool
     max_employees: int | None = None
+    #: Tiene el módulo de Integraciones (API).
+    api_enabled: bool = False
     employee_count: int = 0
     admin_count: int = 0
     created_at: datetime
@@ -127,3 +131,22 @@ class PlatformStats(BaseModel):
     active_companies: int
     employees: int
     company_admins: int
+
+
+class CompanyEmployeeRead(BaseModel):
+    """Un empleado de una empresa visto por el ADMIN de la plataforma: su ficha de trabajo, de solo
+    lectura. Sin datos fiscales (RFC, CURP, NSS), fecha de nacimiento ni nada biométrico."""
+
+    id: int
+    employee_number: str
+    first_name: str
+    last_name: str
+    department_name: str | None = None
+    email: str
+    phone: str | None = None
+    active: bool
+    face_status: str
+
+
+class CompanyEmployeeList(Page[CompanyEmployeeRead]):
+    """Empleados de una empresa (por apellido), para el ADMIN de la plataforma."""

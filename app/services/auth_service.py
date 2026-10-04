@@ -58,9 +58,14 @@ class AuthService:
 
     def authenticate(self, email: str, password: str) -> User:
         user = self.users.get_by_email(email)
+        password_hash = user.password_hash if user else None
+        # Termina la lectura antes de Argon2: la conexión vuelve al pool mientras se calcula el hash
+        # (decenas de ms y, en una ráfaga de inicios de sesión, la espera por un turno). Los datos
+        # leídos siguen disponibles (expire_on_commit=False); la escritura abre otra transacción.
+        self.db.commit()
         # verify_password se ejecuta siempre (hash ficticio si no existe) para no filtrar
         # por tiempo de respuesta qué correos están registrados.
-        valid = verify_password(password, user.password_hash if user else None)
+        valid = verify_password(password, password_hash)
         if not user or not valid:
             raise AuthenticationError(INVALID_CREDENTIALS, code="INVALID_CREDENTIALS")
         user.use_company(None)  # aún no elige empresa (si trabaja en varias)

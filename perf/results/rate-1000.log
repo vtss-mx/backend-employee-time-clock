@@ -1,0 +1,35 @@
+ Container timeclock-perf-k6-run-351534eb9d8f Creating 
+ Container timeclock-perf-k6-run-351534eb9d8f Created 
+
+
+  █ TOTAL RESULTS 
+
+    checks_total.......: 19778  912.072144/s
+    checks_succeeded...: 60.04% 11875 out of 19778
+    checks_failed......: 39.95% 7903 out of 19778
+
+    ✗ respuesta 200
+      ↳  60% — ✓ 11875 / ✗ 7903
+
+    CUSTOM
+    shed_503.......................: 7903   364.450711/s
+
+    HTTP
+    http_req_duration..............: avg=1.03s p(50)=492.01ms p(95)=5.01s p(99)=5.15s max=6.37s
+      { expected_response:true }...: avg=1.01s p(50)=673.56ms p(95)=3.01s p(99)=4.9s  max=6.37s
+    http_req_failed................: 39.95% 7903 out of 19779
+    http_reqs......................: 19779  912.11826/s
+
+    EXECUTION
+    dropped_iterations.............: 228    10.514332/s
+    iteration_duration.............: avg=1.03s p(50)=492.11ms p(95)=5.01s p(99)=5.15s max=6.37s
+    iterations.....................: 19778  912.072144/s
+    vus............................: 447    min=447           max=1104
+    vus_max........................: 1127   min=1000          max=1127
+
+    NETWORK
+    data_received..................: 87 MB  4.0 MB/s
+    data_sent......................: 11 MB  503 kB/s
+
+
+

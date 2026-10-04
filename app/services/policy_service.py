@@ -11,7 +11,6 @@ from collections import OrderedDict
 from collections.abc import Mapping
 from dataclasses import dataclass, field, fields
 
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -19,16 +18,14 @@ from app.core.devices import classify_device
 from app.core.exceptions import PermissionDeniedError, UnprocessableError
 from app.facial_recognition import FacePolicy
 from app.models import Employee, User, UserRole, VerificationPolicy
+from app.repositories.policy_repository import PolicyRepository
+from app.repositories.user_repository import UserRepository
 from app.schemas.policy import VerificationPolicyRead, VerificationPolicyUpdate
 from app.services.catalog_service import get_catalogs
 
 TOUCH_ONLY_MESSAGE = (
     "Por políticas de tu empresa, la validación de identidad solo está disponible desde una tableta o "
     "un teléfono. Ingresa desde el navegador de ese dispositivo con tu mismo correo y contraseña."
-)
-MOBILE_ONLY_MESSAGE = (
-    "Por políticas de tu empresa, el registro de asistencia solo está disponible desde tu teléfono "
-    "celular. Ingresa desde el navegador de tu teléfono con tu mismo correo y contraseña."
 )
 
 _CACHE_TTL_SECONDS = 5.0
@@ -43,7 +40,6 @@ class PolicySnapshot:
     liveness_challenge: bool = True
     anti_spoofing: bool = True
     qr_enabled: bool = True
-    employee_mobile_only: bool = True
     validator_mobile_only: bool = True
     min_confidence: float = 0.99999
     # --- Candados contra engaños ---
@@ -61,6 +57,7 @@ class PolicySnapshot:
     lockout_minutes: int = 15
     validator_device_approval: bool = True
     qr_lifetime_seconds: int = 30
+    adaptive_learning: bool = True
     #: Del nivel de anti-spoofing (catálogo): umbral y si basta una captura sospechosa.
     antispoof_threshold: float = field(default=0.05, compare=False)
     antispoof_any_frame: bool = field(default=False, compare=False)
@@ -115,12 +112,13 @@ class PolicyService:
         self.company_id = company_id
 
     def _row(self) -> VerificationPolicy:
-        row = self.db.scalar(select(VerificationPolicy).where(VerificationPolicy.company_id == self.company_id))
+        policies = PolicyRepository(self.db, self.company_id)
+        row = policies.get()
         if row is None:  # empresa sin política aún: valores seguros por defecto
             defaults = PolicySnapshot()
-            row = VerificationPolicy(company_id=self.company_id, **{n: getattr(defaults, n) for n in POLICY_COLUMNS})
-            self.db.add(row)
-            self.db.flush()
+            row = policies.add(
+                VerificationPolicy(company_id=self.company_id, **{n: getattr(defaults, n) for n in POLICY_COLUMNS})
+            )
         return row
 
     def ensure(self) -> VerificationPolicy:
@@ -144,17 +142,14 @@ class PolicyService:
 
     def read(self) -> VerificationPolicyRead:
         row = self._row()
-        updated_by = None
-        if row.updated_by_id:
-            user = self.db.get(User, row.updated_by_id)
-            updated_by = user.email if user else None
+        updated_by = UserRepository(self.db).emails_by_ids((row.updated_by_id,)).get(row.updated_by_id or 0)
         return VerificationPolicyRead.model_validate(row).model_copy(update={"updated_by": updated_by})
 
     def update(self, data: VerificationPolicyUpdate, user: User) -> VerificationPolicyRead:
         row = self._row()
         changes = data.model_dump(exclude_unset=True, exclude_none=True)
         if "min_confidence" in changes:
-            level = get_catalogs(self.db).confidence_level(changes["min_confidence"])
+            level = get_catalogs().confidence_level(changes["min_confidence"])
             if level is None:
                 raise UnprocessableError(
                     "Elige uno de los niveles de confianza disponibles",
@@ -162,7 +157,7 @@ class PolicyService:
                     field="min_confidence",
                 )
             changes["min_confidence"] = level["value"]
-        if "anti_spoofing_level" in changes and not get_catalogs(self.db).is_active(
+        if "anti_spoofing_level" in changes and not get_catalogs().is_active(
             "antispoof_levels", changes["anti_spoofing_level"]
         ):
             raise UnprocessableError(
@@ -186,18 +181,16 @@ class PolicyService:
 
 
 def ensure_device_allowed(db: Session, user: User, headers: Mapping[str, str]) -> None:
-    """Dispositivos permitidos según la política de la empresa en la que opera el usuario.
-
-    - EMPLOYEE: solo desde un teléfono celular (`employee_mobile_only`).
-    - VALIDATOR: solo desde una tableta o un teléfono (`validator_mobile_only`).
-    ADMIN y COMPANY no tienen esta restricción.
+    """Solo los VALIDADORES tienen restricción de dispositivo: operan desde una tableta o un teléfono
+    (`validator_mobile_only`) y, además, desde un dispositivo que su empresa autorizó (device_service).
+    Empleados, administradores de empresa y de la plataforma usan la aplicación desde cualquier
+    dispositivo.
     """
     company = user.current_company
-    if user.role not in (UserRole.EMPLOYEE, UserRole.VALIDATOR) or company is None:
-        return  # sin empresa elegida todavía: se exige al elegirla
-    policy = PolicyService(db, company.id).current()
+    if user.role != UserRole.VALIDATOR or company is None:
+        return
+    if not PolicyService(db, company.id).current().validator_mobile_only:
+        return
     device = classify_device(headers.get("user-agent"), headers.get("sec-ch-ua-mobile"))
-    if user.role == UserRole.EMPLOYEE and policy.employee_mobile_only and device != "phone":
-        raise PermissionDeniedError(MOBILE_ONLY_MESSAGE, code="MOBILE_DEVICE_REQUIRED", details={"device": device})
-    if user.role == UserRole.VALIDATOR and policy.validator_mobile_only and device == "desktop":
+    if device == "desktop":
         raise PermissionDeniedError(TOUCH_ONLY_MESSAGE, code="TOUCH_DEVICE_REQUIRED", details={"device": device})

@@ -3,8 +3,8 @@
 from collections.abc import Callable, Generator
 from typing import Annotated
 
-from fastapi import Depends, File, Form, Query, Request, UploadFile
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi import Depends, File, Form, Query, Request, Security, UploadFile
+from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -17,6 +17,7 @@ from app.core.exceptions import (
     ServiceUnavailableError,
     UnprocessableError,
 )
+from app.core.request_context import note_actor
 from app.core.tokens import decode_access_token
 from app.facial_recognition import (
     FaceEngineUnavailable,
@@ -27,11 +28,10 @@ from app.facial_recognition import (
 )
 from app.facial_recognition.image_utils import ALLOWED_CONTENT_TYPES
 from app.middleware.rate_limit import enforce
-from app.models import Screen, User, UserRole
+from app.models import ApiScope, Screen, User, UserRole
 from app.schemas.common import PageParams
-from app.services.auth_service import ensure_account_usable
+from app.services.api_key_service import ApiClient, authenticate, require_scope
 from app.services.catalog_service import get_catalogs
-from app.services.policy_service import ensure_device_allowed
 from app.services.session_service import SessionService
 
 _bearer = HTTPBearer(
@@ -72,27 +72,12 @@ def get_current_user(
 ) -> User:
     if credentials is None or credentials.scheme.lower() != "bearer":
         raise AuthenticationError("No autenticado")
-    payload = decode_access_token(credentials.credentials)
-    try:
-        user_id = int(payload["sub"])
-    except (KeyError, TypeError, ValueError) as exc:
-        raise AuthenticationError("Token inválido", code="TOKEN_INVALID") from exc
-
-    # La sesión (y su usuario, en la misma consulta) se valida en cada petición: cerrar
-    # sesión, revocarla, desactivar al usuario o cambiar su rol surte efecto de inmediato
-    # aunque el JWT siga vigente.
-    session = SessionService(db).validate(str(payload["sid"]), user_id)
-    user = session.user
-    # Empresa en la que opera (EMPLOYEE en varias empresas): la fija la sesión del servidor.
-    user.use_company(session.company_id)
-    request.state.session_id = payload["sid"]
-    if payload.get("role") != user.role.value:
-        raise AuthenticationError("La sesión ya no es válida", code="TOKEN_INVALID")
-    # Cuenta, empleo o empresa desactivados: el acceso se pierde de inmediato.
-    ensure_account_usable(user)
-    # En cada petición (no solo al iniciar sesión): un token obtenido en el teléfono tampoco
-    # sirve desde una computadora o tableta.
-    ensure_device_allowed(db, user, request.headers)
+    # Las mismas reglas que el canal WebSocket (SessionService.authenticate_access).
+    user, request.state.session_id = SessionService(db).authenticate_access(credentials.credentials, request.headers)
+    # Quién la hizo, por si termina en error (el registro de errores guarda su correo y rol tal cual).
+    # La empresa en que opera (la suya o la elegida en la sesión), ya cargada con la sesión: sin consultas.
+    company = user.current_company
+    note_actor(user.id, company.id if company else None, email=user.email, role=user.role.value)
     # Fin de la transacción de lectura: la conexión vuelve al pool de inmediato
     # (expire_on_commit=False conserva los objetos). Así una petición que después espera
     # trabajo largo (p. ej. la cola facial) no retiene una conexión de BD ociosa.
@@ -127,15 +112,15 @@ def require_roles(*roles: UserRole) -> Callable[[User], User]:
     return dependency
 
 
-def require_screen(*screens: Screen) -> Callable[[User, Session], User]:
+def require_screen(*screens: Screen) -> Callable[[User], User]:
     """Permiso del endpoint: el rol del usuario debe tener alguna de las pantallas que lo usan.
 
     Las pantallas de cada rol viven en la BD (catalog.role_screens): quitarle una pantalla a un rol
     le quita también los endpoints de esa pantalla, sin desplegar.
     """
 
-    def dependency(user: CurrentUser, db: DbSession) -> User:
-        if not get_catalogs(db).grants(user.role.value, screens):
+    def dependency(user: CurrentUser) -> User:
+        if not get_catalogs().grants(user.role.value, screens):
             raise PermissionDeniedError()
         return user
 
@@ -179,17 +164,33 @@ def _member_company(user: CurrentUser) -> int:
 
 #: Empresa del administrador COMPANY autenticado (rutas de administración de la empresa).
 CompanyScope = Annotated[int, Depends(_company_scope)]
+
+
+def require_api_module(user: CompanyUser) -> User:
+    """La empresa debe tener el módulo de Integraciones (API): lo decide el ADMIN de la plataforma."""
+    if not (user.company and user.company.api_enabled):
+        raise PermissionDeniedError(
+            "Tu empresa no tiene acceso a Integraciones (API). Solicítalo al administrador de la plataforma.",
+            code="API_ACCESS_DISABLED",
+        )
+    return user
+
+
 #: Empresa del usuario autenticado, sea COMPANY, VALIDATOR o EMPLOYEE.
 MemberCompany = Annotated[int, Depends(_member_company)]
 
 
-def get_pipeline() -> Generator[FacePipeline, None, None]:
+def get_pipeline(db: DbSession) -> Generator[FacePipeline]:
     """Reserva un worker facial durante la petición (1 por núcleo, cola FIFO acotada).
 
     - Cola llena  → 503 inmediato (backpressure): nunca se acumulan peticiones sin límite.
     - Espera larga → 503 reintentable.
     - Modelos caídos → 503 y el resto de la API sigue operando (circuit breaker).
+
+    Antes de esperar turno se cierra la transacción de lo leído hasta aquí (usuario, validador...):
+    la conexión vuelve al pool y la fila facial nunca deja sin conexiones a login, QR o administración.
     """
+    db.commit()
     try:
         lease = lease_pipeline()
         pipeline = lease.__enter__()
@@ -212,6 +213,11 @@ def get_pipeline() -> Generator[FacePipeline, None, None]:
 
 
 Pipeline = Annotated[FacePipeline, Depends(get_pipeline)]
+
+
+def qr_rate_limit(user: CurrentUser) -> None:
+    """QR dinámico: rotación automática + "Generar otro" (un tope por persona y minuto)."""
+    enforce(f"qr:user:{user.id}", settings.RATE_LIMIT_QR_PER_MINUTE)
 
 
 def checkpoint_rate_limit(user: CurrentUser) -> None:
@@ -268,3 +274,35 @@ def request_meta(request: Request) -> tuple[str | None, str | None]:
     ip = request.client.host if request.client else None
     user_agent = request.headers.get("user-agent")
     return ip, (user_agent[:255] if user_agent else None)
+
+
+# ---------------- API de integración (llave de la empresa) ----------------
+
+#: Solo la API de integración la lee; el resto de la API no la acepta (y aquí no sirve una sesión).
+_api_key_header = APIKeyHeader(
+    name="X-API-Key",
+    auto_error=False,
+    scheme_name="ApiKey",
+    description="Llave de la API de integración de tu empresa (Integraciones › Crear llave)",
+)
+
+
+def get_api_client(
+    request: Request, db: DbSession, api_key: Annotated[str | None, Security(_api_key_header)]
+) -> ApiClient:
+    """La llave de la cabecera: a qué empresa (y con qué permisos) da acceso esta petición."""
+    ip, _ = request_meta(request)
+    return authenticate(db, api_key, ip)
+
+
+ApiClientDep = Annotated[ApiClient, Depends(get_api_client)]
+
+
+def require_api_scope(scope: ApiScope) -> Callable[[ApiClient], ApiClient]:
+    """La llave debe tener este permiso (catalog.api_scopes); si no, 403 API_SCOPE_REQUIRED."""
+
+    def dependency(client: ApiClientDep) -> ApiClient:
+        require_scope(client, scope.value)
+        return client
+
+    return dependency

@@ -8,7 +8,8 @@ QrState = Literal["ACTIVE", "USED", "EXPIRED", "REVOKED"]
 
 
 class DynamicQrRead(BaseModel):
-    """QR recién emitido para que el empleado lo muestre (la imagen lleva el token: no se repite)."""
+    """QR recién emitido para que el empleado lo muestre. El teléfono lo dibuja con `content` (el
+    servidor no genera imágenes: cada rotación cuesta una consulta, no CPU)."""
 
     id: int
     employee_number: str
@@ -16,7 +17,8 @@ class DynamicQrRead(BaseModel):
     expires_at: datetime
     #: Vigencia en segundos (política de la empresa): la webapp lo renueva al terminar.
     lifetime_seconds: int
-    image_base64: str  # data URL PNG listo para <img src="...">
+    #: Lo que codifica el QR ("TCQR2:<token>"); sirve una sola vez.
+    content: str
 
 
 class QrStatusRead(BaseModel):

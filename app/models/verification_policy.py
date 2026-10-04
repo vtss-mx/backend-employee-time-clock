@@ -61,8 +61,6 @@ class VerificationPolicy(Base):
         server_default=text("0.99999"),
         nullable=False,
     )
-    # Los empleados solo pueden usar la aplicación desde un teléfono celular.
-    employee_mobile_only: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true(), nullable=False)
     # Los validadores de identidad solo operan desde una tableta o un teléfono (no computadoras).
     validator_mobile_only: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true(), nullable=False)
 
@@ -85,6 +83,8 @@ class VerificationPolicy(Base):
     enforce_human_timing: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true(), nullable=False)
     detect_duplicate_faces: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true(), nullable=False)
     lockout_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true(), nullable=False)
+    #: La galería de cada empleado aprende de sus identificaciones seguras (face_learning).
+    adaptive_learning: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true(), nullable=False)
     #: Cada dispositivo de un validador debe autorizarlo la empresa antes de operar.
     validator_device_approval: Mapped[bool] = mapped_column(
         Boolean, default=True, server_default=true(), nullable=False

@@ -10,23 +10,29 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 
+from app.core.admission import admission
 from app.core.config import settings
 from app.core.database import SessionLocal, wait_for_database
 from app.core.exceptions import register_exception_handlers
 from app.core.request_context import RequestIdLogFilter
-from app.middleware.concurrency import ConcurrencyLimitMiddleware
+from app.middleware.admission import AdaptiveAdmissionMiddleware
 from app.middleware.request_id import register_request_id_middleware
 from app.middleware.security import register_security_middlewares
 from app.routers import (
     admin,
+    admin_errors,
+    api_keys,
     auth,
     catalogs,
     checkpoint,
+    departments,
     employees,
     enrollments,
     face,
     health,
+    integrations,
     realtime,
+    reports,
     users,
     validation,
     validators,
@@ -34,6 +40,8 @@ from app.routers import (
 )
 from app.routers import settings as settings_router
 from app.services.bootstrap import ensure_first_admin, ensure_first_company
+from app.services.error_reporter import ErrorReportFlusher, install_log_handler
+from app.services.maintenance_service import MaintenanceScheduler
 
 logging.basicConfig(
     level=settings.LOG_LEVEL.upper(),
@@ -60,6 +68,12 @@ def _configure_threadpool(face_slots: int) -> None:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    # Registro de errores PRIMERO: todo error del log (también los del arranque) entra a
+    # ops.error_reports, guardado en lotes (si la BD aún no está, se guarda cuando vuelva).
+    install_log_handler()
+    flusher = ErrorReportFlusher(settings.ERROR_REPORT_FLUSH_SECONDS) if settings.ERROR_REPORT_FLUSH_SECONDS else None
+    if flusher:
+        flusher.start()
     # Arranque tolerante: si la BD aún no está lista se espera; si falla el bootstrap o la
     # carga de modelos, la API inicia igual y se recupera sola (readiness lo refleja).
     if wait_for_database(settings.DB_STARTUP_RETRIES):
@@ -82,8 +96,19 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         logger.info("Modelos de reconocimiento facial cargados")
     except Exception as exc:
         _configure_threadpool(0)
-        logger.warning("No se pudieron cargar los modelos faciales (se reintentará bajo demanda): %s", exc)
+        # Error (no aviso): sin modelos no hay reconocimiento facial; el ADMIN debe enterarse.
+        logger.error("No se pudieron cargar los modelos faciales (se reintentará bajo demanda): %s", exc)
+    # Depuración de lo vencido en segundo plano (fuera de las peticiones; una instancia a la vez).
+    scheduler = (
+        MaintenanceScheduler(settings.MAINTENANCE_INTERVAL_SECONDS) if settings.MAINTENANCE_INTERVAL_SECONDS else None
+    )
+    if scheduler:
+        scheduler.start()
     yield
+    if scheduler:
+        scheduler.stop()
+    if flusher:
+        flusher.stop()  # guarda lo pendiente antes de apagar
 
 
 app = FastAPI(
@@ -108,12 +133,9 @@ app = FastAPI(
 )
 
 register_security_middlewares(app)
-# Admisión acotada (dentro del request-id para que los 503 lleven traceId).
-app.add_middleware(
-    ConcurrencyLimitMiddleware,
-    max_concurrent=settings.MAX_CONCURRENT_REQUESTS,
-    queue_timeout=settings.REQUEST_QUEUE_TIMEOUT_SECONDS,
-)
+# Admisión adaptativa: límite que sigue a la capacidad real y fila con prioridad por nivel y demanda
+# (dentro del request-id para que los 503 lleven traceId).
+app.add_middleware(AdaptiveAdmissionMiddleware, controller=admission, api_prefix=settings.API_PREFIX)
 register_request_id_middleware(app)
 app.add_middleware(
     CORSMiddleware,
@@ -122,17 +144,21 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "ngrok-skip-browser-warning", "X-Request-ID"],
-    expose_headers=["X-Request-ID", "Retry-After"],
+    # Content-Disposition: el nombre del archivo de Excel de un reporte.
+    expose_headers=["X-Request-ID", "Retry-After", "Content-Disposition"],
     max_age=600,
 )
 register_exception_handlers(app)
 
-for router in (
+#: Todos los routers de la API (la prueba de autorización recorre cada una de sus rutas).
+API_ROUTERS = (
     health.router,
     auth.router,
     admin.router,
+    admin_errors.router,
     users.router,
     employees.router,
+    departments.router,
     enrollments.router,
     face.router,
     settings_router.router,
@@ -142,13 +168,26 @@ for router in (
     checkpoint.router,
     catalogs.router,
     validation.router,
-):
+    api_keys.router,
+    integrations.router,
+    reports.router,
+)
+for router in API_ROUTERS:
     app.include_router(router, prefix=settings.API_PREFIX)
 
-if settings.DOCS_ENABLED:
 
-    @app.get("/", include_in_schema=False)
-    @app.get(f"{settings.API_PREFIX}/docs", include_in_schema=False)
-    def docs_redirect() -> RedirectResponse:
-        """La raíz del backend y /api/docs llevan a Swagger (/docs)."""
-        return RedirectResponse("/docs")
+def docs_redirect() -> RedirectResponse:
+    """La raíz del backend y /api/docs llevan a Swagger (/docs)."""
+    return RedirectResponse("/docs")
+
+
+def register_docs_redirects(target: FastAPI, enabled: bool) -> None:
+    """Atajos a la documentación, solo si está publicada (DOCS_ENABLED): sin ella, la raíz y /api/docs
+    responden 404 como cualquier ruta inexistente (no delatan que hubo documentación)."""
+    if not enabled:
+        return
+    for path in ("/", f"{settings.API_PREFIX}/docs"):
+        target.add_api_route(path, docs_redirect, methods=["GET"], include_in_schema=False)
+
+
+register_docs_redirects(app, settings.DOCS_ENABLED)

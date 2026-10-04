@@ -12,7 +12,7 @@ from app.core.database import SessionLocal
 from app.core.exceptions import AuthenticationError
 from app.core.tokens import ACCESS_TOKEN_TYPE, decode_access_token, jwks
 from app.models import AuthSession
-from tests.conftest import COMPANY_EMAIL, COMPANY_PASSWORD, create_employee
+from tests.conftest import COMPANY_EMAIL, COMPANY_PASSWORD, create_employee, login
 
 COOKIE = settings.REFRESH_COOKIE_NAME
 
@@ -298,3 +298,22 @@ def test_change_password(client, monkeypatch):
         client.post("/api/auth/login", json={"email": COMPANY_EMAIL, "password": COMPANY_PASSWORD}).status_code == 401
     )
     assert _login(client, password="NuevaClave1").status_code == 200
+
+
+def test_session_probe_says_if_there_is_a_session_without_rotating_it(client):
+    """Al cargar, la aplicación pregunta si restaurar la sesión: la cookie es la única fuente (nada en
+    el navegador) y preguntar no la rota ni la cierra; sin sesión no es un error."""
+    from app.core.config import settings
+
+    def probe() -> bool:
+        response = client.get("/api/auth/session")
+        assert response.status_code == 200 and response.json()["code"] == "SESSION_STATUS"
+        return bool(response.json()["data"]["signed_in"])
+
+    assert probe() is False
+    login(client, "admin@empresa.com", "Admin1234")
+    cookie = client.cookies.get(settings.REFRESH_COOKIE_NAME)
+    assert probe() is True and probe() is True
+    assert client.cookies.get(settings.REFRESH_COOKIE_NAME) == cookie  # no se rotó
+    client.cookies.set(settings.REFRESH_COOKIE_NAME, "otro.secreto-falso")
+    assert probe() is False

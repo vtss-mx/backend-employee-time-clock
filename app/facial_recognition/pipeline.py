@@ -66,7 +66,7 @@ class FacePolicy:
     spoof_threshold: float = 0.05
     spoof_any_frame: bool = False
 
-    def blocks(self, accessory: "Accessory") -> bool:
+    def blocks(self, accessory: Accessory) -> bool:
         return {
             Accessory.GLASSES: self.block_glasses,
             Accessory.HEADWEAR: self.block_headwear,

@@ -4,7 +4,8 @@ import pytest
 from starlette.websockets import WebSocketDisconnect
 
 from app.core.config import settings
-from tests.conftest import COMPANY_EMAIL, COMPANY_PASSWORD, create_employee, login
+from tests.conftest import COMPANY_EMAIL, COMPANY_PASSWORD, DESKTOP_UA, create_employee, login
+from tests.test_validators import validator_headers
 
 URL = "/api/ws/validation"
 ENVELOPE_KEYS = {"success", "statusCode", "code", "message", "data", "errors", "traceId", "timestamp"}
@@ -109,6 +110,18 @@ def test_realtime_auth_timeout_and_limits(client, monkeypatch):
     monkeypatch.setattr(settings, "WS_MAX_CONNECTIONS", 0)
     with client.websocket_connect(URL) as socket:
         assert socket.receive_json()["code"] == "SERVER_BUSY"
+
+
+def test_realtime_applies_the_same_session_rules_as_http(client, company_headers):
+    """El canal autentica igual que la API HTTP (SessionService.authenticate_access): un validador
+    desde una computadora, con su empresa exigiendo teléfono o tableta, tampoco entra por aquí."""
+    access = validator_headers(client, company_headers)["Authorization"].removeprefix("Bearer ")
+    with client.websocket_connect(URL, headers={"User-Agent": DESKTOP_UA}) as socket:
+        socket.send_json({"type": "auth", "token": access})
+        assert socket.receive_json()["code"] == "TOUCH_DEVICE_REQUIRED"
+        with pytest.raises(WebSocketDisconnect) as closed:
+            socket.receive_json()
+        assert closed.value.code == 4403
 
 
 def test_logout_closes_the_realtime_channel(client):

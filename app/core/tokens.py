@@ -30,11 +30,19 @@ REQUIRED_CLAIMS = ["exp", "iat", "nbf", "sub", "sid", "jti", "iss", "aud"]
 
 
 @dataclass(frozen=True)
-class SigningKey:
+class VerificationKey:
+    """Llave que solo valida tokens (p. ej. una anterior publicada solo como pública)."""
+
     kid: str
-    private: Any | None  # None para llaves anteriores publicadas solo como públicas
     public: Any
     jwk: dict[str, str] | None
+
+
+@dataclass(frozen=True)
+class SigningKey(VerificationKey):
+    """Llave que además firma: la parte privada existe siempre (lo garantiza el tipo)."""
+
+    private: Any
 
 
 @dataclass(frozen=True)
@@ -65,7 +73,8 @@ def _thumbprint(jwk: dict[str, str]) -> str:
     return _b64url(hashlib.sha256(canonical.encode()).digest())[:16]
 
 
-def _load_ec_key(pem: str) -> SigningKey:
+def _load_ec_key(pem: str) -> VerificationKey:
+    """Llave EC P-256 en PEM: privada (firma y valida) o pública (solo valida)."""
     data = pem.encode()
     private = None
     if "PRIVATE KEY" in pem:
@@ -77,19 +86,26 @@ def _load_ec_key(pem: str) -> SigningKey:
         raise ValueError("Las llaves JWT ES256 deben ser EC P-256")
     jwk = _ec_jwk(public)
     kid = _thumbprint(jwk)
-    return SigningKey(kid=kid, private=private, public=public, jwk={**jwk, "kid": kid, "use": "sig", "alg": "ES256"})
+    jwk = {**jwk, "kid": kid, "use": "sig", "alg": "ES256"}
+    if private is None:
+        return VerificationKey(kid=kid, public=public, jwk=jwk)
+    return SigningKey(kid=kid, public=public, jwk=jwk, private=private)
 
 
 @lru_cache
-def _keys() -> tuple[SigningKey, dict[str, SigningKey]]:
+def _keys() -> tuple[SigningKey, dict[str, VerificationKey]]:
     """(llave de firma actual, todas las llaves de verificación por kid)."""
     if settings.JWT_ALGORITHM == "HS256":
         secret = settings.JWT_SECRET_KEY
         kid = hashlib.sha256(secret.encode()).hexdigest()[:16]
-        key = SigningKey(kid=kid, private=secret, public=secret, jwk=None)
+        key = SigningKey(kid=kid, public=secret, jwk=None, private=secret)
         return key, {kid: key}
     current = _load_ec_key(settings.JWT_PRIVATE_KEY)
-    verification = {current.kid: current}
+    if not isinstance(current, SigningKey):
+        # Se detecta al cargar las llaves (arranque o primera petición), no al emitir el primer token:
+        # con solo la pública nadie podría iniciar sesión y la causa quedaría escondida.
+        raise ValueError("JWT_PRIVATE_KEY debe ser la llave PRIVADA EC P-256 (se recibió una pública)")
+    verification: dict[str, VerificationKey] = {current.kid: current}
     for pem in filter(None, (decode_pem(p) for p in settings.JWT_PREVIOUS_KEYS.split("||"))):
         previous = _load_ec_key(pem)
         verification.setdefault(previous.kid, previous)
@@ -132,8 +148,6 @@ def create_access_token(
         "nbf": now,
         "exp": now + expires_delta,
     }
-    if current.private is None:  # pragma: no cover - la llave actual siempre es privada
-        raise RuntimeError("La llave de firma JWT actual no tiene parte privada")
     token = jwt.encode(
         payload,
         current.private,

@@ -60,7 +60,7 @@ class AuthSession(Base):
     )
 
     # joined: validar la sesión y cargar el usuario es UNA sola consulta por petición.
-    user: Mapped["User"] = relationship(lazy="joined", innerjoin=True)
+    user: Mapped[User] = relationship(lazy="joined", innerjoin=True)
 
 
 class RateLimitCounter(Base):

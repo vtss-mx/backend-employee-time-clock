@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.models import EmployeeQr
@@ -72,11 +72,3 @@ class EmployeeQrRepository:
             .execution_options(synchronize_session=False)
         )
         return done is not None
-
-    def purge_expired(self, before: datetime) -> None:
-        """Depura los QR vencidos hace tiempo (uno depurado tampoco se acepta: ya no existe)."""
-        self.db.execute(
-            delete(EmployeeQr)
-            .where(EmployeeQr.expires_at < before, EmployeeQr.active.is_(False))
-            .execution_options(synchronize_session=False)
-        )

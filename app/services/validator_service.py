@@ -9,15 +9,12 @@ exigida viven en workforce.validators; la cuenta (correo único, contraseña, ac
 sesiones abiertas del validador: la siguiente se abre ya con la regla nueva.
 """
 
-from datetime import UTC, datetime
-
 from sqlalchemy.orm import Session
 
 from app.core.clock import business_day_start
 from app.core.exceptions import ConflictError, NotFoundError, UnprocessableError
 from app.core.passwords import hash_password
 from app.models import DeviceStatus, SessionRevocationReason, UserRole, Validator
-from app.repositories.company_repository import CompanyRepository
 from app.repositories.user_repository import UserRepository
 from app.repositories.validator_device_repository import ValidatorDeviceRepository
 from app.repositories.validator_repository import ValidatorRepository
@@ -31,6 +28,7 @@ from app.schemas.validator import (
     ValidatorUpdate,
 )
 from app.services.people_service import EMAIL_TAKEN
+from app.services.session_service import SessionService
 
 LOCATION_POINT_REQUIRED = "Para exigir ubicación, marca en el mapa el punto del domicilio"
 LOCATION_RADIUS_REQUIRED = "Indica el radio (en metros) dentro del cual puede iniciar sesión"
@@ -144,7 +142,7 @@ class ValidatorService:
         self.db.commit()
 
     def _close_sessions(self, validator: Validator, reason: SessionRevocationReason) -> None:
-        CompanyRepository(self.db).revoke_sessions(datetime.now(UTC), reason, user_id=validator.user_id)
+        SessionService(self.db).revoke_all(validator.user_id, reason, commit=False)
 
     @staticmethod
     def _to_read(validator: Validator, identifications_today: int, devices: dict[str, int]) -> ValidatorRead:

@@ -39,6 +39,8 @@ class FaceEnrollment(Base):
         Index("ix_face_enrollments_employee_submitted", "employee_id", "submitted_at", "id"),
         # Bandeja de validaciones de una empresa: WHERE company_id, status ORDER BY submitted_at, id.
         Index("ix_face_enrollments_company_status", "company_id", "status", "submitted_at", "id"),
+        # Historial completo de la empresa (sin filtrar por estado): ORDER BY submitted_at, id.
+        Index("ix_face_enrollments_company_submitted", "company_id", "submitted_at", "id"),
         # FK con ON DELETE SET NULL (revisor): evita recorrer la tabla al borrar un usuario.
         Index(
             "ix_face_enrollments_reviewed_by_id",
@@ -77,7 +79,8 @@ class FaceEnrollment(Base):
         ForeignKey(f"{CATALOG}.enrollment_statuses.code"),
         nullable=False,
     )
-    photo_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary)
+    # Diferida: los listados no la cargan (~200 KB por fila); solo el detalle y la aprobación.
+    photo_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary, deferred=True)
     photo_content_type: Mapped[str | None] = mapped_column(String(30))
     quality_score: Mapped[float] = mapped_column(Float, nullable=False)
     samples: Mapped[int] = mapped_column(nullable=False)
@@ -90,10 +93,10 @@ class FaceEnrollment(Base):
     captured_by_id: Mapped[int | None] = mapped_column(ForeignKey(f"{AUTH}.users.id", ondelete="SET NULL"))
     rejection_reason: Mapped[str | None] = mapped_column(String(500))
 
-    employee: Mapped["Employee"] = relationship(foreign_keys=[employee_id], lazy="joined")
+    employee: Mapped[Employee] = relationship(foreign_keys=[employee_id], lazy="joined")
     #: Marcas para el revisor: accesorios que el sistema detectó y el empleado indicó no usar, o
     #: posible suplantación. El administrador lo confirma al revisar la fotografía.
-    flags: Mapped[list["FaceEnrollmentFlag"]] = relationship(
+    flags: Mapped[list[FaceEnrollmentFlag]] = relationship(
         lazy="selectin", cascade="all, delete-orphan", passive_deletes=True, order_by="FaceEnrollmentFlag.flag_code"
     )
 

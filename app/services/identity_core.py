@@ -12,6 +12,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+import cv2
 import numpy as np
 from sqlalchemy.orm import Session
 
@@ -19,13 +20,13 @@ from app.core.config import settings
 from app.core.exceptions import UnprocessableError
 from app.facial_recognition import FaceAnalysis, FacePipeline, FacePolicy, FaceValidationError
 from app.facial_recognition.calibration import match_confidence, similarity_for_confidence
-from app.facial_recognition.matcher import best_match, cosine_similarity
+from app.facial_recognition.matcher import cosine_similarity, similarity_matrix
 from app.models import Employee, VerificationLog, VerificationMethod
 from app.repositories.verification_repository import VerificationLogRepository
 from app.schemas.verification import FaceChallengeResponse, VerificationResult
-from app.services.capture_guard import ensure_human_timing, spoofed
+from app.services.capture_guard import ensure_human_timing, ensure_real_camera, inspect_take, spoofed
 from app.services.catalog_service import get_catalogs
-from app.services.face_service import SECURITY_REASONS, SuspiciousCapture
+from app.services.face_service import SECURITY_REASONS, Reference, SuspiciousCapture, engine_failure
 from app.services.liveness_service import Challenge, challenge_store
 from app.services.policy_service import PolicySnapshot
 
@@ -52,9 +53,25 @@ def mean_confidence(similarities: Sequence[float]) -> float:
     return round(sum(match_confidence(s, model) for s in similarities) / len(similarities), 7)
 
 
-def match_references(frontal: Sequence[FaceAnalysis], references: list[np.ndarray], required: float) -> list[float]:
-    """Similitud de cada captura contra las muestras de UNA persona (1:1)."""
-    return [best_match(f.embedding, references, required).similarity for f in frontal]
+@dataclass(frozen=True)
+class OneToOne:
+    """Resultado de comparar las capturas contra las muestras de UNA persona."""
+
+    #: CADA captura alcanzó la similitud que exige la empresa.
+    matched: bool
+    #: Confianza promedio (para la bitácora y la respuesta).
+    score: float
+    #: Muestra que más se pareció a alguna captura: la que decidió (suma a su utilidad).
+    closest: int | None = None
+
+
+def match_one(frontal: Sequence[FaceAnalysis], references: Sequence[Reference], policy: PolicySnapshot) -> OneToOne:
+    """Comparación 1:1 (el empleado que se verifica, o el dueño del QR en QR + rostro) contra todas
+    sus muestras: las del registro aprobado y las que aprendió del uso (face_learning)."""
+    scores = similarity_matrix([f.embedding for f in frontal], [r.vector for r in references])
+    similarities = [round(float(s), 4) for s in scores.max(axis=1)]
+    closest = references[int(np.argmax(scores.max(axis=0)))].id
+    return OneToOne(min(similarities) >= required_similarity(policy), mean_confidence(similarities), closest)
 
 
 def ensure_frame_count(images: Sequence[bytes]) -> None:
@@ -67,7 +84,7 @@ def issue_challenge(db: Session, user_id: int, policy: PolicySnapshot) -> FaceCh
     if not policy.liveness_required:
         return FaceChallengeResponse(liveness_required=False)
     challenge = challenge_store.issue(db, user_id, steps=policy.liveness_steps)
-    catalogs = get_catalogs(db)
+    catalogs = get_catalogs()
     instructions = [catalogs.liveness_instruction(d.value) for d in challenge.directions]
     return FaceChallengeResponse(
         liveness_required=True,
@@ -136,11 +153,55 @@ def check_liveness(
             turn_missing = exc.code == "LIVENESS_TURN_NOT_DETECTED"
             failure = LivenessFailure("LIVENESS_FAILED", capture_error=None if turn_missing else exc)
             return LivenessCheck(failure, tuple(turns))
+        except cv2.error:  # captura del giro que OpenCV no puede leer: como cualquier captura inválida
+            failure = LivenessFailure("LIVENESS_FAILED", capture_error=FaceValidationError("INVALID_IMAGE"))
+            return LivenessCheck(failure, tuple(turns))
+        except Exception as exc:
+            raise engine_failure() from exc
         turns.append(turned)
         consistency = max(cosine_similarity(turned.embedding, f.embedding) for f in frontal)
         if consistency < settings.FACE_LIVENESS_CONSISTENCY_THRESHOLD:
             return LivenessCheck(LivenessFailure("LIVENESS_MISMATCH", round(consistency, 4)), tuple(turns))
     return LivenessCheck(turns=tuple(turns), spoofed=spoofed(frontal, turns, face_policy))
+
+
+def take_challenge(
+    db: Session,
+    actor_id: int,
+    challenge: tuple[str | None, Sequence[bytes]],
+    camera_label: str | None,
+    policy: PolicySnapshot,
+) -> Challenge | None:
+    """Primer candado de toda captura facial, ANTES de analizarla: cámara real y el reto de quien
+    opera la cámara. El reto se consume aunque la captura falle después: sirve una sola vez."""
+    ensure_real_camera(camera_label, policy)
+    challenge_id, challenge_images = challenge
+    return challenge_store.require(db, actor_id, challenge_id, challenge_images, required=policy.liveness_required)
+
+
+def confirm_live(
+    db: Session,
+    company_id: int,
+    pipeline: FacePipeline,
+    challenge: tuple[Challenge | None, Sequence[bytes]],
+    frontal: Sequence[FaceAnalysis],
+    policy: PolicySnapshot,
+    face_policy: FacePolicy,
+    *,
+    block_spoof: bool = True,
+    flagged_spoof: bool = False,
+) -> LivenessCheck:
+    """Último candado, con las frontales ya analizadas: prueba de vida, suplantación y toma única.
+
+    `block_spoof=False` (autoregistro) deja la sospecha de suplantación para el revisor (va en
+    `LivenessCheck.spoofed`); `flagged_spoof` = el análisis de las frontales ya la había marcado.
+    """
+    issued, images = challenge
+    liveness = check_liveness(pipeline, issued, images, frontal, policy, face_policy)
+    if block_spoof and (flagged_spoof or liveness.spoofed):
+        raise SuspiciousCapture("SPOOF_DETECTED")
+    inspect_take(db, company_id, frontal, liveness.turns, policy)
+    return liveness
 
 
 def failed(method: VerificationMethod, message: str) -> VerificationResult:

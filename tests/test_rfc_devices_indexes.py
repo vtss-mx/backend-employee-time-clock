@@ -16,13 +16,11 @@ from tests.conftest import (
     approved_employee,
     create_employee,
     curp_for,
-    login,
     nss_for,
     phone_for,
     qr_content,
     rfc_for,
 )
-from tests.test_policy import set_policy
 
 UA = {
     "android_phone": "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 Chrome/130.0 Mobile Safari/537.36",
@@ -60,44 +58,25 @@ def test_classify_device(user_agent, hint, expected):
     assert classify_device(user_agent, hint) == expected
 
 
-def test_employee_login_only_from_phone(client, company_headers):
+def test_employees_and_admins_use_any_device(client, company_headers):
+    """Solo los validadores tienen restricción de dispositivo: empleados y administradores no."""
     assert create_employee(client, company_headers).status_code == 201
     credentials = {"email": "juan@empresa.com", "password": "Empleado123"}
-    for user_agent in (DESKTOP_UA, UA["android_tablet"], UA["old_ipad"]):
-        denied = client.post("/api/auth/login", json=credentials, headers={"User-Agent": user_agent})
-        body = denied.json()
-        assert denied.status_code == 403
-        assert body["code"] == "MOBILE_DEVICE_REQUIRED"
-        assert "teléfono celular" in body["message"]
-        assert body["errors"][0]["details"]["device"] in ("desktop", "tablet")
-        assert "tc_refresh" not in denied.cookies  # no se emitió ninguna sesión
-    assert (
-        client.post("/api/auth/login", json=credentials, headers={"User-Agent": UA["android_phone"]}).status_code == 200
-    )
-
-
-def test_phone_token_is_rejected_from_desktop(client, company_headers):
-    create_employee(client, company_headers)
-    headers = login(client, "juan@empresa.com", "Empleado123")
-    assert client.get("/api/users/me", headers=headers).status_code == 200
-    stolen = client.get("/api/users/me", headers={**headers, "User-Agent": DESKTOP_UA})
-    assert stolen.status_code == 403 and stolen.json()["code"] == "MOBILE_DEVICE_REQUIRED"
-
-
-def test_company_is_not_restricted_and_policy_can_be_disabled(client, company_headers):
-    create_employee(client, company_headers)
-    desktop = {"User-Agent": DESKTOP_UA}
+    for user_agent in (DESKTOP_UA, UA["android_tablet"], UA["old_ipad"], UA["android_phone"]):
+        session = client.post("/api/auth/login", json=credentials, headers={"User-Agent": user_agent})
+        assert session.status_code == 200, user_agent
+        token = {"Authorization": f"Bearer {session.json()['data']['access_token']}", "User-Agent": user_agent}
+        assert client.get("/api/users/me", headers=token).status_code == 200
     company = client.post(
-        "/api/auth/login", json={"email": "admin@empresa.com", "password": "Admin1234"}, headers=desktop
+        "/api/auth/login",
+        json={"email": "admin@empresa.com", "password": "Admin1234"},
+        headers={"User-Agent": DESKTOP_UA},
     )
     assert company.status_code == 200
-    # Una sola sesión por usuario: la de escritorio reemplazó a la anterior.
-    desktop_headers = {"Authorization": f"Bearer {company.json()['data']['access_token']}", **desktop}
-
-    assert client.get("/api/settings/verification", headers=desktop_headers).json()["data"]["employee_mobile_only"]
-    assert set_policy(client, desktop_headers, employee_mobile_only=False)["employee_mobile_only"] is False
-    credentials = {"email": "juan@empresa.com", "password": "Empleado123"}
-    assert client.post("/api/auth/login", json=credentials, headers=desktop).status_code == 200
+    desktop_headers = {"Authorization": f"Bearer {company.json()['data']['access_token']}", "User-Agent": DESKTOP_UA}
+    assert (
+        "employee_mobile_only" not in client.get("/api/settings/verification", headers=desktop_headers).json()["data"]
+    )
 
 
 # ---------------------------------------------------------------- RFC
@@ -240,7 +219,7 @@ def test_database_allows_a_single_active_qr_per_employee(client, company_headers
 
 
 def test_curp_validation():
-    from app.schemas.validators import curp_matches_birth_date, normalize_curp
+    from app.schemas.validators import curp_birth_date_error, normalize_curp
 
     assert normalize_curp(" hegg-560427-mvzrrl04 ") == "HEGG560427MVZRRL04"  # ejemplo oficial de RENAPO
     for bad, message in [
@@ -252,8 +231,8 @@ def test_curp_validation():
     ]:
         with pytest.raises(ValueError, match=message):
             normalize_curp(bad)
-    assert curp_matches_birth_date("HEGG560427MVZRRL04", date(1956, 4, 27))
-    assert not curp_matches_birth_date("HEGG560427MVZRRL04", date(2056, 4, 27))  # siglo: dígito = antes de 2000
+    assert curp_birth_date_error("HEGG560427MVZRRL04", date(1956, 4, 27)) is None
+    assert curp_birth_date_error("HEGG560427MVZRRL04", date(2056, 4, 27))  # siglo: dígito = antes de 2000
 
 
 def test_nss_and_phone_validation():

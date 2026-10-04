@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.orm import Session
 
-from app.core.clock import as_utc
+from app.core.clock import has_passed
 from app.core.config import settings
 from app.core.crypto import hash_token
 from app.core.exceptions import AuthenticationError
@@ -23,11 +23,7 @@ class RememberedAccountService:
         """Cuenta recordada en el dispositivo (solo si el secreto coincide, no venció y sigue activa)."""
         account_id, secret = split_token(token)
         account = self.accounts.get(account_id) if account_id else None
-        if (
-            account is None
-            or not secret_matches(secret, account.token_hash)
-            or as_utc(account.expires_at) <= datetime.now(UTC)
-        ):
+        if account is None or not secret_matches(secret, account.token_hash) or has_passed(account.expires_at):
             return None
         try:
             ensure_account_usable(account.user)  # la misma regla que al iniciar sesión
@@ -47,7 +43,6 @@ class RememberedAccountService:
         account.token_hash = hash_token(secret)
         account.last_used_at = now
         account.expires_at = now + timedelta(days=settings.REMEMBER_ACCOUNT_DAYS)
-        self.accounts.purge_expired(now)
         self.db.commit()
         return f"{account.id}.{secret}"
 

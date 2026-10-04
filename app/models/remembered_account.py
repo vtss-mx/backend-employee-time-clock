@@ -30,4 +30,4 @@ class RememberedAccount(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True, nullable=False)
 
     # joined: leer el correo recordado es una sola consulta.
-    user: Mapped["User"] = relationship(lazy="joined", innerjoin=True)
+    user: Mapped[User] = relationship(lazy="joined", innerjoin=True)

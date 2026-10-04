@@ -15,12 +15,12 @@ from app.core.clock import as_utc
 from app.core.config import settings
 from app.core.crypto import hash_token
 from app.core.exceptions import AuthenticationError, NotFoundError
-from app.core.opaque_tokens import new_id, new_secret, secret_matches, split_token
-from app.core.tokens import AccessToken, create_access_token
+from app.core.opaque_tokens import new_id, new_secret, next_secret, secret_matches, split_token
+from app.core.tokens import AccessToken, create_access_token, decode_access_token
 from app.models import AuthSession, SessionRevocationReason, User
 from app.repositories.session_repository import SessionRepository
 from app.schemas.common import PageParams
-from app.services.auth_service import ensure_account_usable
+from app.services.auth_service import AuthService, ensure_account_usable
 from app.services.catalog_service import get_catalogs
 from app.services.policy_service import ensure_device_allowed
 
@@ -65,7 +65,6 @@ class SessionService:
         )
         self.sessions.add(session)
         self._enforce_session_limit(user.id, now, keep=session.id)
-        self.sessions.purge_expired(now - timedelta(days=1))
         self.db.commit()
         return IssuedSession(session, self._access(session, user, now), f"{session.id}.{secret}")
 
@@ -82,11 +81,16 @@ class SessionService:
             raise session_closed(session.revoked_reason, "SESSION_INVALID")
         rotated: str | None = None
         if secret_matches(secret, session.refresh_hash):
-            rotated = new_secret()
+            rotated = next_secret(session.id, secret)
             session.previous_refresh_hash = session.refresh_hash
             session.refresh_hash = hash_token(rotated)
             session.rotated_at = now
-        elif not self._within_grace(session, secret, now):
+        elif self._within_grace(session, secret, now):
+            # Reintento con el token anterior (p. ej. se perdió la respuesta): el mismo siguiente
+            # secreto, si sigue vigente, vuelve a entregarse en la cookie.
+            again = next_secret(session.id, secret)
+            rotated = again if secret_matches(again, session.refresh_hash) else None
+        else:
             # Token ya usado: alguien más lo tiene. Se revoca la sesión completa.
             session.revoked_at, session.revoked_reason = now, SessionRevocationReason.REFRESH_REUSE_DETECTED
             self.db.commit()
@@ -114,6 +118,33 @@ class SessionService:
         session.company_id = company_id
         self.db.commit()
 
+    def authenticate_access(self, token: str, headers: Mapping[str, str]) -> tuple[User, str]:
+        """El usuario de un access token, para CADA petición (HTTP y canal WebSocket): JWT válido,
+        sesión activa, el mismo rol con el que se emitió, cuenta utilizable y dispositivo permitido.
+        Revisar la sesión siempre (no solo el JWT) hace que cerrar sesión, revocarla o desactivar la
+        cuenta surta efecto de inmediato. Devuelve el usuario y el id de la sesión."""
+        payload = decode_access_token(token)
+        try:
+            user_id, session_id = int(payload["sub"]), str(payload["sid"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise AuthenticationError("Token inválido", code="TOKEN_INVALID") from exc
+        user = self.active_user(session_id, user_id)
+        if payload.get("role") != user.role.value:
+            raise AuthenticationError("La sesión ya no es válida", code="TOKEN_INVALID")
+        # En cada petición (no solo al iniciar sesión): un token obtenido en un dispositivo
+        # permitido tampoco sirve desde otro.
+        ensure_device_allowed(self.db, user, headers)
+        return user, session_id
+
+    def active_user(self, session_id: str, user_id: int) -> User:
+        """Usuario de una sesión activa, operando en la empresa que fija la sesión (un empleado en
+        varias empresas), con su cuenta, empleo y empresa todavía activos."""
+        session = self.validate(session_id, user_id)
+        user = session.user
+        user.use_company(session.company_id)
+        ensure_account_usable(user)
+        return user
+
     def validate(self, session_id: str, user_id: int) -> AuthSession:
         """Usado en cada petición autenticada: la sesión debe existir y no estar revocada."""
         session = self.sessions.get(session_id)
@@ -129,8 +160,7 @@ class SessionService:
         session = self.sessions.get(session_id)
         if session is None or session.user_id != user_id:
             raise NotFoundError("Sesión no encontrada", code="SESSION_NOT_FOUND")
-        if session.revoked_at is None:
-            session.revoked_at, session.revoked_reason = datetime.now(UTC), reason
+        self._close(session, reason)
         self.db.commit()
 
     def revoke_quietly(
@@ -138,9 +168,21 @@ class SessionService:
     ) -> None:
         """Revoca la sesión del access token si existe y es del usuario (sin error si no)."""
         session = self.sessions.get(session_id)
-        if session is not None and session.user_id == user_id and session.revoked_at is None:
-            session.revoked_at, session.revoked_reason = datetime.now(UTC), reason
+        if session is not None and session.user_id == user_id and self._close(session, reason):
             self.db.commit()
+
+    def has_session(self, refresh_token: str | None) -> bool:
+        """¿La cookie corresponde a una sesión vigente? Solo consulta: no rota el token ni la cierra.
+
+        Así el navegador decide al cargar si restaura la sesión sin guardar nada propio (ni
+        localStorage): la cookie HttpOnly es la única fuente."""
+        sid, secret = split_token(refresh_token)
+        session = self.sessions.get(sid) if sid else None
+        return (
+            session is not None
+            and self._is_active(session, datetime.now(UTC))
+            and secret_matches(secret, session.refresh_hash, session.previous_refresh_hash)
+        )
 
     def revoke_by_refresh_token(self, refresh_token: str | None) -> None:
         """Logout con la cookie: revoca solo si el secreto corresponde a la sesión."""
@@ -148,15 +190,17 @@ class SessionService:
         session = self.sessions.get(sid) if sid else None
         if (
             session is not None
-            and session.revoked_at is None
             and secret_matches(secret, session.refresh_hash, session.previous_refresh_hash)
+            and self._close(session, SessionRevocationReason.LOGOUT)
         ):
-            session.revoked_at, session.revoked_reason = datetime.now(UTC), SessionRevocationReason.LOGOUT
             self.db.commit()
 
     def revoke_all(
         self, user_id: int, reason: SessionRevocationReason, *, except_id: str | None = None, commit: bool = True
     ) -> int:
+        """Cierra las sesiones de una cuenta. Con `commit=False` va dentro de la transacción de quien
+        la llama (desactivar, restablecer la contraseña, revocar un dispositivo...): el cambio y el
+        cierre se confirman juntos o ninguno."""
         count = self.sessions.revoke_all(user_id, datetime.now(UTC), reason, except_id=except_id)
         if commit:
             self.db.commit()
@@ -166,10 +210,28 @@ class SessionService:
         """Cierra las sesiones en las que la persona entró a esa empresa (sin confirmar la transacción)."""
         self.sessions.revoke_all(user_id, datetime.now(UTC), reason, company_id=company_id)
 
+    def close_company(self, company_id: int, reason: SessionRevocationReason) -> None:
+        """Corta el acceso de todo el personal de una empresa (sin confirmar la transacción)."""
+        self.sessions.revoke_company(company_id, datetime.now(UTC), reason)
+
+    def change_password(self, user: User, current_password: str, new_password: str, *, keep: str | None) -> int:
+        """Cambia la contraseña y cierra las demás sesiones (otros dispositivos) en UNA transacción:
+        no puede quedar la contraseña nueva con las sesiones viejas abiertas. Devuelve cuántas cerró."""
+        AuthService(self.db).change_password(user, current_password, new_password)
+        return self.revoke_all(user.id, SessionRevocationReason.PASSWORD_CHANGED, except_id=keep)
+
     def page_active(self, user_id: int, page: PageParams) -> tuple[list[AuthSession], int]:
         return self.sessions.page_active(user_id, datetime.now(UTC), offset=page.offset, limit=page.size)
 
     # ---------- Internos ----------
+
+    @staticmethod
+    def _close(session: AuthSession, reason: SessionRevocationReason) -> bool:
+        """Marca una sesión como cerrada (con su motivo); False si ya lo estaba."""
+        if session.revoked_at is not None:
+            return False
+        session.revoked_at, session.revoked_reason = datetime.now(UTC), reason
+        return True
 
     @staticmethod
     def _access(session: AuthSession, user: User, now: datetime) -> AccessToken:

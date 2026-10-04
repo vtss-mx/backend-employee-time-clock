@@ -62,24 +62,32 @@ class _PipelineHolder:
     def pool(self) -> WorkerPool[FacePipeline]:
         if self._pool is not None:
             return self._pool
-        with self._lock:
-            if self._pool is not None:
-                return self._pool
-            if self._last_failure and time.monotonic() - self._last_failure < settings.FACE_ENGINE_RETRY_SECONDS:
-                raise FaceEngineUnavailable(self._last_error or "Modelos no disponibles")
-            try:
-                self._pool = self._build()
-                self._last_error = None
-                stats = self._pool.stats()
-                logger.info(
-                    "Motor facial listo: %s workers (1 por núcleo), cola máx. %s", stats.workers, stats.max_waiting
-                )
-                return self._pool
-            except Exception as exc:
-                self._last_failure = time.monotonic()
-                self._last_error = f"{exc.__class__.__name__}: {exc}"
-                logger.exception("No se pudieron cargar los modelos faciales")
-                raise FaceEngineUnavailable(self._last_error) from exc
+        # Si otro hilo ya está cargando los modelos (segundos, o más con una descarga lenta), esta
+        # petición responde 503 de inmediato en vez de bloquear un hilo esperando el candado.
+        if not self._lock.acquire(blocking=False):
+            raise FaceEngineUnavailable("El motor facial se está iniciando")
+        try:
+            return self._load()
+        finally:
+            self._lock.release()
+
+    def _load(self) -> WorkerPool[FacePipeline]:
+        """Carga el pool (con el candado tomado) o falla rápido mientras dura la pausa tras un error."""
+        if self._pool is not None:
+            return self._pool
+        if self._last_failure and time.monotonic() - self._last_failure < settings.FACE_ENGINE_RETRY_SECONDS:
+            raise FaceEngineUnavailable(self._last_error or "Modelos no disponibles")
+        try:
+            self._pool = self._build()
+            self._last_error = None
+            stats = self._pool.stats()
+            logger.info("Motor facial listo: %s workers (1 por núcleo), cola máx. %s", stats.workers, stats.max_waiting)
+            return self._pool
+        except Exception as exc:
+            self._last_failure = time.monotonic()
+            self._last_error = f"{exc.__class__.__name__}: {exc}"
+            logger.exception("No se pudieron cargar los modelos faciales")
+            raise FaceEngineUnavailable(self._last_error) from exc
 
     def status(self) -> dict:
         if self._pool is not None:

@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
+    ColumnElement,
     DateTime,
     Float,
     ForeignKey,
@@ -12,7 +13,9 @@ from sqlalchemy import (
     Integer,
     LargeBinary,
     String,
+    false,
     func,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -28,6 +31,10 @@ class FaceEmbedding(Base):
 
     Solo se guarda el embedding (cifrado con Fernet); nunca la fotografía.
     `model_name` permite migrar a otro modelo sin mezclar vectores incompatibles.
+
+    La galería de cada empleado evoluciona con el uso (`app/services/face_learning.py`): las muestras
+    del registro aprobado (`learned = False`) son el ancla y nunca se reemplazan; las aprendidas de
+    identificaciones seguras compiten por su lugar según su utilidad (`matches`, `last_matched_at`).
     """
 
     __tablename__ = "face_embeddings"
@@ -42,7 +49,10 @@ class FaceEmbedding(Base):
             ondelete="CASCADE",
         ),
         CheckConstraint("dimension > 0", name="dimension_positive"),
-        {"schema": BIOMETRICS},
+        CheckConstraint("matches >= 0", name="matches_non_negative"),
+        # Ids que nunca se reutilizan (como en PostgreSQL) también en SQLite (pruebas): la huella de la
+        # galería en memoria usa el id mayor para notar que una muestra aprendida reemplazó a otra.
+        {"schema": BIOMETRICS, "sqlite_autoincrement": True},
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -59,6 +69,26 @@ class FaceEmbedding(Base):
     detection_score: Mapped[float] = mapped_column(Float, nullable=False)
     quality_score: Mapped[float] = mapped_column(Float, nullable=False)
     active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    #: Aprendida de una identificación segura (no la aprobó una persona): puede dejar su lugar.
+    learned: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false(), nullable=False)
+    #: Veces que fue la muestra más parecida en una identificación exitosa (su utilidad).
+    matches: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"), nullable=False)
+    last_matched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
-    employee: Mapped["Employee"] = relationship(back_populates="face_embeddings", foreign_keys=[employee_id])
+    employee: Mapped[Employee] = relationship(back_populates="face_embeddings", foreign_keys=[employee_id])
+
+
+def last_useful() -> ColumnElement[datetime]:
+    """Último momento en que la muestra sirvió: la última vez que decidió una identificación o, si
+    nunca lo hizo, cuando se aprendió."""
+    return func.coalesce(FaceEmbedding.last_matched_at, FaceEmbedding.created_at)
+
+
+#: El mantenimiento retira las muestras aprendidas que dejaron de servir sin recorrer la tabla.
+Index(
+    "ix_face_embeddings_learned_last_useful",
+    last_useful().label("last_useful"),
+    postgresql_where=text("learned"),
+    sqlite_where=text("learned"),
+)

@@ -5,6 +5,7 @@ CATALOG_CACHE_SECONDS. La base es la única fuente: cambiar un nombre o un mensa
 refleja sin volver a desplegar.
 """
 
+import logging
 import threading
 import time
 from collections.abc import Iterable, Mapping
@@ -12,6 +13,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -19,12 +21,16 @@ from app.core.database import SessionLocal
 from app.models import (
     CatalogAccessory,
     CatalogAntispoofLevel,
+    CatalogApiKeyStatus,
+    CatalogApiScope,
     CatalogConfidenceLevel,
     CatalogCountry,
     CatalogDeviceStatus,
     CatalogEnrollmentFlag,
     CatalogEnrollmentRejectionReason,
     CatalogEnrollmentStatus,
+    CatalogErrorSeverity,
+    CatalogErrorStatus,
     CatalogFaceError,
     CatalogFaceStatus,
     CatalogLivenessAction,
@@ -48,6 +54,10 @@ CATALOG_MODELS: dict[str, type[CatalogEntry]] = {
     "face_statuses": CatalogFaceStatus,
     "enrollment_statuses": CatalogEnrollmentStatus,
     "device_statuses": CatalogDeviceStatus,
+    "api_scopes": CatalogApiScope,
+    "api_key_statuses": CatalogApiKeyStatus,
+    "error_statuses": CatalogErrorStatus,
+    "error_severities": CatalogErrorSeverity,
     "verification_reasons": CatalogVerificationReason,
     "accessories": CatalogAccessory,
     "liveness_actions": CatalogLivenessAction,
@@ -170,21 +180,46 @@ def load_catalogs(db: Session) -> Catalogs:
     )
 
 
+logger = logging.getLogger(__name__)
+#: Tras no poder recargar, cuándo reintentar (s).
+_RETRY_AFTER_FAILURE_SECONDS = 5.0
+
+
 class _CatalogCache:
+    """Catálogos en memoria por CATALOG_CACHE_SECONDS. Al vencer los recarga UNA sola petición; las
+    demás siguen con los anteriores mientras tanto (sin ráfagas de ~20 consultas por proceso)."""
+
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._loaded_at = 0.0
         self._value: Catalogs | None = None
+        self._reloading = False
 
-    def get(self, db: Session | None = None) -> Catalogs:
+    def get(self) -> Catalogs:
         with self._lock:
             if self._value is not None and time.monotonic() - self._loaded_at < settings.CATALOG_CACHE_SECONDS:
                 return self._value
-        if db is not None:
-            value = load_catalogs(db)
-        else:
+            if self._value is not None and self._reloading:
+                return self._value  # otra petición ya los está recargando
+            self._reloading = True
+        try:
+            # Siempre con una sesión propia: si la BD falla a media recarga, la transacción de la
+            # petición que la disparó queda intacta (y sigue con los catálogos anteriores).
             with SessionLocal() as session:
                 value = load_catalogs(session)
+        except SQLAlchemyError:
+            # BD caída al recargar: se siguen sirviendo los catálogos anteriores (los mensajes y
+            # códigos de error no cambian por eso) y se reintenta en unos segundos.
+            with self._lock:
+                self._reloading = False
+                if self._value is None:
+                    raise
+                logger.warning("No se pudieron recargar los catálogos: se usan los anteriores")
+                self._loaded_at = time.monotonic() - settings.CATALOG_CACHE_SECONDS + _RETRY_AFTER_FAILURE_SECONDS
+                return self._value
+        finally:
+            with self._lock:
+                self._reloading = False
         with self._lock:
             self._value, self._loaded_at = value, time.monotonic()
         return value
@@ -197,9 +232,9 @@ class _CatalogCache:
 _cache = _CatalogCache()
 
 
-def get_catalogs(db: Session | None = None) -> Catalogs:
-    """Catálogos vigentes (con la sesión de la petición, o una propia si no se pasa)."""
-    return _cache.get(db)
+def get_catalogs() -> Catalogs:
+    """Catálogos vigentes (en memoria; al vencer se recargan con una sesión propia)."""
+    return _cache.get()
 
 
 def clear_catalog_cache() -> None:

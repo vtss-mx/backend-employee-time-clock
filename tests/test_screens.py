@@ -34,7 +34,7 @@ def _revoke(role: str, screen: Screen) -> None:
 
 def test_every_role_gets_its_screens_and_home(client, admin_headers, company_headers):
     admin = _me(client, admin_headers)
-    assert _codes(admin) == ["ADMIN_DASHBOARD", "ADMIN_COMPANIES", "PROFILE"]
+    assert _codes(admin) == ["ADMIN_DASHBOARD", "ADMIN_COMPANIES", "ADMIN_ERRORS", "PROFILE"]
     assert admin["home"] == "/admin/dashboard"
     assert admin["screens"][1] == {
         "code": "ADMIN_COMPANIES",
@@ -49,12 +49,15 @@ def test_every_role_gets_its_screens_and_home(client, admin_headers, company_hea
     assert _codes(company) == [
         "COMPANY_DASHBOARD",
         "COMPANY_EMPLOYEES",
+        "COMPANY_DEPARTMENTS",
         "COMPANY_VALIDATIONS",
         "COMPANY_VALIDATORS",
+        "COMPANY_REPORTS",
         "COMPANY_SETTINGS",
+        "COMPANY_API",
         "PROFILE",
     ]
-    assert company["home"] == "/company/dashboard" and company["screens"][2]["badge"] == "PENDING_ENROLLMENTS"
+    assert company["home"] == "/company/dashboard" and company["screens"][3]["badge"] == "PENDING_ENROLLMENTS"
 
     validator = _me(client, validator_headers(client, company_headers))
     assert _codes(validator) == ["VALIDATOR_CHECKPOINT", "PROFILE"]

@@ -23,7 +23,6 @@ class ValidatorDevice(Base):
         UniqueConstraint("validator_id", "key_hash"),
         # Dispositivos por autorizar de la empresa.
         Index("ix_validator_devices_company_status", "company_id", "status"),
-        Index("ix_validator_devices_status", "status"),
         Index(
             "ix_validator_devices_reviewed_by_id",
             "reviewed_by_id",
@@ -35,8 +34,8 @@ class ValidatorDevice(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     validator_id: Mapped[int] = mapped_column(
-        ForeignKey(f"{WORKFORCE}.validators.id", ondelete="CASCADE"), index=True, nullable=False
-    )
+        ForeignKey(f"{WORKFORCE}.validators.id", ondelete="CASCADE"), nullable=False
+    )  # su índice es el único (validator_id, key_hash)
     company_id: Mapped[int] = mapped_column(ForeignKey(f"{TENANCY}.companies.id", ondelete="CASCADE"), nullable=False)
     #: SHA-256 de la llave pública (identifica al dispositivo sin comparar llaves completas).
     key_hash: Mapped[str] = mapped_column(String(64), nullable=False)

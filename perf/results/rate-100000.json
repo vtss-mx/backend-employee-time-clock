@@ -1,0 +1,129 @@
+{
+    "root_group": {
+        "name": "",
+        "path": "",
+        "id": "d41d8cd98f00b204e9800998ecf8427e",
+        "groups": {},
+        "checks": {
+                "respuesta 200": {
+                    "path": "::respuesta 200",
+                    "id": "b304736d6fbf81af5836a4c1d2b9d46c",
+                    "passes": 3565,
+                    "fails": 341653,
+                    "name": "respuesta 200"
+                }
+            }
+    },
+    "metrics": {
+        "vus_max": {
+            "value": 1500,
+            "min": 1500,
+            "max": 1500
+        },
+        "http_req_waiting": {
+            "avg": 80.81064686499423,
+            "p(50)": 47.546625,
+            "p(95)": 120.40802879999998,
+            "p(99)": 930.6626113199975,
+            "max": 10144.19013
+        },
+        "iterations": {
+            "rate": 16757.251048581787,
+            "count": 345218
+        },
+        "shed_503": {
+            "rate": 16584.20213459644,
+            "count": 341653
+        },
+        "http_req_duration": {
+            "avg": 81.45543574592463,
+            "p(50)": 47.941875,
+            "p(95)": 122.46627529999992,
+            "p(99)": 931.3535858799987,
+            "max": 10144.209922
+        },
+        "http_req_connecting": {
+            "avg": 0.06397745379889287,
+            "p(50)": 0,
+            "p(95)": 0,
+            "p(99)": 0,
+            "max": 55.314666
+        },
+        "data_sent": {
+            "count": 190333739,
+            "rate": 9239003.318014247
+        },
+        "http_reqs": {
+            "count": 345219,
+            "rate": 16757.29958965163
+        },
+        "data_received": {
+            "count": 213552670,
+            "rate": 10366075.069332829
+        },
+        "http_req_sending": {
+            "avg": 0.4679411341757274,
+            "p(50)": 0.005625,
+            "p(95)": 0.673542,
+            "p(99)": 16.779642619999958,
+            "max": 88.082751
+        },
+        "dropped_iterations": {
+            "count": 1654790,
+            "rate": 80325.27696320196
+        },
+        "iteration_duration": {
+            "p(99)": 934.4398258899994,
+            "max": 10144.255297,
+            "avg": 83.79232633442386,
+            "p(50)": 48.8384375,
+            "p(95)": 131.17578744999997
+        },
+        "http_req_failed": {
+            "fails": 3566,
+            "passes": 341653,
+            "value": 0.9896703252138498
+        },
+        "vus": {
+            "value": 1500,
+            "min": 958,
+            "max": 1500
+        },
+        "http_req_tls_handshaking": {
+            "p(50)": 0,
+            "p(95)": 0,
+            "p(99)": 0,
+            "max": 0,
+            "avg": 0
+        },
+        "http_req_receiving": {
+            "avg": 0.17684774675205814,
+            "p(50)": 0.00975,
+            "p(95)": 0.14646309999999937,
+            "p(99)": 2.609520619999997,
+            "max": 87.573417
+        },
+        "http_req_duration{expected_response:true}": {
+            "avg": 1566.3673291486239,
+            "p(50)": 1302.6914385,
+            "p(95)": 4463.592689999992,
+            "p(99)": 7000.30560355,
+            "max": 10064.11749
+        },
+        "http_req_blocked": {
+            "p(99)": 0.012083,
+            "max": 89.242125,
+            "avg": 0.08339583665146717,
+            "p(50)": 0.001208,
+            "p(95)": 0.004042
+        },
+        "checks": {
+            "passes": 3565,
+            "fails": 341653,
+            "value": 0.010326807987995991
+        }
+    },
+    "setup_data": {
+        "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6IkZxUUE0UFZTOEszMjBxeTciLCJ0eXAiOiJhdCtqd3QifQ.eyJpc3MiOiJ0aW1lLWNsb2NrLWFwaSIsImF1ZCI6InRpbWUtY2xvY2std2ViIiwic3ViIjoiNSIsInNpZCI6ImQyMGE1ZDMzOTJhOTRhNjk4Y2U0OTMyZDk4NTVkNjk3IiwianRpIjoiODY1OWViMjRjYTBjNGVkODk2NWFkNWFkOTcwYTcyNTYiLCJyb2xlIjoiQ09NUEFOWSIsImlhdCI6MTc5MTA2NzEyNCwibmJmIjoxNzkxMDY3MTI0LCJleHAiOjE3OTExMTAzMjR9.glLm_CuwJiHl6LgxKOhro5SGzJvpuoRZjToA-mGKaVlp1cxfKEYYEOX-TzCv6xfOjKryOO-TFMBmPiNIJdWDug"
+    }
+}
