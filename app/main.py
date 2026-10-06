@@ -6,14 +6,22 @@ from contextlib import asynccontextmanager
 
 import anyio
 import anyio.to_thread
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 
 from app.core.admission import admission
 from app.core.config import settings
-from app.core.database import SessionLocal, wait_for_database
+from app.core.database import (
+    platform_session,
+    row_security_bypassed,
+    statement_timeout_missing,
+    wait_for_database,
+)
 from app.core.exceptions import register_exception_handlers
+from app.core.input_guard import reject_invalid_input
+from app.core.lifecycle import install_drain
+from app.core.object_storage import get_storage
 from app.core.request_context import RequestIdLogFilter
 from app.middleware.admission import AdaptiveAdmissionMiddleware
 from app.middleware.request_id import register_request_id_middleware
@@ -22,22 +30,29 @@ from app.routers import (
     admin,
     admin_errors,
     admin_face_security,
+    admin_fraud,
     api_keys,
     attendance,
     auth,
+    billing,
     calendar,
     catalogs,
     checkpoint,
     client_errors,
+    company_documents,
     departments,
     employees,
     enrollments,
     face,
     health,
     integrations,
+    kiosk,
+    performance,
     realtime,
     shifts,
     sites,
+    telemetry,
+    usage,
     users,
     validation,
     validators,
@@ -47,6 +62,9 @@ from app.routers import settings as settings_router
 from app.services.bootstrap import ensure_first_admin, ensure_first_company
 from app.services.error_reporter import ErrorReportFlusher, install_log_handler
 from app.services.maintenance_service import MaintenanceScheduler
+from app.services.perf_store import PerfFlusher
+from app.services.usage_meter import UsageFlusher
+from app.services.web_performance import route_index
 
 logging.basicConfig(
     level=settings.LOG_LEVEL.upper(),
@@ -71,6 +89,37 @@ def _configure_threadpool(face_slots: int) -> None:
     logger.info("Threadpool: %s hilos", limiter.total_tokens)
 
 
+def _check_statement_timeout() -> None:
+    """Toda consulta debe tener tiempo límite: detrás de PgBouncer lo pone su configuración, y si falta se
+    avisa al ADMIN (error del sistema) en lugar de dejar cada consulta sin límite en silencio."""
+    try:
+        missing = statement_timeout_missing()
+    except Exception:
+        logger.exception("No se pudo revisar el tiempo límite de las consultas (statement_timeout)")
+        return
+    if missing:
+        logger.error(
+            "Las conexiones a la base de datos no tienen statement_timeout: con PgBouncer, revisa su connect_query "
+            "(DB_STATEMENT_TIMEOUT_MS); sin él una consulta puede bloquear un worker indefinidamente"
+        )
+
+
+def _check_row_security() -> None:
+    """La API debe conectarse con su usuario de mínimo privilegio (DB_APP_USER): con el dueño superusuario o un rol
+    con BYPASSRLS la seguridad por fila no protege nada. Se avisa al ADMIN (error del sistema) en lugar de seguir en
+    silencio; la API sigue atendiendo (el filtro por empresa del código sigue en su lugar)."""
+    try:
+        bypassed = row_security_bypassed()
+    except Exception:
+        logger.exception("No se pudo revisar el rol de la base de datos de la API (seguridad por fila)")
+        return
+    if bypassed:
+        logger.error(
+            "La API se conecta a PostgreSQL con un rol que se salta la seguridad por fila (superusuario o BYPASSRLS): "
+            "define DB_APP_USER / DB_APP_PASSWORD en el .env y despliega (el servicio migrate crea el rol)"
+        )
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     # Registro de errores PRIMERO: todo error del log (también los del arranque) entra a
@@ -79,11 +128,21 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     flusher = ErrorReportFlusher(settings.ERROR_REPORT_FLUSH_SECONDS) if settings.ERROR_REPORT_FLUSH_SECONDS else None
     if flusher:
         flusher.start()
+    # Consumo por empresa y usuario: cada petición suma en memoria y este hilo guarda en lotes.
+    meter = UsageFlusher(settings.USAGE_FLUSH_SECONDS) if settings.USAGE_FLUSH_SECONDS else None
+    if meter:
+        meter.start()
+    # Rendimiento (rutas, funciones, navegador y peticiones lentas): todo suma en memoria y este hilo guarda en lotes.
+    perf = PerfFlusher(settings.PERF_FLUSH_SECONDS) if settings.PERF_FLUSH_SECONDS else None
+    if perf:
+        perf.start()
     # Arranque tolerante: si la BD aún no está lista se espera; si falla el bootstrap o la
     # carga de modelos, la API inicia igual y se recupera sola (readiness lo refleja).
     if wait_for_database(settings.DB_STARTUP_RETRIES):
+        _check_statement_timeout()
+        _check_row_security()
         try:
-            with SessionLocal() as db:
+            with platform_session() as db:
                 ensure_first_admin(db)
                 ensure_first_company(db)
         except Exception:
@@ -103,15 +162,23 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         _configure_threadpool(0)
         # Error (no aviso): sin modelos no hay reconocimiento facial; el ADMIN debe enterarse.
         logger.error("No se pudieron cargar los modelos faciales (se reintentará bajo demanda): %s", exc)
+    # Almacenamiento de imágenes: dice UNA vez si copia al bucket o por qué está apagado (sin red).
+    get_storage()
     # Depuración de lo vencido en segundo plano (fuera de las peticiones; una instancia a la vez).
     scheduler = (
         MaintenanceScheduler(settings.MAINTENANCE_INTERVAL_SECONDS) if settings.MAINTENANCE_INTERVAL_SECONDS else None
     )
     if scheduler:
         scheduler.start()
+    # Al final del arranque (uvicorn ya instaló su manejador de SIGTERM): apagado ordenado con drenado.
+    install_drain(settings.SHUTDOWN_DRAIN_SECONDS)
     yield
     if scheduler:
         scheduler.stop()
+    if meter:
+        meter.stop()  # guarda el consumo pendiente antes de apagar
+    if perf:
+        perf.stop()  # guarda el rendimiento y las peticiones lentas pendientes
     if flusher:
         flusher.stop()  # guarda lo pendiente antes de apagar
 
@@ -128,10 +195,16 @@ app = FastAPI(
         "access token (rotación con detección de reutilización). `POST /api/auth/logout` cierra la "
         "sesión y la revoca de inmediato.\n\n"
         "**Contrato de respuesta**: todas las respuestas tienen `success`, `statusCode`, `code`, "
-        "`message`, `data`, `errors`, `traceId` y `timestamp`."
+        "`message`, `data`, `errors`, `traceId` y `timestamp`.\n\n"
+        "**Idioma**: los textos (`message`, `errors[].message` y los de los catálogos) salen en el idioma de "
+        "`Accept-Language` (`es-MX` por omisión o `en-US`; el canal en vivo, `?lang=`); la respuesta lo dice en "
+        "`Content-Language`. Los códigos (`code`) son los mismos en los dos idiomas."
     ),
     swagger_ui_parameters={"persistAuthorization": True, "displayRequestDuration": True, "filter": True},
     lifespan=lifespan,
+    # Toda ruta (también el canal en vivo): texto que la API no acepta (NUL, controles) → 422 antes de cualquier otra
+    # dependencia, autenticación incluida (`app/core/input_guard.py`, regla 21 de la raíz).
+    dependencies=[Depends(reject_invalid_input)],
     docs_url="/docs" if settings.DOCS_ENABLED else None,
     redoc_url="/redoc" if settings.DOCS_ENABLED else None,
     openapi_url="/openapi.json" if settings.DOCS_ENABLED else None,
@@ -161,6 +234,7 @@ API_ROUTERS = (
     admin.router,
     admin_errors.router,
     admin_face_security.router,
+    admin_fraud.router,
     users.router,
     employees.router,
     departments.router,
@@ -182,9 +256,18 @@ API_ROUTERS = (
     calendar.company_router,
     calendar.employee_router,
     client_errors.router,
+    billing.router,
+    company_documents.admin_router,
+    company_documents.router,
+    usage.router,
+    performance.router,
+    telemetry.router,
+    kiosk.router,
 )
 for router in API_ROUTERS:
     app.include_router(router, prefix=settings.API_PREFIX)
+# Las rutas de la API por plantilla: el rendimiento que mide el navegador se relaciona con su ruta real (telemetry).
+app.state.perf_route_index = route_index(API_ROUTERS, settings.API_PREFIX)
 
 
 def docs_redirect() -> RedirectResponse:

@@ -60,7 +60,8 @@ def test_failure_after_the_response_started_is_logged_and_reported(monkeypatch, 
 
 
 def test_slow_requests_are_logged_with_their_trace_id(monkeypatch, caplog):
-    """Una petición de más de 3 s deja aviso en el log (con su traceId) para investigarla."""
+    """Una petición más lenta que SLOW_REQUEST_THRESHOLD_MS (regla 18) deja aviso en el log (con su traceId) y suma a
+    la alerta de su ruta (en memoria, se guarda en lotes)."""
     ticks = iter([100.0, 104.5])
 
     class _Clock:
@@ -76,6 +77,7 @@ def test_slow_requests_are_logged_with_their_trace_id(monkeypatch, caplog):
         response = test_client.get("/lenta")
     assert response.status_code == 200
     assert f"Petición lenta GET /lenta 4500 ms [{response.headers['X-Request-ID']}]" in caplog.text
+    assert request_id.slow_requests.drain()["GET /lenta"].last_trace_id == response.headers["X-Request-ID"]
 
 
 def test_a_body_that_is_not_an_object_is_invalid_not_a_crash():

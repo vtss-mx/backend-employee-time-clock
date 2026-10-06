@@ -30,6 +30,9 @@ def session_closed(reason: str | None, code: str) -> AuthenticationError:
     (catalog.session_revocation_reasons). Si fue un inicio de sesión en otro dispositivo, se dice así."""
     if reason == SessionRevocationReason.SIGNED_IN_ELSEWHERE:
         code = "SESSION_REPLACED"
+    elif reason == SessionRevocationReason.COMPANY_SUSPENDED:
+        # La app muestra la pantalla de empresa suspendida (el mismo código del 403 al iniciar sesión).
+        code = "COMPANY_SUSPENDED"
     return AuthenticationError(get_catalogs().session_message(reason), code=code)
 
 
@@ -46,8 +49,17 @@ class SessionService:
         self.db = db
         self.sessions = SessionRepository(db)
 
-    def create(self, user: User, *, ip: str | None, user_agent: str | None, persistent: bool = False) -> IssuedSession:
-        """Nueva sesión. Un empleado con un solo empleo entra directo a su empresa (ya fijada en el usuario)."""
+    def create(
+        self,
+        user: User,
+        *,
+        ip: str | None,
+        user_agent: str | None,
+        persistent: bool = False,
+        device_key_hash: str | None = None,
+    ) -> IssuedSession:
+        """Nueva sesión. Un empleado con un solo empleo entra directo a su empresa (ya fijada en el usuario). Un
+        validador que probó su dispositivo queda ligado a esa llave (`device_key_hash`, antifraude 2b)."""
         now = datetime.now(UTC)
         secret = new_secret()
         session = AuthSession(
@@ -62,6 +74,7 @@ class SessionService:
             user_agent=(user_agent or "")[:255] or None,
             persistent=persistent,
             company_id=user.session_company_id,
+            device_key_hash=device_key_hash,
         )
         self.sessions.add(session)
         self._enforce_session_limit(user.id, now, keep=session.id)
@@ -110,7 +123,7 @@ class SessionService:
         que esa empresa permita.
         """
         if not any(e.company_id == company_id for e in user.employees):
-            raise NotFoundError("No trabajas en esa empresa", code="COMPANY_NOT_FOUND")
+            raise NotFoundError(code="COMPANY_NOT_FOUND", key="NOT_YOUR_COMPANY")
         user.use_company(company_id)
         ensure_account_usable(user)
         ensure_device_allowed(self.db, user, headers)
@@ -127,10 +140,10 @@ class SessionService:
         try:
             user_id, session_id = int(payload["sub"]), str(payload["sid"])
         except (KeyError, TypeError, ValueError) as exc:
-            raise AuthenticationError("Token inválido", code="TOKEN_INVALID") from exc
+            raise AuthenticationError(code="TOKEN_INVALID") from exc
         user = self.active_user(session_id, user_id)
         if payload.get("role") != user.role.value:
-            raise AuthenticationError("La sesión ya no es válida", code="TOKEN_INVALID")
+            raise AuthenticationError(code="TOKEN_INVALID", key="SESSION_NO_LONGER_VALID")
         # En cada petición (no solo al iniciar sesión): un token obtenido en un dispositivo
         # permitido tampoco sirve desde otro.
         ensure_device_allowed(self.db, user, headers)
@@ -142,6 +155,7 @@ class SessionService:
         session = self.validate(session_id, user_id)
         user = session.user
         user.use_company(session.company_id)
+        user.use_device_key(session.device_key_hash)
         ensure_account_usable(user)
         return user
 
@@ -159,7 +173,7 @@ class SessionService:
     ) -> None:
         session = self.sessions.get(session_id)
         if session is None or session.user_id != user_id:
-            raise NotFoundError("Sesión no encontrada", code="SESSION_NOT_FOUND")
+            raise NotFoundError(code="SESSION_NOT_FOUND")
         self._close(session, reason)
         self.db.commit()
 

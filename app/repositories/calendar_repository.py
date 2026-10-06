@@ -2,18 +2,19 @@
 
 Un id de otra empresa se comporta como inexistente (404). Saber qué días no trabaja un grupo de
 empleados en un rango son tres consultas (festivos, ausencias aprobadas y días laborables), sin
-importar cuántos empleados o días sean.
+importar cuántos empleados o días sean. Festivos y días laborables tienen borrado lógico: un día libre se calcula
+solo con lo vigente; la papelera y restaurar ven lo eliminado (`include_deleted`).
 """
 
 from collections.abc import Iterable
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
-from sqlalchemy import ColumnElement, delete, func, select
+from sqlalchemy import ColumnElement, func, select, update
 from sqlalchemy.orm import Session
 
 from app.models import CompanyHoliday, EmployeeAbsence, EmployeeWorkday, ShiftRequestStatus
 from app.models.calendar import ABSENCE_MAX_DAYS
-from app.repositories.aggregates import affected_rows, insert_many, paginate
+from app.repositories.aggregates import affected_rows, get_scoped, insert_many, paginate, trash_page
 
 #: Estados en que una ausencia ocupa sus días (no se encima otra): pendiente o aprobada.
 ACTIVE_STATUSES = (ShiftRequestStatus.PENDING, ShiftRequestStatus.APPROVED)
@@ -43,10 +44,9 @@ class CalendarRepository:
         self.company_id = company_id
 
     def _get[T: (CompanyHoliday, EmployeeAbsence, EmployeeWorkday)](
-        self, model: type[T], record_id: int, *, lock: bool = False
+        self, model: type[T], record_id: int, *, lock: bool = False, include_deleted: bool = False
     ) -> T | None:
-        record = self.db.get(model, record_id, with_for_update=lock or None, populate_existing=lock)
-        return record if record is not None and record.company_id == self.company_id else None
+        return get_scoped(self.db, model, record_id, self.company_id, lock=lock, include_deleted=include_deleted)
 
     def add_all(self, records: Iterable[CalendarRecord]) -> None:
         """Una inserción para todos (p. ej. los festivos oficiales o una ausencia colectiva)."""
@@ -62,15 +62,10 @@ class CalendarRepository:
             absence.company_id = self.company_id
         insert_many(self.db, absences)
 
-    def _delete(self, record: CompanyHoliday | EmployeeWorkday) -> None:
-        model = type(record)
-        affected_rows(self.db, delete(model).where(model.company_id == self.company_id, model.id == record.id))
-        self.db.expunge(record)
-
     # ---------- Festivos ----------
 
-    def holiday(self, holiday_id: int) -> CompanyHoliday | None:
-        return self._get(CompanyHoliday, holiday_id)
+    def holiday(self, holiday_id: int, *, include_deleted: bool = False) -> CompanyHoliday | None:
+        return self._get(CompanyHoliday, holiday_id, include_deleted=include_deleted)
 
     def _holidays_between(self, start: date, end: date) -> ColumnElement[bool]:
         return (
@@ -79,18 +74,20 @@ class CalendarRepository:
             & (CompanyHoliday.holiday_date <= end)
         )
 
-    def holidays(self, start: date, end: date, *, offset: int, limit: int) -> tuple[list[CompanyHoliday], int]:
-        """Una página de los festivos del rango, en orden de fecha (índice único empresa + fecha)."""
+    def holidays(
+        self, start: date, end: date, *, offset: int, limit: int, deleted: bool = False
+    ) -> tuple[list[CompanyHoliday], int]:
+        """Una página de los festivos del rango, en orden de fecha (índice único empresa + fecha) o, con `deleted`, los
+        del rango que están en la papelera (el eliminado más reciente primero)."""
         stmt = select(CompanyHoliday).where(self._holidays_between(start, end))
+        if deleted:
+            return trash_page(self.db, stmt, CompanyHoliday, offset=offset, limit=limit)
         return paginate(self.db, stmt, (CompanyHoliday.holiday_date,), offset=offset, limit=limit)
 
     def holiday_names(self, start: date, end: date) -> dict[date, str]:
         """Festivos del rango por fecha (un rango corto: los días de una jornada, un año a lo más)."""
         stmt = select(CompanyHoliday.holiday_date, CompanyHoliday.name).where(self._holidays_between(start, end))
         return dict(self.db.execute(stmt).all())  # filas (fecha, nombre)
-
-    def delete_holiday(self, holiday: CompanyHoliday) -> None:
-        self._delete(holiday)
 
     # ---------- Ausencias ----------
 
@@ -149,6 +146,17 @@ class CalendarRepository:
         """Ausencias aprobadas de cada empleado que tocan el rango (días libres)."""
         return self._covering(list(employee_ids), start, end, (ShiftRequestStatus.APPROVED,))
 
+    def cancel_pending_absences(self, employee_id: int, actor_id: int, now: datetime) -> None:
+        """Las solicitudes PENDIENTES de un empleado que se elimina quedan canceladas (una sentencia): no se quedan en
+        la bandeja de la empresa ni en su contador."""
+        stmt = update(EmployeeAbsence).where(
+            EmployeeAbsence.company_id == self.company_id,
+            EmployeeAbsence.employee_id == employee_id,
+            EmployeeAbsence.status == ShiftRequestStatus.PENDING,
+        )
+        values = {"status": ShiftRequestStatus.CANCELLED, "decided_by_id": actor_id, "decided_at": now}
+        affected_rows(self.db, stmt.values(**values))
+
     def pending_absences(self) -> int:
         stmt = select(func.count()).where(
             EmployeeAbsence.company_id == self.company_id, EmployeeAbsence.status == ShiftRequestStatus.PENDING
@@ -157,12 +165,20 @@ class CalendarRepository:
 
     # ---------- Días laborables especiales ----------
 
-    def workday(self, workday_id: int) -> EmployeeWorkday | None:
-        return self._get(EmployeeWorkday, workday_id)
+    def workday(self, workday_id: int, *, include_deleted: bool = False) -> EmployeeWorkday | None:
+        return self._get(EmployeeWorkday, workday_id, include_deleted=include_deleted)
 
     def workdays(
-        self, *, employee_id: int | None, start: date | None, end: date | None, offset: int, limit: int
+        self,
+        *,
+        employee_id: int | None,
+        start: date | None,
+        end: date | None,
+        offset: int,
+        limit: int,
+        deleted: bool = False,
     ) -> tuple[list[EmployeeWorkday], int]:
+        """Los vigentes (el más reciente primero) o, con `deleted`, la papelera (el eliminado más reciente primero)."""
         stmt = select(EmployeeWorkday).where(EmployeeWorkday.company_id == self.company_id)
         if employee_id is not None:
             stmt = stmt.where(EmployeeWorkday.employee_id == employee_id)
@@ -170,6 +186,8 @@ class CalendarRepository:
             stmt = stmt.where(EmployeeWorkday.work_date >= start)
         if end is not None:
             stmt = stmt.where(EmployeeWorkday.work_date <= end)
+        if deleted:
+            return trash_page(self.db, stmt, EmployeeWorkday, offset=offset, limit=limit)
         order = (EmployeeWorkday.work_date.desc(), EmployeeWorkday.id.desc())
         return paginate(self.db, stmt, order, offset=offset, limit=limit)
 
@@ -185,6 +203,3 @@ class CalendarRepository:
             EmployeeWorkday.work_date <= end,
         )
         return {(employee_id, day) for employee_id, day in self.db.execute(stmt)}
-
-    def delete_workday(self, workday: EmployeeWorkday) -> None:
-        self._delete(workday)

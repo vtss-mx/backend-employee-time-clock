@@ -7,13 +7,22 @@ El validador identifica a CUALQUIER empleado de su empresa según su modo:
 - QR_AND_FACE: ambos; el QR dice quién es y el rostro debe ser de esa persona (1:1).
 Cada intento queda en la bitácora (attendance.verification_logs) con el validador que lo hizo, y cada
 identificación facial segura enseña a la galería del empleado (face_learning).
+
+Antifraude 2b: cada identificación trae además la firma por petición del dispositivo de la sesión y, si el validador
+requiere ubicación, una lectura fresca (`validator_presence`): lo obligatorio se revisa ANTES de consumir el reto o el
+QR; lo que solo se mide viaja con el intento al motor de riesgo. Cada respuesta lleva el reto de la siguiente firma
+(`device_nonce`).
 """
+
+import logging
+from dataclasses import replace
 
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.exceptions import ConflictError, PermissionDeniedError, UnprocessableError
 from app.facial_recognition import Accessory, FaceAnalysis, FacePipeline
+from app.i18n import t
 from app.models import Employee, User, VerificationLog, VerificationMethod
 from app.repositories.employee_repository import EmployeeRepository
 from app.repositories.face_repository import FaceEmbeddingRepository
@@ -21,10 +30,12 @@ from app.repositories.verification_repository import VerificationLogRepository
 from app.schemas.checkpoint import CheckpointEmployee, CheckpointEvent, CheckpointEventList, CheckpointProfile
 from app.schemas.common import PageParams
 from app.schemas.user import UserCompanyInfo
-from app.schemas.verification import FaceChallengeResponse, VerificationResult
+from app.schemas.verification import FaceChallengeResponse, ValidatorAttendance, VerificationResult
+from app.services import face_signals
 from app.services.attempt_guard import ensure_unlocked
 from app.services.attendance_service import AttendanceService
 from app.services.catalog_service import get_catalogs
+from app.services.client_evidence import ClientEvidence
 from app.services.face_gallery import face_galleries, identify
 from app.services.face_learning import Evidence, FaceLearning
 from app.services.face_service import (
@@ -40,7 +51,9 @@ from app.services.identity_core import (
     FACE_SUCCESS,
     QR_SUCCESS,
     IdentityLog,
+    burst_rejects,
     confirm_live,
+    enforce_risk,
     ensure_frame_count,
     failed,
     issue_challenge,
@@ -54,24 +67,43 @@ from app.services.identity_core import (
 from app.services.liveness_service import LivenessResponse
 from app.services.policy_service import PolicyService
 from app.services.qr_service import QrService
+from app.services.request_signing import ACTION_FACE, ACTION_INSPECT, ACTION_QR, digest_of
+from app.services.risk_engine import Match, RiskEngine, RiskOutcome, location_context
+from app.services.validator_presence import IdentificationRequest, ValidatorPresence
 
+logger = logging.getLogger(__name__)
+
+#: Lo que dice el validador cuando el QR solo identifica (la empresa no registra asistencia con el QR solo, D4).
+QR_WITHOUT_ATTENDANCE = "QR_WITHOUT_ATTENDANCE"
 #: Accesorios que impiden identificar desde la captura (la prenda de cabeza se decide al saber
 #: quién es: puede tener excepción por motivos religiosos o médicos).
 BLOCKING_ACCESSORIES = (Accessory.GLASSES, Accessory.MASK)
 
 
 class CheckpointService:
-    def __init__(self, db: Session, user: User, *, ip: str | None = None, user_agent: str | None = None) -> None:
+    def __init__(
+        self,
+        db: Session,
+        user: User,
+        *,
+        ip: str | None = None,
+        user_agent: str | None = None,
+        session_id: str | None = None,
+    ) -> None:
         if user.validator is None:
-            raise PermissionDeniedError("Esta cuenta no es un validador de identidad", code="VALIDATOR_REQUIRED")
+            raise PermissionDeniedError(code="VALIDATOR_REQUIRED")
         self.db = db
         self.user = user
         self.validator = user.validator
         self.company_id = user.validator.company_id
         self.policy = PolicyService(db, self.company_id).current()
         self.log = IdentityLog(db, ip=ip, user_agent=user_agent)
+        #: La firma por petición y la ubicación de cada identificación (antifraude 2b).
+        self.presence = ValidatorPresence(db, self.validator, (session_id, user.session_device_key), self.policy)
         #: El último intento registrado (la asistencia lo enlaza como evidencia).
         self.last_log: VerificationLog | None = None
+        #: Motivos de negocio si la última identificación quedó "en revisión".
+        self.last_review: tuple[str, ...] = ()
 
     # ---------- Consultas ----------
 
@@ -83,6 +115,8 @@ class CheckpointService:
             company=UserCompanyInfo.model_validate(self.validator.company),
             liveness_required=self.policy.liveness_required,
             qr_enabled=self.policy.qr_enabled,
+            location_required=self.presence.location_required,
+            device_nonce=self.presence.next_nonce(),
         )
 
     def recent(self, page: PageParams) -> CheckpointEventList:
@@ -119,27 +153,42 @@ class CheckpointService:
             self._deny()
         return issue_challenge(self.db, self.user.id, self.policy, self.company_id)
 
-    def inspect_qr(self, qr_content: str) -> CheckpointEmployee:
+    def inspect_qr(self, qr_content: str, request: IdentificationRequest | None = None) -> CheckpointEmployee:
         """Paso 1 del modo QR_AND_FACE: de quién es el QR. El QR queda usado (apartado para este
-        validador) y el rostro lo completa; no se registra en la bitácora: el rostro decide."""
+        validador) y el rostro lo completa; no se registra en la bitácora: el rostro decide (también lo que se midió
+        de la firma y la ubicación de este paso: el del rostro vuelve a traerlas)."""
         if not self._allows(VerificationMethod.QR_FACE):
             self._deny()
+        self.presence.check(request or IdentificationRequest(), ACTION_INSPECT, digest_of(qr_content.encode()))
         employee, reason = self._employee_from_qr(qr_content, hold=True)
         if employee is None:
             raise UnprocessableError(reason_message(reason), code=f"QR_{reason}")
         self.db.commit()  # el QR queda apartado: ya no sirve en ningún otro validador
         return CheckpointEmployee(
-            employee_id=employee.id, name=employee.full_name, employee_number=employee.employee_number
+            employee_id=employee.id,
+            name=employee.full_name,
+            employee_number=employee.employee_number,
+            device_nonce=self.presence.next_nonce(),
         )
 
-    def identify_qr(self, qr_content: str) -> VerificationResult:
+    def identify_qr(self, qr_content: str, request: IdentificationRequest | None = None) -> VerificationResult:
         if not self._allows(VerificationMethod.QR):
             self._deny()
+        presence = self.presence.check(request or IdentificationRequest(), ACTION_QR, digest_of(qr_content.encode()))
+        if presence.hits:
+            # Sin rostro no hay motor de riesgo: con «Solo medir» lo que no cumplió queda en el log del proceso.
+            codes = ", ".join(hit.code for hit in presence.hits)
+            logger.info("Identificación QR del validador %s con señales de presencia: %s", self.validator.id, codes)
         employee, reason = self._employee_from_qr(qr_content)
         self._record(employee, VerificationMethod.QR, employee is not None, None, reason)
         if employee is None:
-            return failed(VerificationMethod.QR, reason_message(reason))
-        return self._attend(employee, succeeded(employee, VerificationMethod.QR, QR_SUCCESS, confidence=None))
+            return self._nonce(failed(VerificationMethod.QR, reason_message(reason)))
+        result = succeeded(employee, VerificationMethod.QR, QR_SUCCESS, confidence=None)
+        if not self.policy.qr_only_attendance:
+            # Decisión D4: un QR se puede reenviar a un cómplice; sin rostro identifica, pero no registra asistencia.
+            result.attendance = ValidatorAttendance(message=t(QR_WITHOUT_ATTENDANCE))
+            return self._nonce(result)
+        return self._nonce(self._attend(employee, result))
 
     def identify_face(
         self,
@@ -149,8 +198,11 @@ class CheckpointService:
         liveness: LivenessResponse,
         qr_content: str | None = None,
         camera_label: str | None = None,
+        client: ClientEvidence | None = None,
+        request: IdentificationRequest | None = None,
     ) -> VerificationResult:
-        """Rostro 1:N (FACE / QR_OR_FACE) o QR + rostro 1:1 (QR_AND_FACE).
+        """Rostro 1:N (FACE / QR_OR_FACE) o QR + rostro 1:1 (QR_AND_FACE). `client`: lo que informó la app (telemetría
+        de la toma); `request`: la firma por petición y la ubicación del dispositivo (antifraude 2b).
 
         Un validador con demasiados intentos sospechosos seguidos se bloquea temporalmente (429
         FACE_LOCKED); con QR + rostro, también el empleado del QR tras varios fallos.
@@ -158,12 +210,30 @@ class CheckpointService:
         method = VerificationMethod.QR_FACE if qr_content else VerificationMethod.FACE
         if not self._allows(method):
             if self._allows(VerificationMethod.QR_FACE):
-                raise UnprocessableError("Escanea primero el código QR del empleado", code="QR_REQUIRED")
+                raise UnprocessableError(code="QR_REQUIRED")
             self._deny()
         ensure_frame_count(images)
+        # Antes de consumir el reto: con la firma o la ubicación obligatorias, lo que no cumple se rechaza aquí.
+        presence = self.presence.check(request or IdentificationRequest(), ACTION_FACE, digest_of(images[0]))
+        evidence = replace(client or ClientEvidence(), checks=presence.hits)
+        if presence.evidence is None:
+            return self._nonce(self._identify_face(pipeline, images, liveness, qr_content, camera_label, evidence))
+        with location_context(presence.evidence):  # las señales del lugar y de la red para el motor de riesgo
+            return self._nonce(self._identify_face(pipeline, images, liveness, qr_content, camera_label, evidence))
+
+    def _identify_face(
+        self,
+        pipeline: FacePipeline,
+        images: list[bytes],
+        liveness: LivenessResponse,
+        qr_content: str | None,
+        camera_label: str | None,
+        client: ClientEvidence,
+    ) -> VerificationResult:
+        method = VerificationMethod.QR_FACE if qr_content else VerificationMethod.FACE
         ensure_unlocked(self.db, self.policy, actor_id=self.user.id, reasons=SECURITY_REASONS)
         try:
-            challenge = take_challenge(self.db, self.user.id, liveness, camera_label, self.policy)
+            challenge = take_challenge(self.db, self.user.id, liveness, camera_label, self.policy, images, client)
             frontal, headwear = self._analyze(pipeline, images)
             face_policy = self.policy.face_policy(None)
             check = confirm_live(
@@ -183,17 +253,24 @@ class CheckpointService:
 
     # ---------- Internos ----------
 
+    def _nonce(self, result: VerificationResult) -> VerificationResult:
+        """El resultado con el reto de la siguiente firma (la app firma sin pedirlo aparte)."""
+        result.device_nonce = self.presence.next_nonce()
+        return result
+
     def _search_gallery(
         self, pipeline: FacePipeline, frontal: list[FaceAnalysis], headwear: bool, *, live: bool
     ) -> VerificationResult:
         self._migrate_missing(pipeline)
         gallery = face_galleries.get(self.db, self.company_id, pipeline.model_name)
-        found = identify(
-            gallery,
-            [f.embedding for f in frontal],
-            required=required_match(self.policy, among_all=True),
-            margin=settings.FACE_IDENTIFY_MARGIN,
-        )
+        required = required_match(self.policy, among_all=True)
+        probes = [f.embedding for f in frontal]
+        found = identify(gallery, probes, required=required, margin=settings.FACE_IDENTIFY_MARGIN)
+        if found.employee_id is not None and burst_rejects(
+            list(gallery.matrix[gallery.labels == found.employee_id]), required
+        ):
+            # El video en vivo (la ráfaga) no es quien señalaron las frontales: nadie se identifica (solo endurece).
+            found = replace(found, employee_id=None, reason="NO_MATCH")
         score = mean_confidence(found.similarities) if found.similarities else None
         employee = (
             EmployeeRepository(self.db, self.company_id).get_by_id(found.employee_id) if found.employee_id else None
@@ -202,10 +279,14 @@ class CheckpointService:
             self._record(None, VerificationMethod.FACE, False, score, found.reason or "NO_MATCH")
             return failed(VerificationMethod.FACE, reason_message(found.reason or "NO_MATCH"))
         self._ensure_headwear_allowed(employee, headwear)
-        learning = FaceLearning(FaceService(self.db, pipeline), self.policy)
-        learning.reinforce(employee, found.sample_id, Evidence(frontal, live=live, gap=found.gap))
+        match = Match(found.similarities, required.fused)
+        outcome = self._screen(employee, VerificationMethod.FACE, score, frontal, match)
+        if outcome.clean:
+            learning = FaceLearning(FaceService(self.db, pipeline), self.policy)
+            learning.reinforce(employee, found.sample_id, Evidence(frontal, live=live, gap=found.gap))
         self._record(employee, VerificationMethod.FACE, True, score, None)
-        return self._attend(employee, succeeded(employee, VerificationMethod.FACE, FACE_SUCCESS, confidence=score))
+        result = succeeded(employee, VerificationMethod.FACE, FACE_SUCCESS, confidence=score)
+        return self._attend(employee, result, review=outcome.review)
 
     def _confirm_qr_holder(
         self, pipeline: FacePipeline, qr_content: str, frontal: list[FaceAnalysis], headwear: bool, *, live: bool
@@ -226,12 +307,19 @@ class CheckpointService:
         match = match_one(frontal, references, self.policy)
         if not match.matched:
             self._record(employee, method, False, match.score, "NO_MATCH")
-            return failed(method, "El rostro no corresponde al dueño del código QR")
+            return failed(method, t("QR_FACE_MISMATCH"))
         self._ensure_headwear_allowed(employee, headwear)
-        # El QR ya dijo quién es: la captura enseña con las mismas reglas que una verificación 1:1.
-        FaceLearning(faces, self.policy).reinforce(employee, match.closest, Evidence(frontal, live=live), references)
+        outcome = self._screen(
+            employee, method, match.score, frontal, Match(match.similarities, required_match(self.policy).fused)
+        )
+        if outcome.clean:
+            # El QR ya dijo quién es: la captura enseña con las mismas reglas que una verificación 1:1.
+            FaceLearning(faces, self.policy).reinforce(
+                employee, match.closest, Evidence(frontal, live=live), references
+            )
         self._record(employee, method, True, match.score, None)
-        return self._attend(employee, succeeded(employee, method, FACE_SUCCESS, confidence=match.score))
+        result = succeeded(employee, method, FACE_SUCCESS, confidence=match.score)
+        return self._attend(employee, result, review=outcome.review)
 
     def _analyze(self, pipeline: FacePipeline, images: list[bytes]) -> tuple[list[FaceAnalysis], bool]:
         """Calidad, pose y un solo rostro en cada captura; accesorios y suplantación por consenso.
@@ -277,16 +365,39 @@ class CheckpointService:
         return method.value in get_catalogs().mode_methods.get(self.validator.mode.value, ())
 
     def _deny(self) -> None:
-        raise ConflictError(
-            f"Este validador identifica en modo «{get_catalogs().name('validator_modes', self.validator.mode)}»",
-            code="VALIDATOR_METHOD_NOT_ALLOWED",
-        )
+        mode = get_catalogs().name("validator_modes", self.validator.mode)
+        raise ConflictError(code="VALIDATOR_METHOD_NOT_ALLOWED", params={"mode": mode})
 
-    def _attend(self, employee: Employee, result: VerificationResult) -> VerificationResult:
+    def _screen(
+        self,
+        employee: Employee,
+        method: VerificationMethod,
+        score: float | None,
+        frontal: list[FaceAnalysis],
+        match: Match,
+    ) -> RiskOutcome:
+        """El motor de riesgo sobre la identificación (ya se sabe quién es): niega o pide un paso más registrando el
+        intento; si no, su decisión (aprender solo si nada pesó; "en revisión" se registra así)."""
+        outcome = RiskEngine(self.db, self.company_id, self.policy).evaluate(
+            employee_id=employee.id, frontal=frontal, match=match, can_step_up=self.policy.liveness_required
+        )
+        enforce_risk(
+            self.db,
+            outcome,
+            actor_id=self.user.id,
+            policy=self.policy,
+            company_id=self.company_id,
+            record=lambda reason: self._record(employee, method, False, score, reason),
+        )
+        self.last_review = face_signals.current().review_reasons
+        return outcome
+
+    def _attend(self, employee: Employee, result: VerificationResult, *, review: bool = False) -> VerificationResult:
         """Identificarse en un validador cuenta como entrada o salida del turno, en sitio (si tiene
-        turno en ese momento): `result.attendance` dice qué registró."""
+        turno en ese momento): `result.attendance` dice qué registró. Con riesgo alto queda "en revisión"."""
+        result.review = review
         result.attendance = AttendanceService(self.db, self.company_id).from_validator(
-            employee, self.user, self.last_log
+            employee, self.user, self.last_log, review=self.last_review if review else ()
         )
         return result
 

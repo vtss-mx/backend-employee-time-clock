@@ -49,3 +49,31 @@ def test_a_ticket_that_expires_behind_the_front_is_skipped_when_its_turn_comes()
     assert served == ["adelante", "detrás"]
     stats = pool.stats()
     assert (stats.processed, stats.rejected, stats.waiting, stats.busy) == (3, 1, 0, 0)
+
+
+def test_a_spare_worker_is_lent_only_when_free_and_nobody_waits():
+    """Repuesto para el trabajo en paralelo de una petición (la ráfaga): nunca espera ni se adelanta a la fila."""
+    pool = WorkerPool(lambda i: f"worker-{i}", size=2, max_waiting=5, wait_timeout=5.0)
+    with pool.lease():
+        spare = pool.try_acquire()
+        assert spare is not None and pool.stats().busy == 2
+        assert pool.try_acquire() is None  # no hay otro libre
+        released = threading.Event()
+
+        def waiting() -> None:
+            with pool.lease():
+                released.set()
+
+        behind = threading.Thread(target=waiting)
+        behind.start()
+        _wait_until(lambda: pool.stats().waiting == 1)
+        pool.release(spare)  # devolverlo despierta a quien esperaba turno
+        assert released.wait(5)
+        behind.join(timeout=5)
+    assert pool.stats().busy == 0 and pool.stats().processed == 3
+
+
+def test_no_spare_while_someone_waits_for_a_turn():
+    pool = WorkerPool(lambda i: f"worker-{i}", size=1, max_waiting=5, wait_timeout=5.0)
+    pool._waiting = 1  # alguien espera turno (aunque haya uno libre un instante): el repuesto no se le adelanta
+    assert pool.try_acquire() is None

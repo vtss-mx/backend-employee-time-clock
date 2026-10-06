@@ -31,6 +31,20 @@ class SessionRepository:
     def add(self, session: AuthSession) -> None:
         self.db.add(session)
 
+    def bind_device(self, session_id: str, key_hash: str) -> bool:
+        """Liga la sesión a la llave de su dispositivo si aún no tenía ninguna (o ya era esa): UNA sentencia atómica
+        por su llave primaria, así dos identificaciones simultáneas nunca la ligan a llaves distintas. False si ya
+        estaba ligada a otra (antifraude 2b, `request_signing`)."""
+        stmt = (
+            update(AuthSession)
+            .where(
+                AuthSession.id == session_id,
+                or_(AuthSession.device_key_hash.is_(None), AuthSession.device_key_hash == key_hash),
+            )
+            .values(device_key_hash=key_hash)
+        )
+        return affected_rows(self.db, stmt) == 1
+
     def active_for_user(self, user_id: int, now: datetime) -> list[AuthSession]:
         return list(
             self.db.scalars(

@@ -44,6 +44,14 @@ def note_actor(user_id: int, company_id: int | None, *, email: str | None = None
         info.user_id, info.company_id, info.user_email, info.user_role = user_id, company_id, email, role
 
 
+def note_company(company_id: int) -> None:
+    """La empresa de una petición sin sesión de usuario (la llave de la API de integración): su consumo
+    se le cuenta a ella (y sus fallas dicen de qué empresa fueron)."""
+    info = request_info_var.get()
+    if info is not None:
+        info.company_id = company_id
+
+
 class RequestIdLogFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         record.request_id = request_id_var.get() or "-"

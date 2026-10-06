@@ -18,7 +18,9 @@ class FaceChallengeRepository:
         self.db.execute(delete(FaceChallenge).where(FaceChallenge.user_id == challenge.user_id))
         self.db.add(challenge)
 
-    def take(self, challenge_id: str) -> Row[int, str, str | None, str | None, str | None, datetime, datetime] | None:
+    def take(
+        self, challenge_id: str
+    ) -> Row[int, str, str | None, str | None, str | None, datetime, datetime, bool, bool, bool] | None:
         """Lo elimina y devuelve sus datos en una sola sentencia (un reto no se puede usar dos veces)."""
         return self.db.execute(
             delete(FaceChallenge)
@@ -31,5 +33,8 @@ class FaceChallengeRepository:
                 FaceChallenge.flash_colors,
                 FaceChallenge.issued_at,
                 FaceChallenge.expires_at,
+                FaceChallenge.step_up,
+                FaceChallenge.reinforced,
+                FaceChallenge.flash_paced,
             )
         ).first()

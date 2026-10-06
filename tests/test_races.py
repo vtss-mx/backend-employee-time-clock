@@ -13,6 +13,7 @@ from typing import Any
 from app.core.config import settings
 from app.core.database import SessionLocal
 from app.models import Company, User, UserRole
+from app.models.company import TaxId
 from app.repositories.company_repository import CompanyRepository
 from app.repositories.qr_repository import EmployeeQrRepository
 from app.repositories.user_repository import UserRepository
@@ -62,8 +63,11 @@ def _same_statement(repository: type, name: str) -> Competitor:
     return lambda other, *args, **kwargs: getattr(repository(other), name)(*args, **kwargs)
 
 
-def _twin_company(other, rfc: str, **_: Any) -> None:
-    other.add(Company(name="Empresa gemela", rfc=rfc, active=True))
+def _twin_company(other, tax: TaxId | None, *_: Any, **__: Any) -> None:
+    """Otra empresa con el mismo identificador fiscal (país, tipo y número)."""
+    twin = Company(name="Empresa gemela", active=True)
+    twin.set_tax(tax)
+    other.add(twin)
 
 
 def _account_with(other, email: str, *_: Any, **__: Any) -> None:
@@ -79,19 +83,22 @@ def _count_users(email: str) -> int:
 
 
 def test_two_simultaneous_registrations_of_the_same_company(client, admin_headers, monkeypatch):
-    _wins_before(monkeypatch, CompanyRepository, "add", lambda other, company: _twin_company(other, company.rfc))
+    _wins_before(monkeypatch, CompanyRepository, "add", lambda other, company: _twin_company(other, company.tax))
     lost = create_company(client, admin_headers)
     assert lost.status_code == 409 and lost.json()["code"] == "DUPLICATE"
     assert _count_users("admin@panificadora.com") == 0  # ni la empresa ni su administrador a medias
 
 
-def test_two_companies_claiming_the_same_rfc_at_once(client, admin_headers, monkeypatch):
+def test_two_companies_claiming_the_same_tax_id_at_once(client, admin_headers, monkeypatch):
+    """El índice único parcial (país, tipo, número) decide: la que pierde responde 409 en `tax_id`."""
     company = create_company(client, admin_headers).json()["data"]
-    _wins_after_check(monkeypatch, CompanyRepository, "rfc_exists", _twin_company)
-    lost = client.put(f"/api/admin/companies/{company['id']}", json={"rfc": "ACM010101AB2"}, headers=admin_headers)
-    assert lost.status_code == 409 and lost.json()["code"] == "COMPANY_RFC_TAKEN"
+    _wins_after_check(monkeypatch, CompanyRepository, "tax_id_exists", _twin_company)
+    body = {"tax_country": "US", "tax_id_type": "US_EIN", "tax_id": "12-3456789"}
+    lost = client.put(f"/api/admin/companies/{company['id']}", json=body, headers=admin_headers)
+    assert lost.status_code == 409 and lost.json()["code"] == "COMPANY_TAX_ID_TAKEN"
+    assert lost.json()["errors"][0]["field"] == "tax_id"
     detail = client.get(f"/api/admin/companies/{company['id']}", headers=admin_headers).json()["data"]
-    assert detail["rfc"] == "PNO120315AB1"  # conserva su RFC
+    assert (detail["tax_id_type"], detail["tax_id"]) == ("MX_RFC", "PNO120315AB1")  # conserva su RFC
 
 
 # ---------------------------------------------------------------- empleados

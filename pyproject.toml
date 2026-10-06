@@ -24,7 +24,10 @@ exclude_also = ["if TYPE_CHECKING:", "raise NotImplementedError", "if __name__ =
 [tool.ruff]
 target-version = "py314"
 line-length = 120
-extend-exclude = ["alembic/versions"]
+
+[tool.ruff.format]
+# Las migraciones conservan el formato con que se aplicaron (una migración aplicada no se edita).
+exclude = ["alembic/versions/*"]
 
 [tool.ruff.lint]
 select = [
@@ -56,6 +59,17 @@ max-complexity = 12
 "scripts/**" = ["S"]
 # Códigos de catálogo como PASSWORD_CHANGED no son contraseñas (falso positivo de S105).
 "app/models/enums.py" = ["S105"]
+# Migraciones: de todo el lint, SOLO la regla de inyección SQL (S608, regla 21 de la raíz): una migración nueva que
+# arme SQL con algo que no sea constante falla aquí (y en tests/test_sql_safety.py, que además entiende f-strings con
+# `sql_identifier`). El resto del estilo no aplica a archivos que no se editan una vez aplicados.
+"alembic/versions/*.py" = [
+  "E", "W", "F", "I", "UP", "B", "ANN", "C90", "SIM", "C4", "RUF", "DTZ", "PIE", "RET",
+  "S1", "S2", "S3", "S4", "S5", "S7", "S601", "S602", "S603", "S604", "S605", "S606", "S607", "S609", "S610", "S611",
+]
+# Migraciones YA APLICADAS que arman SQL con sus propias constantes (nombres de tablas, índices, códigos de catálogo):
+# revisadas una por una en la auditoría de inyección SQL (2026-10-05; motivos en FROZEN_MIGRATIONS de
+# tests/test_sql_safety.py). No se editan; nunca se agrega aquí una migración nueva.
+"alembic/versions/{0011,0014,0016,0038,0041,0061,0062,0064,0065,0066,0067,0068,0069}_*.py" = ["S608"]
 
 [tool.mypy]
 python_version = "3.14"

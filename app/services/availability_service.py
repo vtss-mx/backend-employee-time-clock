@@ -9,8 +9,11 @@ from typing import Any, Literal, cast
 
 from sqlalchemy.orm import Session
 
+from app.i18n import t
 from app.repositories.employee_repository import EmployeeRepository, UniqueDocument
+from app.schemas.employee import OPTIONAL_DOCUMENTS
 from app.schemas.validators import (
+    is_blank_document,
     normalize_curp,
     normalize_email,
     normalize_employee_number,
@@ -23,26 +26,24 @@ from app.services.people_service import AccountCheck, PeopleService
 Field = Literal["employee_number", "rfc", "curp", "nss", "email", "phone"]
 FIELDS: tuple[Field, ...] = ("employee_number", "rfc", "curp", "nss", "email", "phone")
 
-NUMBER_TAKEN = "El número de empleado ya está registrado"
-RFC_TAKEN = "El RFC ya está registrado en otro empleado"
-CURP_TAKEN = "La CURP ya está registrada en otro empleado"
-NSS_TAKEN = "El NSS ya está registrado en otro empleado"
+#: Llaves de los mensajes de cada campo (catálogo `app/i18n/messages/`; se traducen en el idioma de la petición).
+NUMBER_TAKEN = "EMPLOYEE_NUMBER_TAKEN"
+RFC_TAKEN = "RFC_TAKEN"
+CURP_TAKEN = "CURP_TAKEN"
+NSS_TAKEN = "NSS_TAKEN"
 _AVAILABLE = {
-    "employee_number": "Número de empleado disponible",
-    "rfc": "RFC disponible",
-    "curp": "CURP disponible",
-    "nss": "NSS disponible",
-    "email": "Correo disponible",
-    "phone": "Teléfono disponible",
+    "employee_number": "EMPLOYEE_NUMBER_AVAILABLE",
+    "rfc": "RFC_AVAILABLE",
+    "curp": "CURP_AVAILABLE",
+    "nss": "NSS_AVAILABLE",
+    "email": "EMAIL_AVAILABLE",
+    "phone": "PHONE_AVAILABLE",
 }
 _TAKEN = {"employee_number": NUMBER_TAKEN, "rfc": RFC_TAKEN, "curp": CURP_TAKEN, "nss": NSS_TAKEN}
 _EMPTY = {
-    "employee_number": "El número de empleado es obligatorio",
-    "rfc": "El RFC es obligatorio",
-    "curp": "La CURP es obligatoria",
-    "nss": "El NSS es obligatorio",
-    "email": "El correo es obligatorio",
-    "phone": "El teléfono es obligatorio",
+    "employee_number": "EMPLOYEE_NUMBER_REQUIRED",
+    "email": "EMAIL_REQUIRED",
+    "phone": "PHONE_REQUIRED",
 }
 
 
@@ -54,12 +55,22 @@ class Availability:
     normalized: str | None
     valid: bool
     available: bool
-    #: AVAILABLE | LINKABLE (persona de otra empresa: se vincula) | TAKEN | INVALID_FORMAT | EMPTY
+    #: AVAILABLE | LINKABLE (persona de otra empresa: se vincula) | TAKEN | INVALID_FORMAT | EMPTY (vacío: en un dato
+    #: obligatorio no es válido; en uno opcional —RFC, CURP, NSS, identificador fiscal de la empresa— es válido y no se
+    #: consulta nada)
     code: str
+    #: Para la persona, en el idioma de la petición.
     message: str
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+def not_captured(field: str, value: str) -> Availability:
+    """Un documento opcional vacío (RFC, CURP y NSS del empleado; identificador fiscal de la empresa): válido, no
+    impide guardar y no se consulta nada. Una sola regla y un solo mensaje para todos («Opcional: puede quedar
+    vacío»)."""
+    return Availability(field, value, None, True, True, "EMPTY", t("DOCUMENT_OPTIONAL"))
 
 
 class AvailabilityService:
@@ -75,20 +86,22 @@ class AvailabilityService:
         """`related`: al validar el teléfono en un alta, el correo escrito (deben ser de la misma
         persona si ya trabaja en otra empresa)."""
         raw = (value or "").strip()
+        if field in OPTIONAL_DOCUMENTS and is_blank_document(raw):  # opcional: sin capturar no hay nada que verificar
+            return not_captured(field, value)
         if not raw:
-            return Availability(field, value, None, False, False, "EMPTY", _EMPTY[field])
+            return Availability(field, value, None, False, False, "EMPTY", t(_EMPTY[field]))
         try:
             normalized = self._normalize(field, raw)
         except ValueError as exc:
             return Availability(field, value, None, False, False, "INVALID_FORMAT", str(exc))
         if field in ("email", "phone"):
             check = self._account_check(field, normalized, exclude_employee_id, related)
-            message = check.message or _AVAILABLE[field]
+            message = check.message or t(_AVAILABLE[field])
             usable = check.match in ("AVAILABLE", "LINKABLE")
             return Availability(field, value, normalized, True, usable, check.match, message)
         taken = self._exists(field, normalized, exclude_employee_id)
         code = "TAKEN" if taken else "AVAILABLE"
-        message = _TAKEN[field] if taken else _AVAILABLE[field]
+        message = t(_TAKEN[field] if taken else _AVAILABLE[field])
         return Availability(field, value, normalized, True, not taken, code, message)
 
     @staticmethod

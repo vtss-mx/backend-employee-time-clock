@@ -26,5 +26,11 @@ onnxruntime==1.30.0   # CLIP (detección de lentes / gorra / cubrebocas)
 # --- Reportes ---
 
 
+# --- Almacenamiento de imágenes cifradas (bucket de Google Cloud Storage / Firebase Storage) ---
+google-cloud-storage==3.16.0   # cliente oficial: tiempos límite, reintentos idempotentes y MD5 de cada subida
+
+# --- Base local de IP (DB-IP Lite: país y sistema autónomo, decisión D8; la IP nunca sale del servidor) ---
+maxminddb==3.2.0   # lector MMDB con extensión en C (archivo mapeado: microsegundos por consulta)
+
 # --- Zonas horarias (APP_TIMEZONE) en imágenes sin tzdata del sistema ---
 tzdata==2026.5

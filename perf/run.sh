@@ -4,6 +4,8 @@
 #   perf/run.sh 1000 5000             → solo esas etapas
 #   PERF_DURATION=30s perf/run.sh     → más tiempo por etapa
 #   PERF_OVERRIDE=/ruta/override.yml  → mismas etapas con otra configuración (comparar antes/después)
+#   PERF_BACKEND_IMAGE=imagen         → otra imagen de la API (por omisión time-clock-backend)
+#   Varias réplicas detrás del gateway y PgBouncer: perf/scale/run.sh
 # Resultados: perf/results/report.md (tabla) y un JSON de k6 por etapa.
 set -eu
 cd "$(dirname "$0")"
@@ -16,7 +18,7 @@ PERF_ENV_FILE=$(mktemp)
 export PERF_ENV_FILE
 trap '$COMPOSE down -v >/dev/null 2>&1; rm -f "$PERF_ENV_FILE"' EXIT
 
-docker run --rm --entrypoint python time-clock-backend scripts/generate_secrets.py > "$PERF_ENV_FILE"
+docker run --rm --entrypoint python "${PERF_BACKEND_IMAGE:-time-clock-backend}" scripts/generate_secrets.py > "$PERF_ENV_FILE"
 $COMPOSE up -d db backend
 printf 'Esperando a la API'
 for _ in $(seq 1 90); do

@@ -44,5 +44,4 @@ def overview(_: AdminUser, db: DbSession) -> ApiResponse[FaceSecurityOverview]:
 def recalibrate(_: AdminUser, db: DbSession) -> ApiResponse[FaceSecurityOverview]:
     now = datetime.now(UTC)
     changed = face_security.recalibrate(db, now)
-    message = f"Umbrales recalculados ({changed} cambiaron)" if changed else "Umbrales recalculados: sin cambios"
-    return ok(face_security.overview(db, now), message, code="THRESHOLDS_RECALIBRATED")
+    return ok(face_security.overview(db, now), code="THRESHOLDS_RECALIBRATED", params={"count": changed})

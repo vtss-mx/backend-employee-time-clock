@@ -3,10 +3,11 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
+from app.i18n import LocalizedValueError, StoredText
 from app.models.enums import DeviceStatus, ValidatorMode
 from app.models.validator import LOCATION_RADIUS_MAX_M, LOCATION_RADIUS_MIN_M
 from app.schemas.address import Address
-from app.schemas.common import Page
+from app.schemas.common import Deletion, Page
 from app.schemas.validators import validate_password_strength
 
 MODE_DESCRIPTION = (
@@ -18,7 +19,7 @@ MODE_DESCRIPTION = (
 def _clean_name(value: str) -> str:
     name = " ".join(value.split())
     if len(name) < 2:
-        raise ValueError("El nombre del validador es obligatorio")
+        raise LocalizedValueError("VALIDATOR_NAME_REQUIRED")
     return name
 
 
@@ -86,7 +87,7 @@ class ValidatorStatusUpdate(BaseModel):
     active: bool
 
 
-class ValidatorRead(BaseModel):
+class ValidatorRead(Deletion):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
@@ -108,7 +109,12 @@ class ValidatorRead(BaseModel):
 
 
 class ValidatorList(Page[ValidatorRead]):
-    """Página de validadores de la empresa."""
+    """Página de validadores de la empresa, con el uso de su límite ("N de M")."""
+
+    #: Validadores activos de la empresa (los que cuentan contra el límite y en el cobro).
+    active: int = 0
+    #: Validadores activos que permite el ADMIN (`companies.max_validators`).
+    limit: int = 0
 
 
 class ValidatorDeviceRead(BaseModel):
@@ -117,7 +123,8 @@ class ValidatorDeviceRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    name: str
+    #: El que dio el dispositivo o, si no dio uno, su tipo en el idioma de quien lee ("Tableta", "Tablet").
+    name: StoredText
     user_agent: str | None = None
     status: DeviceStatus
     created_at: datetime

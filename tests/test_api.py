@@ -87,7 +87,11 @@ def test_update_and_status(client, company_headers):
 def test_delete_employee(client, company_headers):
     emp = create_employee(client, company_headers).json()["data"]
     assert client.delete(f"/api/employees/{emp['id']}", headers=company_headers).status_code == 200
-    assert client.get(f"/api/employees/{emp['id']}", headers=company_headers).status_code == 404
+    # Borrado lógico: su detalle se ve con la marca «Eliminado»; editarlo responde como si no existiera.
+    assert client.get(f"/api/employees/{emp['id']}", headers=company_headers).json()["data"]["deleted_at"]
+    assert (
+        client.put(f"/api/employees/{emp['id']}", json={"first_name": "X"}, headers=company_headers).status_code == 404
+    )
 
 
 def test_login_rate_limit(client):

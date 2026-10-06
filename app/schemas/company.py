@@ -2,32 +2,25 @@
 
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, computed_field, field_validator
 
-from app.schemas.common import Page
-from app.schemas.validators import (
-    PhoneNumber,
-    normalize_company_name,
-    normalize_company_rfc,
-    validate_password_strength,
-)
+from app.models.company import RFC_TAX_ID_TYPE, VALIDATORS_MAX
+from app.schemas.billing import BillingPlanIn
+from app.schemas.common import Deletion, Page
+from app.schemas.tax_ids import TaxIdFields
+from app.schemas.validators import PhoneNumber, normalize_company_name, validate_password_strength
 
 
 class _CompanyFields(BaseModel):
     @field_validator("name", check_fields=False)
     @classmethod
     def _name(cls, value: str | None) -> str | None:
-        return None if value is None else normalize_company_name(value, "El nombre comercial")
+        return None if value is None else normalize_company_name(value, "TRADE_NAME_REQUIRED")
 
     @field_validator("legal_name", check_fields=False)
     @classmethod
     def _legal_name(cls, value: str | None) -> str | None:
-        return None if value is None else normalize_company_name(value, "La razón social")
-
-    @field_validator("rfc", check_fields=False)
-    @classmethod
-    def _rfc(cls, value: str | None) -> str | None:
-        return None if value is None else normalize_company_rfc(value)
+        return None if value is None else normalize_company_name(value, "LEGAL_NAME_REQUIRED")
 
     @field_validator("admin_email", check_fields=False)
     @classmethod
@@ -40,33 +33,46 @@ class _CompanyFields(BaseModel):
         return None if value is None else validate_password_strength(value)
 
 
-class CompanyCreate(_CompanyFields):
-    """Alta de empresa con su primer administrador (COMPANY), en una sola operación."""
+class CompanyCreate(TaxIdFields, _CompanyFields):
+    """Alta de empresa con su primer administrador (COMPANY), en una sola operación. Su identificador fiscal (país,
+    tipo y número) es opcional: `TaxIdFields`."""
 
     name: str = Field(max_length=200, description="Nombre comercial", examples=["Panificadora del Norte"])
     legal_name: str = Field(
         max_length=250, description="Razón social", examples=["Panificadora del Norte, S.A. de C.V."]
     )
-    rfc: str = Field(
-        max_length=20, description="RFC: 12 (persona moral) o 13 (persona física)", examples=["PNO120315AB1"]
-    )
     phone: PhoneNumber
     max_employees: int | None = Field(
         default=None, ge=1, le=1_000_000, description="Límite del plan (vacío = sin límite)"
     )
+    #: Opcional y con costo (cada validador activo cuenta como un empleado): por omisión la empresa no lo tiene.
+    max_validators: int = Field(
+        default=0, ge=0, le=VALIDATORS_MAX, description="Validadores activos permitidos (0 = sin el módulo)"
+    )
     admin_email: EmailStr = Field(description="Correo del administrador de la empresa (inicia sesión con él)")
     admin_password: str
     api_enabled: bool = Field(default=False, description="Acceso al módulo de Integraciones (API)")
+    #: Plan de cobro, en la misma operación (la webapp siempre lo envía). Sin él la empresa no se cobra
+    #: hasta que el ADMIN se lo configure.
+    billing: BillingPlanIn | None = None
 
 
-class CompanyUpdate(_CompanyFields):
-    """Actualización parcial."""
+class CompanyUpdate(TaxIdFields, _CompanyFields):
+    """Actualización parcial: solo se modifican los campos enviados. Un null no cambia nada, salvo en el identificador
+    fiscal (`tax_id` null o vacío lo borra con su país y su tipo) y en el límite de empleados, donde null lo borra (sin
+    capturar · sin límite). El identificador cambia solo si llega `tax_id` (`TaxIdFields`)."""
 
     name: str | None = Field(default=None, max_length=200)
     legal_name: str | None = Field(default=None, max_length=250)
-    rfc: str | None = Field(default=None, max_length=20)
     phone: PhoneNumber | None = None
-    max_employees: int | None = Field(default=None, ge=1, le=1_000_000)
+    max_employees: int | None = Field(default=None, ge=1, le=1_000_000, description="Null quita el límite")
+    max_validators: int | None = Field(
+        default=None,
+        ge=0,
+        le=VALIDATORS_MAX,
+        description="Validadores activos permitidos (0 = sin el módulo). Nunca menos de los activos: 409 "
+        "`VALIDATOR_LIMIT_BELOW_ACTIVE`",
+    )
     api_enabled: bool | None = Field(default=None, description="Acceso al módulo de Integraciones (API)")
 
 
@@ -99,22 +105,38 @@ class CompanyAdminList(Page[CompanyAdminRead]):
     """Página de administradores de una empresa."""
 
 
-class CompanyRead(BaseModel):
+class CompanyRead(Deletion):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
     name: str
     legal_name: str | None = None
-    rfc: str | None = None
+    #: Identificador fiscal (migración 0074): país (ISO 3166-1 alfa-2), tipo (`catalog.tax_id_types`) y número
+    #: normalizado; los tres null = sin capturar.
+    tax_country: str | None = None
+    tax_id_type: str | None = None
+    tax_id: str | None = None
     phone: str | None = None
     active: bool
     max_employees: int | None = None
+    #: Validadores activos que puede tener (0 = sin el módulo de validadores).
+    max_validators: int = 0
     #: Tiene el módulo de Integraciones (API).
     api_enabled: bool = False
+    #: Estado de servicio (catalog.billing_statuses) y, si está suspendida, por qué (suspension_reasons).
+    billing_status: str = "ACTIVE"
+    suspension_reason: str | None = None
     employee_count: int = 0
     admin_count: int = 0
+    #: Validadores activos (cuentan contra `max_validators` y en el cobro como empleados).
+    active_validators: int = 0
     created_at: datetime
     updated_at: datetime
+
+    @computed_field(description="Obsoleto: usa `tax_id`. El número si el tipo es RFC; si no, null")  # type: ignore[prop-decorator]
+    @property
+    def rfc(self) -> str | None:
+        return self.tax_id if self.tax_id_type == RFC_TAX_ID_TYPE else None
 
 
 class CompanyDetail(CompanyRead):

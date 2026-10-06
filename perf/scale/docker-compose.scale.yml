@@ -1,0 +1,74 @@
+# Entorno AISLADO para probar el escalado horizontal (perf/scale/run.sh): la MISMA topología de
+# docker-compose.yml (gateway Nginx → N réplicas → PgBouncer → PostgreSQL, migración única), pero con su
+# propio nombre de proyecto (contenedores, red e imágenes timeclock-scale-*), secretos de un solo uso, base en
+# memoria y sin publicar puertos salvo el gateway en 127.0.0.1:18080. Nunca toca la base ni el .env de trabajo.
+name: timeclock-scale
+
+services:
+  db:
+    env_file: !override
+      - ${PERF_ENV_FILE:?perf/scale/run.sh genera el archivo de secretos}
+    ports: !reset []
+    # Sin el volumen de datos (la base vive en memoria) ni los de PITR (apagado en esta prueba: los secretos de un solo
+    # uso traen PITR_ENABLED=false), pero con la imagen y el arranque de producción (postgres/start.sh, los mismos
+    # parámetros, e init como PID 1).
+    volumes: !reset []
+    tmpfs:
+      - /var/lib/postgresql/data
+
+  pgbouncer:
+    env_file: !override
+      - ${PERF_ENV_FILE}
+
+  migrate:
+    env_file: !override
+      - ${PERF_ENV_FILE}
+
+  backend:
+    env_file: !override
+      - ${PERF_ENV_FILE}
+    volumes: !reset []
+    environment:
+      PERF_ENVIRONMENT: "1"
+      # Procesos por réplica: con pocos se ve el efecto de agregar réplicas en una sola máquina.
+      API_WORKERS: ${SCALE_API_WORKERS:-2}
+      # Prueba de la carrera de migraciones: las réplicas migran ellas mismas (sin el servicio migrate).
+      RUN_MIGRATIONS: ${SCALE_RUN_MIGRATIONS:-0}
+      # Solo en esa prueba las réplicas tienen la contraseña del dueño (migrar y aprovisionar los roles la piden);
+      # el resto del tiempo, como en producción, la API no la conoce (docker-compose.yml).
+      POSTGRES_PASSWORD: ${SCALE_OWNER_PASSWORD:-}
+      # El mantenimiento corre seguido para comprobar que solo una instancia trabaja a la vez.
+      MAINTENANCE_INTERVAL_SECONDS: ${SCALE_MAINTENANCE_SECONDS:-5}
+      FIRST_COMPANY_EMAIL: carga@carga-timeclock.com
+      FIRST_COMPANY_PASSWORD: Carga12345
+      FIRST_ADMIN_EMAIL: admin@carga-timeclock.com
+      FIRST_ADMIN_PASSWORD: Admin123456
+
+  # Los respaldos no son parte de la prueba de escalado (y nunca leen el .env de trabajo).
+  backup:
+    env_file: !override
+      - ${PERF_ENV_FILE}
+    volumes: !reset []
+    profiles: ["backup"]
+
+  # Ni los respaldos base de PITR (su simulacro es scripts/db_pitr_check.sh).
+  pitr:
+    env_file: !override
+      - ${PERF_ENV_FILE}
+    volumes: !reset []
+    profiles: ["pitr"]
+
+  frontend:
+    ports: !override
+      - "127.0.0.1:18080:80"
+
+  k6:
+    image: grafana/k6:latest
+    profiles: ["load"]
+    volumes:
+      # Relativa a la raíz del repositorio: docker compose resuelve las rutas desde el primer archivo (-f).
+      - ./backend-employee-time-clock/perf:/perf
+    environment:
+      BASE_URL: http://frontend:80
+    ulimits:
+      nofile: { soft: 65535, hard: 65535 }

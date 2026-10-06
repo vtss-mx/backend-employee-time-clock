@@ -90,6 +90,7 @@ class QrService:
         qr = self.repo.add(
             EmployeeQr(
                 employee_id=employee.id,
+                company_id=employee.company_id,
                 token_hash=hash_token(token),
                 active=True,
                 expires_at=now + timedelta(seconds=lifetime_seconds),
@@ -110,7 +111,7 @@ class QrService:
     def status(self, employee: Employee, qr_id: int) -> QrStatusRead:
         qr = self.repo.get_for_employee(employee.id, qr_id)
         if qr is None:
-            raise NotFoundError("Código QR no encontrado", code="QR_NOT_FOUND")
+            raise NotFoundError(code="QR_NOT_FOUND")
         return QrStatusRead(id=qr.id, status=qr_state(qr), expires_at=qr.expires_at, used_at=qr.used_at)
 
     # ---------- Empresa ----------
@@ -176,9 +177,9 @@ class QrService:
         token = content[len(QR_PREFIX) :]
         if not token or len(token) > _MAX_TOKEN_LENGTH:
             return None, "INVALID_FORMAT"
-        qr = self.repo.get_by_token_hash(hash_token(token))
+        # Un QR de otra empresa es, para este validador, uno que no existe ("QR no reconocido", no se consume):
+        # el validador no puede saber nada de otra empresa, ni siquiera que el QR es de ella.
+        qr = self.repo.get_by_token_hash(hash_token(token), company_id)
         if qr is None:
             return None, "NOT_FOUND"
-        if qr.employee.company_id != company_id:
-            return None, "OTHER_COMPANY"  # se informa como "QR no reconocido" y no se consume
         return qr, None

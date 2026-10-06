@@ -4,27 +4,31 @@ from sqlalchemy import inspect
 
 import app.models  # noqa: F401  (registra todas las tablas)
 from app.core.database import Base, engine
-from app.core.db_schemas import ALL_SCHEMAS, ATTENDANCE, AUTH, BIOMETRICS, CATALOG, OPS, TENANCY, WORKFORCE
+from app.core.db_schemas import ALL_SCHEMAS, ATTENDANCE, AUTH, BILLING, BIOMETRICS, CATALOG, OPS, TENANCY, WORKFORCE
 from app.models.catalog_seed import load_catalog_seed
 
 EXPECTED = {
-    AUTH: {"users", "auth_sessions", "remembered_accounts", "rate_limit_counters"},
-    TENANCY: {"companies", "verification_policy", "company_api_keys", "company_api_key_scopes"},
+    AUTH: {"users", "user_avatars", "auth_sessions", "remembered_accounts", "rate_limit_counters"},
+    TENANCY: {"companies", "verification_policy", "company_api_keys", "company_api_key_scopes", "company_documents"},
     WORKFORCE: {
         "employees",
         "employee_qr_codes",
+        "employee_devices",
         "validators",
         "validator_devices",
         "departments",
         "department_managers",
         "work_sites",
+        "site_kiosks",
         "shifts",
         "shift_assignments",
-        "shift_assignment_sites",
+        "shift_sites",
         "shift_change_requests",
         "company_holidays",
         "employee_absences",
         "employee_workdays",
+        "employee_status_events",
+        "validator_status_events",
     },
     BIOMETRICS: {
         "face_enrollments",
@@ -32,11 +36,46 @@ EXPECTED = {
         "face_embeddings",
         "face_challenges",
         "capture_fingerprints",
+        "capture_traces",
     },
     ATTENDANCE: {"verification_logs", "work_sessions", "work_breaks", "attendance_events"},
-    OPS: {"error_reports", "error_occurrences", "face_attempt_metrics", "security_thresholds"},
-    # Cada tabla del catálogo tiene sus registros en alembic/seed/catalogs.json (y viceversa).
-    CATALOG: set(load_catalog_seed()),
+    OPS: {
+        "error_reports",
+        "error_occurrences",
+        "face_attempt_metrics",
+        "security_thresholds",
+        "usage_daily",
+        "usage_routes",
+        "usage_users",
+        "storage_snapshots",
+        "daily_tasks",
+        "storage_deletions",
+        "storage_status",
+        "perf_minutes",
+        "perf_hours",
+        "perf_days",
+        "slow_request_alerts",
+        # Antifraude (migración 0062).
+        "policy_changes",
+        "risk_assessments",
+        "fraud_cases",
+        "fraud_case_attempts",
+        "fraud_case_events",
+        "fraud_evidence",
+        "attack_signatures",
+        "risk_signal_stats",
+    },
+    BILLING: {
+        "plans",
+        "headcount_days",
+        "charges",
+        "charge_lines",
+        "payments",
+        "payment_allocations",
+    },
+    # Cada tabla del catálogo tiene sus registros en alembic/seed/catalogs.json (y viceversa); sus textos en los demás
+    # idiomas, en `translations` (alembic/seed/catalogs.<idioma>.json).
+    CATALOG: set(load_catalog_seed()) | {"translations"},
 }
 
 

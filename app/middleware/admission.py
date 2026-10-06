@@ -13,6 +13,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.core.admission import AdmissionController, group_of
 from app.core.exceptions import error_response
+from app.i18n import t
 
 logger = logging.getLogger(__name__)
 
@@ -34,10 +35,7 @@ class AdaptiveAdmissionMiddleware:
             if self.controller.shed % 100 == 1:
                 logger.warning("API saturada: %s peticiones descartadas (%s)", self.controller.shed, group)
             response = error_response(
-                503,
-                "SERVER_BUSY",
-                "El servicio está atendiendo muchas solicitudes. Intenta nuevamente en unos segundos.",
-                headers={"Retry-After": str(self.controller.retry_after())},
+                503, "SERVER_BUSY", t("SERVER_BUSY"), headers={"Retry-After": str(self.controller.retry_after())}
             )
             await response(scope, receive, send)
             return

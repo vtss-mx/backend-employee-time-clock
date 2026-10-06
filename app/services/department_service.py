@@ -6,20 +6,28 @@
 
 Asignar, quitar, nombrar y retirar responsables son idempotentes: repetir la misma petición (p. ej.
 un reintento tras perder la conexión) deja el mismo resultado y no responde un error.
+
+Eliminar es un borrado lógico (regla 20 de la raíz): va a «Eliminados» y su nombre queda libre; restaurarlo revisa que
+siga libre. Sus responsables NO se borran (decisión del dueño, 2026-10-06: restaurar regresa todo como estaba): la
+relación se conserva y el borrado lógico la oculta mientras el departamento o el empleado estén en «Eliminados»
+(`managers_of` y `managed_by` unen la tabla con borrado lógico del otro lado). Restaurar cualquiera de los dos la
+vuelve a mostrar en cuanto ambos están vigentes; la depuración del año la borra en cascada con cualquiera de ellos.
 """
+
+from datetime import UTC, datetime
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import ConflictError, NotFoundError
-from app.models import Department, Employee
+from app.i18n import t
+from app.models import Department, Employee, User
 from app.repositories.department_repository import DepartmentRepository
 from app.repositories.employee_repository import EmployeeRepository
-from app.schemas.common import PageParams
+from app.schemas.common import PageParams, deletion_of
 from app.schemas.department import DepartmentCreate, DepartmentList, DepartmentPerson, DepartmentRead, clean_name
 from app.services.availability_service import Availability
-
-NAME_TAKEN = "Ya existe un departamento con ese nombre en tu empresa"
+from app.services.trash import commit_restore, ensure_deleted, ensure_live, ensure_name_free
 
 
 class DepartmentService:
@@ -31,14 +39,16 @@ class DepartmentService:
 
     # ---------- Consultas ----------
 
-    def list_departments(self, *, search: str | None, page: PageParams) -> DepartmentList:
-        items, total = self.repo.search(search=search, offset=page.offset, limit=page.size)
+    def list_departments(self, *, search: str | None, page: PageParams, deleted: bool = False) -> DepartmentList:
+        """Los vigentes o, con `deleted`, la papelera (el eliminado más reciente primero)."""
+        items, total = self.repo.search(search=search, offset=page.offset, limit=page.size, deleted=deleted)
         return DepartmentList.of(self._read_many(items), total, page)
 
-    def get(self, department_id: int) -> Department:
-        department = self.repo.get(department_id)
+    def get(self, department_id: int, *, include_deleted: bool = False) -> Department:
+        """El vigente (404 si no existe o está en «Eliminados»); con `include_deleted`, también uno eliminado."""
+        department = self.repo.get(department_id, include_deleted=include_deleted)
         if department is None:
-            raise NotFoundError("Departamento no encontrado", code="DEPARTMENT_NOT_FOUND")
+            raise NotFoundError(code="DEPARTMENT_NOT_FOUND")
         return department
 
     def read(self, department: Department) -> DepartmentRead:
@@ -48,13 +58,13 @@ class DepartmentService:
         """Validación en vivo del nombre (mismo contrato que los demás campos únicos)."""
         name = clean_name(value)
         if not name:
-            return Availability("department_name", value, None, False, False, "EMPTY", "El nombre es obligatorio")
+            return Availability("department_name", value, None, False, False, "EMPTY", t("NAME_REQUIRED"))
         if len(name) > 100:
-            message = "El nombre admite hasta 100 caracteres"
+            message = t("NAME_TOO_LONG", {"count": 100})
             return Availability("department_name", value, None, False, False, "INVALID_FORMAT", message)
         if self.repo.name_exists(name, exclude_id):
-            return Availability("department_name", value, name, True, False, "TAKEN", NAME_TAKEN)
-        return Availability("department_name", value, name, True, True, "AVAILABLE", "Nombre disponible")
+            return Availability("department_name", value, name, True, False, "TAKEN", t("DEPARTMENT_NAME_TAKEN"))
+        return Availability("department_name", value, name, True, True, "AVAILABLE", t("NAME_AVAILABLE"))
 
     # ---------- Comandos ----------
 
@@ -72,15 +82,29 @@ class DepartmentService:
         self.db.commit()
         return department
 
-    def delete(self, department_id: int) -> None:
-        department = self.get(department_id)
+    def delete(self, department_id: int, actor: User) -> None:
+        """A «Eliminados» (solo sin empleados vigentes): sus responsables se conservan ocultos (regresan al
+        restaurarlo) y los empleados en «Eliminados» que aún lo tenían quedan sin departamento (así se puede depurar
+        después)."""
+        department = self.get(department_id, include_deleted=True)
+        ensure_live(department)
         if self.repo.member_counts((department.id,)).get(department.id):
             raise ConflictError(
-                "El departamento tiene empleados asignados: reasígnalos o quítalos antes de eliminarlo",
                 code="DEPARTMENT_HAS_EMPLOYEES",
             )
-        self.repo.delete(department)
+        self.employees.detach_deleted_from(department.id)
+        department.mark_deleted(datetime.now(UTC), actor.email)
         self.db.commit()
+
+    def restore(self, department_id: int) -> Department:
+        """Regresa de «Eliminados» si su nombre sigue libre (409 `RESTORE_CONFLICT`), con los responsables que tenía
+        (los que siguen vigentes; uno en «Eliminados» vuelve cuando también se restaure)."""
+        department = self.get(department_id, include_deleted=True)
+        ensure_deleted(department)
+        ensure_name_free(self.repo.name_exists(department.name), department.name)
+        department.mark_restored()
+        commit_restore(self.db)
+        return department
 
     def assign(self, department_id: int, employee_id: int) -> Department:
         """Asigna el empleado al departamento (si estaba en otro, lo cambia)."""
@@ -119,12 +143,12 @@ class DepartmentService:
 
     def _ensure_name_free(self, name: str, exclude_id: int | None = None) -> None:
         if self.repo.name_exists(name, exclude_id):
-            raise ConflictError(NAME_TAKEN, code="DEPARTMENT_NAME_TAKEN", field="name")
+            raise ConflictError(code="DEPARTMENT_NAME_TAKEN", field="name")
 
     def _employee(self, employee_id: int) -> Employee:
         employee = self.employees.get_by_id(employee_id)
         if employee is None:
-            raise NotFoundError("Empleado no encontrado", code="EMPLOYEE_NOT_FOUND")
+            raise NotFoundError(code="EMPLOYEE_NOT_FOUND")
         return employee
 
     def _read_many(self, departments: list[Department]) -> list[DepartmentRead]:
@@ -146,6 +170,7 @@ class DepartmentService:
                 ],
                 created_at=d.created_at,
                 updated_at=d.updated_at,
+                **deletion_of(d),
             )
             for d in departments
         ]

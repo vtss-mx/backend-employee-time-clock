@@ -35,6 +35,10 @@ FLASH_PALETTE: dict[str, tuple[int, int, int]] = {
 }
 
 
+#: Tope del cociente rostro/fondo (un fondo que no se movió daría una división entre casi cero).
+FACE_RATIO_CAP = 99.0
+
+
 def flash_hex(code: str) -> str:
     """Color en formato #RRGGBB (lo que pinta la aplicación)."""
     r, g, b = FLASH_PALETTE[code]
@@ -114,6 +118,17 @@ class FlashResponse:
 
     def conclusive(self, min_magnitude: float) -> bool:
         return self.pairs > 0 and self.magnitude >= min_magnitude
+
+    @property
+    def face_ratio(self) -> float | None:
+        """Cuánto más respondió el rostro que el fondo (prototipo P1): ≈ 1.0 si una pantalla o un papel frente a la
+        cámara se tiñe completo; un rostro real, cerca de la pantalla, responde más que el fondo lejano. None si no
+        hubo fondo medible (el rostro llena el encuadre) o ninguna respuesta; con el fondo inmóvil, el tope."""
+        if self.background_magnitude is None or self.magnitude <= 0:
+            return None
+        if self.background_magnitude <= self.magnitude / FACE_RATIO_CAP:
+            return FACE_RATIO_CAP
+        return round(self.magnitude / self.background_magnitude, 3)
 
 
 def flash_response(samples: Sequence[FlashSample], colors: Sequence[str]) -> FlashResponse:

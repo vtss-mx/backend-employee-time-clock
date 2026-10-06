@@ -40,10 +40,15 @@ def startup(monkeypatch):
 
     monkeypatch.setattr(main, "install_log_handler", lambda: events.append("log_handler"))
     monkeypatch.setattr(main, "ErrorReportFlusher", component("flusher"))
+    monkeypatch.setattr(main, "UsageFlusher", component("meter"))
+    monkeypatch.setattr(main, "PerfFlusher", component("perf"))
     monkeypatch.setattr(main, "MaintenanceScheduler", component("scheduler"))
     monkeypatch.setattr(main, "wait_for_database", lambda retries: events.append("db") or True)
     monkeypatch.setattr(main, "ensure_first_admin", lambda _db: events.append("admin"))
     monkeypatch.setattr(main, "ensure_first_company", lambda _db: events.append("company"))
+    monkeypatch.setattr(main, "statement_timeout_missing", lambda: events.append("timeout") or False)
+    monkeypatch.setattr(main, "install_drain", lambda delay: events.append(f"drain({delay:g})") or True)
+    monkeypatch.setattr(settings, "SHUTDOWN_DRAIN_SECONDS", 5.0)
     monkeypatch.setattr(settings, "THREADPOOL_SIZE", 0)
     monkeypatch.setattr(settings, "MAX_CONCURRENT_REQUESTS", 100)
     return events
@@ -71,6 +76,8 @@ def _serve(events: list[str]) -> int:
 
 def test_full_start_runs_everything_in_order_and_stops_in_reverse(startup, monkeypatch):
     monkeypatch.setattr(settings, "ERROR_REPORT_FLUSH_SECONDS", 2.0)
+    monkeypatch.setattr(settings, "USAGE_FLUSH_SECONDS", 5.0)
+    monkeypatch.setattr(settings, "PERF_FLUSH_SECONDS", 15.0)
     monkeypatch.setattr(settings, "MAINTENANCE_INTERVAL_SECONDS", 300)
     _face_pool(monkeypatch, workers=8, max_waiting=32)
     threads = _serve(startup)
@@ -78,13 +85,21 @@ def test_full_start_runs_everything_in_order_and_stops_in_reverse(startup, monke
         "log_handler",  # primero: hasta los errores del arranque se registran
         "flusher(2)",
         "flusher.start",
+        "meter(5)",  # el medidor de consumo guarda en lotes desde el arranque
+        "meter.start",
+        "perf(15)",  # y el rendimiento (rutas, funciones, navegador y peticiones lentas)
+        "perf.start",
         "db",
+        "timeout",  # ¿las consultas tienen tiempo límite? (con PgBouncer lo pone su configuración)
         "admin",
         "company",
         "scheduler(300)",
         "scheduler.start",
+        "drain(5)",  # al final del arranque: el manejador de SIGTERM del servidor ya existe
         "serving",
         "scheduler.stop",
+        "meter.stop",  # guarda el consumo pendiente
+        "perf.stop",  # y el rendimiento pendiente
         "flusher.stop",  # al final: guarda lo que el mantenimiento reportó al detenerse
     ]
     # Más hilos que peticiones admitidas + espacio para la fila facial: nadie bloquea el login.
@@ -98,7 +113,8 @@ def test_start_without_database_nor_face_models_still_serves(startup, monkeypatc
     monkeypatch.setattr(main, "wait_for_database", lambda retries: startup.append(f"db x{retries}") and False)
     _face_pool(monkeypatch, error=RuntimeError("modelo no encontrado"))
     threads = _serve(startup)
-    assert startup == ["log_handler", f"db x{settings.DB_STARTUP_RETRIES}", "serving"]  # sin alta de usuarios
+    # Sin alta de usuarios ni revisión del tiempo límite (no hay BD); el drenado sí (no depende de ella).
+    assert startup == ["log_handler", f"db x{settings.DB_STARTUP_RETRIES}", "drain(5)", "serving"]
     assert threads >= 100 + 16
     assert "La base de datos no respondió al iniciar" in caplog.text
     assert (
@@ -115,6 +131,26 @@ def test_failing_initial_users_do_not_stop_the_start(startup, monkeypatch, caplo
     _serve(startup)
     assert "serving" in startup and "company" not in startup
     assert "No se pudieron verificar los usuarios iniciales" in caplog.text
+
+
+def test_queries_without_a_time_limit_are_reported_at_startup(startup, monkeypatch, caplog):
+    """Un PgBouncer sin connect_query dejaría cada consulta sin límite: es un error para el ADMIN, no un aviso."""
+    monkeypatch.setattr(main, "statement_timeout_missing", lambda: True)
+    _face_pool(monkeypatch, workers=1, max_waiting=4)
+    _serve(startup)
+    assert "serving" in startup
+    assert any(r.levelname == "ERROR" and "no tienen statement_timeout" in r.message for r in caplog.records)
+
+
+def test_a_failing_time_limit_check_does_not_stop_the_start(startup, monkeypatch, caplog):
+    def broken():
+        raise RuntimeError("BD parpadeó")
+
+    monkeypatch.setattr(main, "statement_timeout_missing", broken)
+    _face_pool(monkeypatch, workers=1, max_waiting=4)
+    _serve(startup)
+    assert "serving" in startup and "company" in startup  # el arranque sigue
+    assert "No se pudo revisar el tiempo límite de las consultas" in caplog.text
 
 
 # ---------------------------------------------------------------- atajos a la documentación

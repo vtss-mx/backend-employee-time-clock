@@ -1,0 +1,156 @@
+# Resumen (la sentencia más lenta primero): ms, caso[sentencia], banderas
+     0.050 ms  validator_devices.counts[1]  
+     0.023 ms  devices.page[1]  
+     0.021 ms  devices.page[2]  
+     0.019 ms  devices.sightings.shared[1]  
+     0.017 ms  devices.sightings[1]  
+     0.013 ms  devices.sightings.unknown[1]  
+     0.011 ms  devices.get[1]  
+
+# Detalle
+
+### validator_devices.counts [1]  0.050 ms  
+SELECT workforce.validator_devices.validator_id, workforce.validator_devices.status, count(*) AS count_1 
+FROM workforce.validator_devices 
+WHERE workforce.validator_devices.company_id = %(company_id_1)s::INTEGER AND workforce.validator_devices.validator_id IN (%(validator_id_1_1)s::INTEGER, %(validator_id_1_2)s::INTEGER, %(validator_id_1_3)s::INTEGER, %(validator_id_1_4)s::INTEGER, %(validator_id_1_5)s::INTEGER) GROUP BY workforce.validator_devices.validator_id, workforce.validator_devices.status
+{'company_id_1': 1, 'validator_id_1_1': 1, 'validator_id_1_2': 2, 'validator_id_1_3': 3, 'validator_id_1_4': 4, 'validator_id_1_5': 5}
+GroupAggregate  (cost=9.81..9.83 rows=1 width=20) (actual time=0.023..0.025 rows=10 loops=1)
+  Group Key: validator_id, status
+  Buffers: shared hit=14
+  ->  Sort  (cost=9.81..9.81 rows=1 width=12) (actual time=0.022..0.022 rows=10 loops=1)
+        Sort Key: validator_id, status
+        Sort Method: quicksort  Memory: 25kB
+        Buffers: shared hit=14
+        ->  Result  (cost=8.68..9.80 rows=1 width=12) (actual time=0.015..0.017 rows=10 loops=1)
+              One-Time Filter: ((NULLIF(current_setting('app.company_id'::text, true), ''::text))::integer = 1)
+              Buffers: shared hit=14
+              ->  Bitmap Heap Scan on validator_devices  (cost=8.68..9.80 rows=1 width=12) (actual time=0.014..0.015 rows=10 loops=1)
+                    Recheck Cond: ((company_id = 1) AND (validator_id = ANY ('{1,2,3,4,5}'::integer[])))
+                    Heap Blocks: exact=2
+                    Buffers: shared hit=14
+                    ->  BitmapAnd  (cost=8.67..8.67 rows=1 width=0) (actual time=0.013..0.013 rows=0 loops=1)
+                          Buffers: shared hit=12
+                          ->  Bitmap Index Scan on ix_validator_devices_company_status  (cost=0.00..1.45 rows=10 width=0) (actual time=0.005..0.005 rows=10 loops=1)
+                                Index Cond: (company_id = 1)
+                                Buffers: shared hit=2
+                          ->  Bitmap Index Scan on uq_validator_devices_validator_id  (cost=0.00..6.96 rows=10 width=0) (actual time=0.006..0.006 rows=10 loops=1)
+                                Index Cond: (validator_id = ANY ('{1,2,3,4,5}'::integer[]))
+                                Buffers: shared hit=10
+Planning:
+  Buffers: shared hit=6
+Planning Time: 0.040 ms
+Execution Time: 0.050 ms
+
+### devices.sightings [1]  0.017 ms  
+SELECT workforce.employee_devices.employee_id, workforce.employee_devices.status, workforce.employee_devices.stepped_up_at, workforce.employee_devices.last_seen_at, workforce.employee_devices.uses 
+FROM workforce.employee_devices 
+WHERE workforce.employee_devices.company_id = %(company_id_1)s::INTEGER AND workforce.employee_devices.key_hash = %(key_hash_1)s::VARCHAR AND (workforce.employee_devices.employee_id = %(employee_id_1)s::INTEGER OR workforce.employee_devices.last_seen_at >= %(last_seen_at_1)s::TIMESTAMP WITH TIME ZONE) 
+ LIMIT %(param_1)s::INTEGER
+{'company_id_1': 1, 'key_hash_1': '95dcdb70e9280f89743161edbc0b27f5080cd9ca8eff45444f92fa2e9e722fb4', 'employee_id_1': 4242, 'last_seen_at_1': datetime.datetime(2026, 10, 5, 15, 53, 55, 499812, tzinfo=datetime.timezone.utc), 'param_1': 3}
+Limit  (cost=0.42..2.64 rows=1 width=32) (actual time=0.009..0.009 rows=1 loops=1)
+  Buffers: shared hit=4
+  ->  Result  (cost=0.42..2.64 rows=1 width=32) (actual time=0.008..0.009 rows=1 loops=1)
+        One-Time Filter: ((NULLIF(current_setting('app.company_id'::text, true), ''::text))::integer = 1)
+        Buffers: shared hit=4
+        ->  Index Scan using uq_employee_devices_key on employee_devices  (cost=0.42..2.64 rows=1 width=32) (actual time=0.007..0.007 rows=1 loops=1)
+              Index Cond: ((company_id = 1) AND ((key_hash)::text = '95dcdb70e9280f89743161edbc0b27f5080cd9ca8eff45444f92fa2e9e722fb4'::text))
+              Filter: ((employee_id = 4242) OR (last_seen_at >= '2026-10-05 15:53:55.499812+00'::timestamp with time zone))
+              Buffers: shared hit=4
+Planning:
+  Buffers: shared hit=1
+Planning Time: 0.032 ms
+Execution Time: 0.017 ms
+
+### devices.sightings.shared [1]  0.019 ms  
+SELECT workforce.employee_devices.employee_id, workforce.employee_devices.status, workforce.employee_devices.stepped_up_at, workforce.employee_devices.last_seen_at, workforce.employee_devices.uses 
+FROM workforce.employee_devices 
+WHERE workforce.employee_devices.company_id = %(company_id_1)s::INTEGER AND workforce.employee_devices.key_hash = %(key_hash_1)s::VARCHAR AND (workforce.employee_devices.employee_id = %(employee_id_1)s::INTEGER OR workforce.employee_devices.last_seen_at >= %(last_seen_at_1)s::TIMESTAMP WITH TIME ZONE) 
+ LIMIT %(param_1)s::INTEGER
+{'company_id_1': 1, 'key_hash_1': 'ee94052194a77c6ef9de6a2429145310484dca96992d4c9a5432ed4a80f420cc', 'employee_id_1': 4300, 'last_seen_at_1': datetime.datetime(2026, 10, 5, 15, 53, 55, 499812, tzinfo=datetime.timezone.utc), 'param_1': 3}
+Limit  (cost=0.42..2.64 rows=1 width=32) (actual time=0.013..0.013 rows=1 loops=1)
+  Buffers: shared hit=5
+  ->  Result  (cost=0.42..2.64 rows=1 width=32) (actual time=0.013..0.013 rows=1 loops=1)
+        One-Time Filter: ((NULLIF(current_setting('app.company_id'::text, true), ''::text))::integer = 1)
+        Buffers: shared hit=5
+        ->  Index Scan using uq_employee_devices_key on employee_devices  (cost=0.42..2.64 rows=1 width=32) (actual time=0.012..0.012 rows=1 loops=1)
+              Index Cond: ((company_id = 1) AND ((key_hash)::text = 'ee94052194a77c6ef9de6a2429145310484dca96992d4c9a5432ed4a80f420cc'::text))
+              Filter: ((employee_id = 4300) OR (last_seen_at >= '2026-10-05 15:53:55.499812+00'::timestamp with time zone))
+              Rows Removed by Filter: 1
+              Buffers: shared hit=5
+Planning:
+  Buffers: shared hit=1
+Planning Time: 0.022 ms
+Execution Time: 0.019 ms
+
+### devices.sightings.unknown [1]  0.013 ms  
+SELECT workforce.employee_devices.employee_id, workforce.employee_devices.status, workforce.employee_devices.stepped_up_at, workforce.employee_devices.last_seen_at, workforce.employee_devices.uses 
+FROM workforce.employee_devices 
+WHERE workforce.employee_devices.company_id = %(company_id_1)s::INTEGER AND workforce.employee_devices.key_hash = %(key_hash_1)s::VARCHAR AND (workforce.employee_devices.employee_id = %(employee_id_1)s::INTEGER OR workforce.employee_devices.last_seen_at >= %(last_seen_at_1)s::TIMESTAMP WITH TIME ZONE) 
+ LIMIT %(param_1)s::INTEGER
+{'company_id_1': 1, 'key_hash_1': 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff', 'employee_id_1': 4242, 'last_seen_at_1': datetime.datetime(2026, 10, 5, 15, 53, 55, 499812, tzinfo=datetime.timezone.utc), 'param_1': 3}
+Limit  (cost=0.42..2.64 rows=1 width=32) (actual time=0.007..0.007 rows=0 loops=1)
+  Buffers: shared hit=3
+  ->  Result  (cost=0.42..2.64 rows=1 width=32) (actual time=0.006..0.007 rows=0 loops=1)
+        One-Time Filter: ((NULLIF(current_setting('app.company_id'::text, true), ''::text))::integer = 1)
+        Buffers: shared hit=3
+        ->  Index Scan using uq_employee_devices_key on employee_devices  (cost=0.42..2.64 rows=1 width=32) (actual time=0.006..0.006 rows=0 loops=1)
+              Index Cond: ((company_id = 1) AND ((key_hash)::text = 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'::text))
+              Filter: ((employee_id = 4242) OR (last_seen_at >= '2026-10-05 15:53:55.499812+00'::timestamp with time zone))
+              Buffers: shared hit=3
+Planning:
+  Buffers: shared hit=1
+Planning Time: 0.032 ms
+Execution Time: 0.013 ms
+
+### devices.page [1]  0.023 ms  
+SELECT count(*) AS count_1 
+FROM (SELECT workforce.employee_devices.id AS id, workforce.employee_devices.company_id AS company_id, workforce.employee_devices.employee_id AS employee_id, workforce.employee_devices.key_hash AS key_hash, workforce.employee_devices.name AS name, workforce.employee_devices.status AS status, workforce.employee_devices.first_seen_at AS first_seen_at, workforce.employee_devices.last_seen_at AS last_seen_at, workforce.employee_devices.uses AS uses, workforce.employee_devices.stepped_up_at AS stepped_up_at, workforce.employee_devices.reviewed_at AS reviewed_at, workforce.employee_devices.reviewed_by_id AS reviewed_by_id 
+FROM workforce.employee_devices 
+WHERE workforce.employee_devices.company_id = %(company_id_1)s::INTEGER AND workforce.employee_devices.employee_id = %(employee_id_1)s::INTEGER) AS anon_1
+{'company_id_1': 1, 'employee_id_1': 4245}
+Aggregate  (cost=2.64..2.65 rows=1 width=8) (actual time=0.012..0.013 rows=1 loops=1)
+  Buffers: shared hit=5
+  ->  Result  (cost=0.42..2.64 rows=1 width=0) (actual time=0.011..0.012 rows=2 loops=1)
+        One-Time Filter: ((NULLIF(current_setting('app.company_id'::text, true), ''::text))::integer = 1)
+        Buffers: shared hit=5
+        ->  Index Only Scan using ix_employee_devices_employee on employee_devices  (cost=0.42..2.64 rows=1 width=0) (actual time=0.010..0.011 rows=2 loops=1)
+              Index Cond: ((company_id = 1) AND (employee_id = 4245))
+              Heap Fetches: 1
+              Buffers: shared hit=5
+Planning:
+  Buffers: shared hit=1
+Planning Time: 0.029 ms
+Execution Time: 0.023 ms
+
+### devices.page [2]  0.021 ms  
+SELECT workforce.employee_devices.id, workforce.employee_devices.company_id, workforce.employee_devices.employee_id, workforce.employee_devices.key_hash, workforce.employee_devices.name, workforce.employee_devices.status, workforce.employee_devices.first_seen_at, workforce.employee_devices.last_seen_at, workforce.employee_devices.uses, workforce.employee_devices.stepped_up_at, workforce.employee_devices.reviewed_at, workforce.employee_devices.reviewed_by_id 
+FROM workforce.employee_devices 
+WHERE workforce.employee_devices.company_id = %(company_id_1)s::INTEGER AND workforce.employee_devices.employee_id = %(employee_id_1)s::INTEGER ORDER BY workforce.employee_devices.first_seen_at DESC, workforce.employee_devices.id DESC 
+ LIMIT %(param_1)s::INTEGER OFFSET %(param_2)s::INTEGER
+{'company_id_1': 1, 'employee_id_1': 4245, 'param_1': 10, 'param_2': 0}
+Limit  (cost=0.42..2.64 rows=1 width=142) (actual time=0.007..0.008 rows=2 loops=1)
+  Buffers: shared hit=6
+  ->  Result  (cost=0.42..2.64 rows=1 width=142) (actual time=0.007..0.008 rows=2 loops=1)
+        One-Time Filter: ((NULLIF(current_setting('app.company_id'::text, true), ''::text))::integer = 1)
+        Buffers: shared hit=6
+        ->  Index Scan Backward using ix_employee_devices_employee on employee_devices  (cost=0.42..2.64 rows=1 width=142) (actual time=0.006..0.006 rows=2 loops=1)
+              Index Cond: ((company_id = 1) AND (employee_id = 4245))
+              Buffers: shared hit=6
+Planning:
+  Buffers: shared hit=1
+Planning Time: 0.026 ms
+Execution Time: 0.021 ms
+
+### devices.get [1]  0.011 ms  
+SELECT workforce.employee_devices.id, workforce.employee_devices.company_id, workforce.employee_devices.employee_id, workforce.employee_devices.key_hash, workforce.employee_devices.name, workforce.employee_devices.status, workforce.employee_devices.first_seen_at, workforce.employee_devices.last_seen_at, workforce.employee_devices.uses, workforce.employee_devices.stepped_up_at, workforce.employee_devices.reviewed_at, workforce.employee_devices.reviewed_by_id 
+FROM workforce.employee_devices 
+WHERE workforce.employee_devices.id = %(pk_1)s::INTEGER
+{'pk_1': 4242}
+Index Scan using pk_employee_devices on employee_devices  (cost=0.29..2.52 rows=1 width=142) (actual time=0.006..0.006 rows=1 loops=1)
+  Index Cond: (id = 4242)
+  Filter: (company_id = (NULLIF(current_setting('app.company_id'::text, true), ''::text))::integer)
+  Buffers: shared hit=3
+Planning:
+  Buffers: shared hit=1
+Planning Time: 0.017 ms
+Execution Time: 0.011 ms

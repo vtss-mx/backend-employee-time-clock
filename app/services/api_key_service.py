@@ -31,6 +31,7 @@ from app.repositories.api_key_repository import ApiKeyRepository, find_by_hash
 from app.repositories.user_repository import UserRepository
 from app.schemas.api_key import ApiKeyCreate, ApiKeyCreated, ApiKeyList, ApiKeyRead
 from app.schemas.common import PageParams
+from app.services.auth_service import company_suspended
 from app.services.catalog_service import get_catalogs
 
 API_KEY_PREFIX = "tck_"
@@ -50,6 +51,8 @@ class ApiClient:
     prefix: str
     scopes: frozenset[str]
     expires_at: datetime | None
+    #: Validadores activos que permite su empresa (0 = sin el módulo de validadores: su listado responde 403).
+    max_validators: int = 0
 
 
 def key_status(key: CompanyApiKey, now: datetime | None = None) -> ApiKeyStatus:
@@ -63,9 +66,7 @@ def key_status(key: CompanyApiKey, now: datetime | None = None) -> ApiKeyStatus:
 def authenticate(db: Session, raw_key: str | None, ip: str | None) -> ApiClient:
     """Valida la llave de la cabecera y devuelve a qué empresa y permisos da acceso."""
     if not raw_key or not raw_key.strip():
-        raise ApiKeyAuthenticationError(
-            "Falta la llave de la API: envíala en la cabecera X-API-Key", code="API_KEY_REQUIRED"
-        )
+        raise ApiKeyAuthenticationError(code="API_KEY_REQUIRED")
     raw = raw_key.strip()
     digest = hash_token(raw)
     # El límite va ANTES de cualquier consulta: la petición nunca ocupa dos conexiones a la vez y
@@ -73,17 +74,19 @@ def authenticate(db: Session, raw_key: str | None, ip: str | None) -> ApiClient:
     enforce(f"api-key:{digest[:32]}", settings.RATE_LIMIT_API_KEY_PER_MINUTE)
     key = find_by_hash(db, digest) if raw.startswith(API_KEY_PREFIX) and len(raw) <= _MAX_KEY_LENGTH else None
     if key is None:
-        raise ApiKeyAuthenticationError("La llave de la API no es válida", code="API_KEY_INVALID")
+        raise ApiKeyAuthenticationError(code="API_KEY_INVALID")
     status = key_status(key)
     if status == ApiKeyStatus.REVOKED:
-        raise ApiKeyAuthenticationError("Esta llave de la API fue revocada", code="API_KEY_REVOKED")
+        raise ApiKeyAuthenticationError(code="API_KEY_REVOKED")
     if status == ApiKeyStatus.EXPIRED:
-        raise ApiKeyAuthenticationError("Esta llave de la API venció", code="API_KEY_EXPIRED")
+        raise ApiKeyAuthenticationError(code="API_KEY_EXPIRED")
     company = db.get(Company, key.company_id)
     if company is None or not company.active:
-        raise PermissionDeniedError("La empresa de esta llave está desactivada", code="COMPANY_INACTIVE")
+        raise PermissionDeniedError(code="COMPANY_INACTIVE", key="API_KEY_COMPANY_INACTIVE")
+    if company.suspended:  # suspendida (falta de pago o decisión del ADMIN): nada de la empresa opera
+        raise company_suspended("API_KEY_COMPANY_SUSPENDED")
     if not company.api_enabled:  # el ADMIN le quitó el módulo: la llave se conserva pero no sirve
-        raise PermissionDeniedError("La empresa de esta llave no tiene acceso a la API", code="API_ACCESS_DISABLED")
+        raise PermissionDeniedError(code="API_ACCESS_DISABLED", key="API_KEY_ACCESS_DISABLED")
     _touch(db, key, ip)
     return ApiClient(
         key_id=key.id,
@@ -92,6 +95,7 @@ def authenticate(db: Session, raw_key: str | None, ip: str | None) -> ApiClient:
         prefix=key.prefix,
         scopes=frozenset(key.scope_codes),
         expires_at=key.expires_at,
+        max_validators=company.max_validators,
     )
 
 
@@ -110,11 +114,7 @@ def _touch(db: Session, key: CompanyApiKey, ip: str | None) -> None:
 def require_scope(client: ApiClient, scope: str) -> None:
     if scope not in client.scopes:
         name = get_catalogs().name("api_scopes", scope)
-        raise PermissionDeniedError(
-            f"Esta llave no tiene el permiso «{name}». Pídelo a tu empresa (Integraciones).",
-            code="API_SCOPE_REQUIRED",
-            details={"scope": scope},
-        )
+        raise PermissionDeniedError(code="API_SCOPE_REQUIRED", params={"scope": name}, details={"scope": scope})
 
 
 class ApiKeyService:
@@ -132,10 +132,7 @@ class ApiKeyService:
     def create(self, data: ApiKeyCreate, actor: User) -> ApiKeyCreated:
         scopes = self._valid_scopes(data.scopes)
         if self.keys.count_usable() >= settings.API_KEYS_MAX_ACTIVE:
-            raise ConflictError(
-                f"Tu empresa ya tiene {settings.API_KEYS_MAX_ACTIVE} llaves sin revocar. Revoca las que no uses.",
-                code="API_KEY_LIMIT",
-            )
+            raise ConflictError(code="API_KEY_LIMIT", params={"count": settings.API_KEYS_MAX_ACTIVE})
         expires_at = datetime.now(UTC) + timedelta(days=data.expires_in_days) if data.expires_in_days else None
         key, secret = self._issue(data.name, scopes, expires_at, actor)
         self.db.commit()
@@ -145,7 +142,7 @@ class ApiKeyService:
         """Llave nueva con el mismo nombre, permisos y vigencia; la anterior se revoca al instante."""
         old = self._get(key_id)
         if old.revoked_at is not None:
-            raise ConflictError("Una llave revocada no se puede rotar: crea una nueva", code="API_KEY_REVOKED")
+            raise ConflictError(code="API_KEY_REVOKED", key="API_KEY_REVOKED_ROTATE")
         expires_at = None
         if old.expires_at is not None:  # misma vigencia en días completos (como se creó)
             days = round((as_utc(old.expires_at) - as_utc(old.created_at)).total_seconds() / 86_400)
@@ -167,7 +164,7 @@ class ApiKeyService:
     def _get(self, key_id: int) -> CompanyApiKey:
         key = self.keys.get(key_id)
         if key is None:
-            raise NotFoundError("Llave no encontrada", code="API_KEY_NOT_FOUND")
+            raise NotFoundError(code="API_KEY_NOT_FOUND")
         return key
 
     @staticmethod
@@ -196,9 +193,7 @@ class ApiKeyService:
         scopes = sorted(set(requested))
         unknown = [s for s in scopes if not catalogs.is_active("api_scopes", s)]
         if unknown:
-            raise UnprocessableError(
-                f"Permisos no válidos: {', '.join(unknown)}", code="API_SCOPE_INVALID", field="scopes"
-            )
+            raise UnprocessableError(code="API_SCOPE_INVALID", params={"scopes": ", ".join(unknown)}, field="scopes")
         return scopes
 
     def _created(self, key: CompanyApiKey, secret: str) -> ApiKeyCreated:

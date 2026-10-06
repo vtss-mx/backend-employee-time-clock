@@ -11,3 +11,6 @@ coverage_html/
 .coverage
 .mypy_cache/
 .ruff_cache/
+pgbouncer/
+# Base local de IP (DB-IP Lite): se descarga en cada instalación (mantenimiento o `python -m app.cli ipdb refresh`)
+data/ipdb/

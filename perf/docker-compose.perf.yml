@@ -16,7 +16,9 @@ services:
       retries: 30
 
   backend:
-    image: time-clock-backend
+    # PERF_BACKEND_IMAGE: medir otra imagen (p. ej. la de perf/scale, timeclock-scale-backend) sin
+    # reconstruir la del entorno de trabajo.
+    image: ${PERF_BACKEND_IMAGE:-time-clock-backend}
     depends_on:
       db:
         condition: service_healthy

@@ -2,6 +2,17 @@
 
 Todas las respuestas de error usan el contrato único de `app.core.responses`
 (success=false, statusCode, code, message, data=null, errors=[...], traceId, timestamp).
+
+**El texto de un error no se escribe al lanzarlo** (regla 16 de la raíz): `code` es el código estable y nombra su
+mensaje en el catálogo (`app/i18n/messages/`); si el mismo código tiene varias frases, `key` elige la suya; los datos
+van en `params`. El mensaje se arma al responder, en el idioma de la petición:
+
+    raise NotFoundError(code="EMPLOYEE_NOT_FOUND")
+    raise UnprocessableError(code="CURRENCY_LOCKED", params={"currency": "MXN"}, field="currency")
+    raise ConflictError(code="EMPLOYEE_INACTIVE", key="EMPLOYEE_INACTIVE_ENROLL")
+
+`message` (un texto ya escrito) solo existe para los módulos que todavía no se migran al catálogo; el código nuevo no
+lo usa (`tests/test_i18n.py` lo vigila).
 """
 
 import logging
@@ -15,6 +26,8 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.core.request_context import note_error
 from app.core.responses import ErrorItem, envelope_response
+from app.core.validation_errors import validation_items
+from app.i18n import Params, Text, t
 
 logger = logging.getLogger(__name__)
 
@@ -25,34 +38,56 @@ _STATEMENT_TIMEOUT = "57014"
 
 
 class AppError(Exception):
+    """Error de negocio o de una dependencia con su código estable y su mensaje del catálogo."""
+
     status_code: int = status.HTTP_400_BAD_REQUEST
     code: str = "BAD_REQUEST"
 
     def __init__(
         self,
-        message: str,
+        message: str | None = None,
         *,
         code: str | None = None,
+        key: str | None = None,
+        params: Params | None = None,
         headers: dict[str, str] | None = None,
         details: dict | None = None,
         field: str | None = None,
     ) -> None:
-        super().__init__(message)
-        self.message = message
         if code:
             self.code = code
+        #: Mensaje del catálogo (por omisión, el del código) y sus datos.
+        self.key = key or self.code
+        self.params = params
+        self._literal = message
+        super().__init__(self.key)
         self.headers = headers
         self.details = details
         #: Campo del formulario al que corresponde el error (validaciones de negocio).
         self.field = field
+
+    @property
+    def message(self) -> str:
+        """El mensaje en el idioma de la petición en curso."""
+        return self._literal if self._literal is not None else t(self.key, self.params)
+
+    def __str__(self) -> str:
+        return self.message
 
 
 class AuthenticationError(AppError):
     status_code = status.HTTP_401_UNAUTHORIZED
     code = "UNAUTHORIZED"
 
-    def __init__(self, message: str = "No autenticado", *, code: str | None = None) -> None:
-        super().__init__(message, code=code, headers={"WWW-Authenticate": "Bearer"})
+    def __init__(
+        self,
+        message: str | None = None,
+        *,
+        code: str | None = None,
+        key: str | None = None,
+        params: Params | None = None,
+    ) -> None:
+        super().__init__(message, code=code, key=key, params=params, headers={"WWW-Authenticate": "Bearer"})
 
 
 class ApiKeyAuthenticationError(AppError):
@@ -61,8 +96,8 @@ class ApiKeyAuthenticationError(AppError):
     status_code = status.HTTP_401_UNAUTHORIZED
     code = "API_KEY_INVALID"
 
-    def __init__(self, message: str, *, code: str) -> None:
-        super().__init__(message, code=code, headers={"WWW-Authenticate": 'ApiKey header="X-API-Key"'})
+    def __init__(self, message: str | None = None, *, code: str, key: str | None = None) -> None:
+        super().__init__(message, code=code, key=key, headers={"WWW-Authenticate": 'ApiKey header="X-API-Key"'})
 
 
 class PermissionDeniedError(AppError):
@@ -71,12 +106,14 @@ class PermissionDeniedError(AppError):
 
     def __init__(
         self,
-        message: str = "No tienes permisos para realizar esta acción",
+        message: str | None = None,
         *,
         code: str | None = None,
+        key: str | None = None,
+        params: Params | None = None,
         details: dict | None = None,
     ) -> None:
-        super().__init__(message, code=code, details=details)
+        super().__init__(message, code=code, key=key, params=params, details=details)
 
 
 class NotFoundError(AppError):
@@ -104,9 +141,9 @@ class BodyTooLargeError(HTTPException):
 
     Es un `HTTPException` de FastAPI a propósito: al leer un formulario o un JSON, FastAPI convierte
     cualquier otra excepción en un 400 genérico en inglés; esta la deja pasar y sale como 413 con el
-    sobre de siempre."""
+    sobre de siempre. Su mensaje es un `Text` del catálogo: se traduce al responder."""
 
-    def __init__(self, message: str) -> None:
+    def __init__(self, message: Text) -> None:
         super().__init__(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail=message)
 
 
@@ -116,8 +153,16 @@ class ServiceUnavailableError(AppError):
     status_code = status.HTTP_503_SERVICE_UNAVAILABLE
     code = "SERVICE_UNAVAILABLE"
 
-    def __init__(self, message: str, *, code: str | None = None, retry_after: int = 5) -> None:
-        super().__init__(message, code=code, headers={"Retry-After": str(retry_after)})
+    def __init__(
+        self,
+        message: str | None = None,
+        *,
+        code: str | None = None,
+        key: str | None = None,
+        params: Params | None = None,
+        retry_after: int = 5,
+    ) -> None:
+        super().__init__(message, code=code, key=key, params=params, headers={"Retry-After": str(retry_after)})
 
 
 class RateLimitError(AppError):
@@ -125,12 +170,11 @@ class RateLimitError(AppError):
     code = "RATE_LIMITED"
 
     def __init__(self, retry_after: int) -> None:
-        super().__init__(
-            "Demasiadas solicitudes. Intenta nuevamente en unos segundos.",
-            headers={"Retry-After": str(retry_after)},
-        )
+        super().__init__(headers={"Retry-After": str(retry_after)})
 
 
+#: Código de cada estado HTTP que solo lanza el framework (sus textos vienen en inglés, p. ej. "Missing boundary in
+#: multipart."): se responde el mensaje del catálogo de ese código, en el idioma de la petición.
 _HTTP_CODES = {
     400: "BAD_REQUEST",
     401: "UNAUTHORIZED",
@@ -146,14 +190,6 @@ _HTTP_CODES = {
     500: "INTERNAL_ERROR",
     503: "SERVICE_UNAVAILABLE",
 }
-#: Los HTTPException con estos estados solo los lanza el framework (con textos en inglés, p. ej.
-#: "Missing boundary in multipart."): se responde en español.
-_HTTP_MESSAGES = {
-    400: "No se pudo leer el contenido de la solicitud",
-    404: "El recurso solicitado no existe",
-    405: "Método HTTP no permitido para este recurso",
-}
-INTERNAL_ERROR_MESSAGE = "Ocurrió un error interno. Intenta nuevamente."
 
 
 def error_response(
@@ -166,6 +202,7 @@ def error_response(
     headers: dict[str, str] | None = None,
     field: str | None = None,
 ) -> JSONResponse:
+    """La respuesta de error con el sobre de siempre; `message` ya viene en el idioma de la petición (`t(...)`)."""
     # Siempre hay al menos un elemento en `errors` para que el cliente pueda iterarlos.
     items = errors or [ErrorItem(code=code, message=message, field=field, details=details)]
     # Toda respuesta de error pasa por aquí: se anota para registrarla en ops.error_reports.
@@ -174,7 +211,13 @@ def error_response(
 
 
 def internal_error_response() -> JSONResponse:
-    return error_response(status.HTTP_500_INTERNAL_SERVER_ERROR, "INTERNAL_ERROR", INTERNAL_ERROR_MESSAGE)
+    return error_response(status.HTTP_500_INTERNAL_SERVER_ERROR, "INTERNAL_ERROR", t("INTERNAL_ERROR"))
+
+
+def _http_message(code: str, detail: object) -> str:
+    """El texto de un `HTTPException`: el `Text` que trae (413 al leer el cuerpo) o el del catálogo para su código
+    (cada código de `_HTTP_CODES` y `HTTP_ERROR` tienen el suyo)."""
+    return str(detail) if isinstance(detail, Text) else t(code)
 
 
 def register_exception_handlers(app: FastAPI) -> None:
@@ -186,24 +229,14 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(RequestValidationError)
     async def _validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:
-        errors = []
-        for err in exc.errors():
-            # El primer elemento dice DÓNDE venía el dato (body, query, path, header, cookie) y se omite;
-            # solo ese: un campo que se llame igual (p. ej. `path` en un cuerpo JSON) conserva su nombre.
-            loc = [str(part) for part in err.get("loc", [])][1:]
-            message = str(err.get("msg", "Valor inválido")).removeprefix("Value error, ")
-            errors.append(
-                ErrorItem(code=str(err.get("type", "invalid")).upper(), message=message, field=".".join(loc) or None)
-            )
-        message = errors[0].message if len(errors) == 1 else "Los datos enviados no son válidos"
+        errors = validation_items(exc.errors())
+        message = errors[0].message if len(errors) == 1 else t("VALIDATION_ERROR")
         return error_response(status.HTTP_422_UNPROCESSABLE_CONTENT, "VALIDATION_ERROR", message, errors=errors)
 
     @app.exception_handler(StarletteHTTPException)
     async def _http_error(_: Request, exc: StarletteHTTPException) -> JSONResponse:
         code = _HTTP_CODES.get(exc.status_code, "HTTP_ERROR")
-        detail = exc.detail if isinstance(exc.detail, str) else None
-        # Los textos genéricos de Starlette ("Not Found") se reemplazan por mensajes en español.
-        message = _HTTP_MESSAGES.get(exc.status_code) or detail or "Solicitud no procesada"
+        message = _http_message(code, exc.detail)
         return error_response(exc.status_code, code, message, headers=getattr(exc, "headers", None))
 
     @app.exception_handler(SQLAlchemyTimeoutError)
@@ -215,22 +248,18 @@ def register_exception_handlers(app: FastAPI) -> None:
         sqlstate = getattr(getattr(exc, "orig", None), "sqlstate", None)
         logger.error("Error de base de datos: %s (SQLSTATE %s)", exc.__class__.__name__, sqlstate or "-")
         if sqlstate in _CONFLICT_STATES:
-            return error_response(
-                status.HTTP_409_CONFLICT,
-                "CONCURRENT_UPDATE",
-                "Otra operación modificó estos datos al mismo tiempo. Intenta nuevamente.",
-            )
+            return error_response(status.HTTP_409_CONFLICT, "CONCURRENT_UPDATE", t("CONCURRENT_UPDATE"))
         if sqlstate == _STATEMENT_TIMEOUT:
             return error_response(
                 status.HTTP_503_SERVICE_UNAVAILABLE,
                 "DATABASE_TIMEOUT",
-                "La operación tardó demasiado. Intenta nuevamente en unos segundos.",
+                t("DATABASE_TIMEOUT"),
                 headers={"Retry-After": "5"},
             )
         return error_response(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "DATABASE_UNAVAILABLE",
-            "El servicio no está disponible en este momento. Intenta nuevamente en unos segundos.",
+            t("DATABASE_UNAVAILABLE"),
             headers={"Retry-After": "5"},
         )
 
@@ -239,11 +268,7 @@ def register_exception_handlers(app: FastAPI) -> None:
         # Dos peticiones simultáneas chocaron con una regla única de la BD (la que llegó segunda):
         # 409 reintentable en lugar de 500. La sesión se descarta al terminar la petición.
         logger.warning("Conflicto de integridad: %s", exc.orig.__class__.__name__ if exc.orig else exc)
-        return error_response(
-            status.HTTP_409_CONFLICT,
-            "CONCURRENT_UPDATE",
-            "Otra operación modificó estos datos al mismo tiempo. Intenta nuevamente.",
-        )
+        return error_response(status.HTTP_409_CONFLICT, "CONCURRENT_UPDATE", t("CONCURRENT_UPDATE"))
 
     @app.exception_handler(Exception)
     async def _unhandled(_: Request, exc: Exception) -> JSONResponse:

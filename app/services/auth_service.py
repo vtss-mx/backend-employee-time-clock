@@ -2,19 +2,17 @@ from datetime import UTC, datetime
 
 from sqlalchemy.orm import Session
 
-from app.core.exceptions import AuthenticationError, UnprocessableError
+from app.core.exceptions import AuthenticationError, PermissionDeniedError, UnprocessableError
 from app.core.passwords import hash_password, password_needs_rehash, verify_password
-from app.models import User, UserRole
+from app.models import Company, User, UserRole
 from app.repositories.user_repository import UserRepository
 
-INVALID_CREDENTIALS = "Correo o contraseña incorrectos"
 
-
-COMPANY_INACTIVE = "Tu empresa está desactivada en la plataforma. Contacta al administrador."
-
-
-ACCOUNT_INACTIVE = "La cuenta está desactivada"
-NO_LONGER_IN_COMPANY = "Ya no tienes acceso a esta empresa. Inicia sesión de nuevo."
+def company_suspended(key: str = "COMPANY_SUSPENDED") -> PermissionDeniedError:
+    """403 COMPANY_SUSPENDED: la empresa está suspendida (falta de pago o decisión del ADMIN). Es un 403 y
+    no un 401: la sesión no es el problema; la app muestra la pantalla de empresa suspendida. `key` elige el mensaje
+    (el de la API de integración habla de "la empresa de esta llave")."""
+    return PermissionDeniedError(code="COMPANY_SUSPENDED", key=key)
 
 
 def default_company_id(user: User) -> int | None:
@@ -31,24 +29,35 @@ def ensure_account_usable(user: User) -> None:
       también; si aún no elige, debe tener al menos un empleo utilizable.
     - ADMIN no pertenece a una empresa.
     """
-    if not user.active:
-        raise AuthenticationError(ACCOUNT_INACTIVE, code="USER_INACTIVE")
+    if not user.active or user.deleted:  # una cuenta en «Eliminados» ya no entra (sus sesiones se cerraron)
+        raise AuthenticationError(code="USER_INACTIVE")
     if user.role in (UserRole.COMPANY, UserRole.VALIDATOR):
-        if user.company is None or not user.company.active:
-            raise AuthenticationError(COMPANY_INACTIVE, code="COMPANY_INACTIVE")
+        _ensure_company_usable(user.company)
     elif user.role == UserRole.EMPLOYEE:
-        if user.session_company_id is not None:
-            employee = user.employee
-            if employee is None or not employee.active:
-                raise AuthenticationError(NO_LONGER_IN_COMPANY, code="USER_INACTIVE")
-            if not employee.company.active:
-                raise AuthenticationError(COMPANY_INACTIVE, code="COMPANY_INACTIVE")
-        elif not user.usable_employees:
-            inactive_company = any(e.active for e in user.employees)
-            raise AuthenticationError(
-                COMPANY_INACTIVE if inactive_company else ACCOUNT_INACTIVE,
-                code="COMPANY_INACTIVE" if inactive_company else "USER_INACTIVE",
-            )
+        _ensure_employment_usable(user)
+
+
+def _ensure_company_usable(company: Company | None) -> None:
+    """La empresa donde opera debe estar activa (401: la sesión ya no sirve) y no suspendida (403)."""
+    if company is None or not company.active or company.deleted:
+        raise AuthenticationError(code="COMPANY_INACTIVE")
+    if company.suspended:
+        raise company_suspended()
+
+
+def _ensure_employment_usable(user: User) -> None:
+    """Empleado: el empleo de la empresa elegida (y esa empresa) siguen utilizables; si aún no elige,
+    debe tener alguno. Una empresa suspendida no bloquea los empleos en otras empresas."""
+    if user.session_company_id is not None:
+        employee = user.employee
+        if employee is None or not employee.active:
+            raise AuthenticationError(code="USER_INACTIVE", key="NO_LONGER_IN_COMPANY")
+        _ensure_company_usable(employee.company)
+    elif not user.usable_employees:
+        active = [e for e in user.employees if e.active]
+        if any(e.company.active and e.company.suspended for e in active):
+            raise company_suspended()
+        raise AuthenticationError(code="COMPANY_INACTIVE" if active else "USER_INACTIVE")
 
 
 class AuthService:
@@ -67,7 +76,7 @@ class AuthService:
         # por tiempo de respuesta qué correos están registrados.
         valid = verify_password(password, password_hash)
         if not user or not valid:
-            raise AuthenticationError(INVALID_CREDENTIALS, code="INVALID_CREDENTIALS")
+            raise AuthenticationError(code="INVALID_CREDENTIALS")
         user.use_company(None)  # aún no elige empresa (si trabaja en varias)
         ensure_account_usable(user)
 
@@ -81,10 +90,9 @@ class AuthService:
     def change_password(self, user: User, current_password: str, new_password: str) -> None:
         if not verify_password(current_password, user.password_hash):
             raise UnprocessableError(
-                "La contraseña actual no es correcta",
                 code="CURRENT_PASSWORD_INVALID",
                 details={"field": "current_password"},
             )
         if current_password == new_password:
-            raise UnprocessableError("La nueva contraseña debe ser distinta de la actual", code="PASSWORD_REUSED")
+            raise UnprocessableError(code="PASSWORD_REUSED")
         user.password_hash = hash_password(new_password)

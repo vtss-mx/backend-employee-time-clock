@@ -1,10 +1,11 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Index, String, func, text
+from sqlalchemy import DateTime, ForeignKey, Index, String, UniqueConstraint, func, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
 from app.core.db_schemas import AUTH, CATALOG, TENANCY
+from app.models.mixins import company_fk
 
 
 class CompanyApiKey(Base):
@@ -25,7 +26,10 @@ class CompanyApiKey(Base):
         Index("ix_company_api_keys_revoked_by_id", "revoked_by_id", postgresql_where=text("revoked_by_id IS NOT NULL")),
         # Llaves de la empresa, las más recientes primero (listado y tope de activas).
         Index("ix_company_api_keys_company_created", "company_id", "created_at"),
-        {"schema": TENANCY},
+        # Destino de la FK compuesta de sus permisos: la llave y su empresa van juntas.
+        UniqueConstraint("id", "company_id", name="uq_company_api_keys_id_company"),
+        # El último uso se anota cada minuto de uso: espacio libre para hacerlo en su página (HOT; 0055).
+        {"schema": TENANCY, "postgresql_with": {"fillfactor": 90}},
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -53,12 +57,14 @@ class CompanyApiKey(Base):
 
 
 class CompanyApiKeyScope(Base):
-    """Un permiso de una llave (catalog.api_scopes)."""
+    """Un permiso de una llave (catalog.api_scopes). Su empresa la copia el ORM de la llave (FK compuesta)."""
 
     __tablename__ = "company_api_key_scopes"
-    __table_args__ = ({"schema": TENANCY},)
-
-    api_key_id: Mapped[int] = mapped_column(
-        ForeignKey(f"{TENANCY}.company_api_keys.id", ondelete="CASCADE"), primary_key=True
+    __table_args__ = (
+        company_fk("company_api_key_scopes", "api_key_id", f"{TENANCY}.company_api_keys"),
+        {"schema": TENANCY},
     )
+
+    api_key_id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(nullable=False)
     scope: Mapped[str] = mapped_column(ForeignKey(f"{CATALOG}.api_scopes.code"), primary_key=True)

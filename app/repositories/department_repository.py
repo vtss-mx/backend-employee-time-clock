@@ -3,12 +3,15 @@ from collections.abc import Iterable
 from sqlalchemy import ColumnElement, delete, func, select
 from sqlalchemy.orm import Session
 
+from app.core.soft_delete import with_deleted
 from app.models import Department, DepartmentManager, Employee
-from app.repositories.aggregates import affected_rows, group_counts, paginate
+from app.repositories.aggregates import affected_rows, get_scoped, group_counts, paginate, trash_page
+from app.repositories.search import contains_text, search_term
 
 
 class DepartmentRepository:
-    """Departamentos de UNA empresa: un id de otra empresa se comporta como inexistente (404)."""
+    """Departamentos de UNA empresa: un id de otra empresa se comporta como inexistente (404). Con borrado lógico:
+    solo los vigentes, salvo la papelera, eliminar/restaurar y los nombres del historial (`names`)."""
 
     def __init__(self, db: Session, company_id: int) -> None:
         self.db = db
@@ -17,9 +20,8 @@ class DepartmentRepository:
     def _scoped(self) -> ColumnElement[bool]:
         return Department.company_id == self.company_id
 
-    def get(self, department_id: int) -> Department | None:
-        department = self.db.get(Department, department_id)
-        return department if department is not None and department.company_id == self.company_id else None
+    def get(self, department_id: int, *, include_deleted: bool = False) -> Department | None:
+        return get_scoped(self.db, Department, department_id, self.company_id, include_deleted=include_deleted)
 
     def name_exists(self, name: str, exclude_id: int | None = None) -> bool:
         """Nombre ya usado en la empresa (sin distinguir mayúsculas: índice único `lower(name)`)."""
@@ -28,11 +30,16 @@ class DepartmentRepository:
             stmt = stmt.where(Department.id != exclude_id)
         return self.db.scalar(stmt.limit(1)) is not None
 
-    def search(self, *, search: str | None, offset: int, limit: int) -> tuple[list[Department], int]:
+    def search(
+        self, *, search: str | None, offset: int, limit: int, deleted: bool = False
+    ) -> tuple[list[Department], int]:
+        """Los vigentes por nombre o, con `deleted`, la papelera (el eliminado más reciente primero)."""
         stmt = select(Department).where(self._scoped())
-        term = " ".join((search or "").split()).lower()
+        term = search_term(search)
         if term:
-            stmt = stmt.where(func.lower(Department.name).contains(term, autoescape=True))
+            stmt = stmt.where(contains_text(func.lower(Department.name), term))
+        if deleted:
+            return trash_page(self.db, stmt, Department, offset=offset, limit=limit)
         return paginate(self.db, stmt, (func.lower(Department.name), Department.id), offset=offset, limit=limit)
 
     def add(self, department: Department) -> Department:
@@ -40,11 +47,6 @@ class DepartmentRepository:
         self.db.add(department)
         self.db.flush()
         return department
-
-    def delete(self, department: Department) -> None:
-        """Sus responsables se van con él (ON DELETE CASCADE). Quien llama verifica que no tenga empleados."""
-        affected_rows(self.db, delete(Department).where(self._scoped(), Department.id == department.id))
-        self.db.expunge(department)
 
     # ---------- Empleados y responsables ----------
 
@@ -61,7 +63,9 @@ class DepartmentRepository:
         )
 
     def managers_of(self, department_ids: Iterable[int]) -> dict[int, list[Employee]]:
-        """Responsables por departamento (orden alfabético): una consulta para toda la página."""
+        """Responsables por departamento (orden alfabético): una consulta para toda la página. Un responsable en
+        «Eliminados» no aparece (el JOIN con `employees` lleva su condición de vigente) y su relación se conserva:
+        vuelve al restaurarlo."""
         ids = list(department_ids)
         if not ids:
             return {}
@@ -77,12 +81,13 @@ class DepartmentRepository:
         return managers
 
     def names(self, department_ids: Iterable[int]) -> dict[int, str]:
-        """Nombre de cada departamento (para mostrarlo junto a los empleados)."""
+        """Nombre de cada departamento (para mostrarlo junto a los empleados): referencias, también de los que están
+        en «Eliminados»."""
         ids = {i for i in department_ids if i is not None}
         if not ids:
             return {}
-        rows = self.db.execute(select(Department.id, Department.name).where(self._scoped(), Department.id.in_(ids)))
-        return {int(department_id): str(name) for department_id, name in rows}
+        stmt = select(Department.id, Department.name).where(self._scoped(), Department.id.in_(ids))
+        return {int(department_id): str(name) for department_id, name in self.db.execute(with_deleted(stmt))}
 
     def is_manager(self, department_id: int, employee_id: int) -> bool:
         return self.db.get(DepartmentManager, (department_id, employee_id)) is not None
@@ -100,7 +105,8 @@ class DepartmentRepository:
         return affected_rows(self.db, stmt)
 
     def managed_by(self, employee_id: int) -> list[Department]:
-        """Departamentos que dirige un empleado (su expediente)."""
+        """Departamentos vigentes que dirige un empleado (su expediente; uno en «Eliminados» no aparece hasta que se
+        restaure)."""
         return list(
             self.db.scalars(
                 select(Department)

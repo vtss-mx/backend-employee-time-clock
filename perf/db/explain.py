@@ -10,9 +10,14 @@ como en producción).
 Salida: un resumen ordenado por tiempo con banderas (recorrido completo de una tabla grande, orden en
 disco, muchas filas descartadas por filtro o leídas de la tabla) y el plan completo de cada sentencia.
 
+Cada caso corre con su ALCANCE de seguridad por fila, como en producción (`scope_of_case`): la empresa (la grande
+o la chica) o la plataforma (ADMIN, autenticación, mantenimiento). `perf/db/run.sh` conecta con el usuario de la
+API (sujeto a la política); con `PERF_DB_ROLE=owner`, con el dueño (sin política) para comparar.
+
 Una consulta nueva o cambiada de un repositorio agrega aquí su caso (regla de backend AGENTS.md §3).
 """
 
+import hashlib
 import re
 import sys
 import traceback
@@ -23,30 +28,50 @@ from typing import Any
 from sqlalchemy import event, select
 from sqlalchemy.orm import Session
 
-from app.core.clock import business_today
+from app.core.clock import business_day_bounds, business_today
+from app.core.config import settings
 from app.core.database import SessionLocal, engine
+from app.core.row_security import PLATFORM, SCOPE_KEY, Scope, apply_scope
 from app.models import AuthSession, EnrollmentStatus, FaceAttemptMetric, SessionRevocationReason, ShiftRequestStatus
+from app.models.company import TaxId
 from app.repositories.api_key_repository import ApiKeyRepository, find_by_hash
 from app.repositories.attendance_repository import AttendanceRepository, close_missed_checkouts
+from app.repositories.avatar_repository import AvatarRepository
+from app.repositories.billing_repository import BillingRepository
 from app.repositories.calendar_repository import CalendarRepository
+from app.repositories.company_document_repository import CompanyDocumentRepository
 from app.repositories.company_repository import CompanyRepository
 from app.repositories.department_repository import DepartmentRepository
+from app.repositories.employee_device_repository import EmployeeDeviceRepository
 from app.repositories.employee_repository import EmployeeRepository
 from app.repositories.enrollment_repository import FaceEnrollmentRepository
 from app.repositories.error_report_repository import ErrorReportRepository
 from app.repositories.face_repository import FaceEmbeddingRepository
 from app.repositories.face_security_repository import FaceSecurityRepository
+from app.repositories.fraud_repository import FraudCaseRepository
+from app.repositories.kiosk_repository import KioskLookup, KioskRepository
 from app.repositories.maintenance_repository import delete_batch
+from app.repositories.performance_repository import DAYS, HOURS, MINUTES, PerformanceRepository
 from app.repositories.qr_repository import EmployeeQrRepository
+from app.repositories.risk_repository import (
+    AttackSignatureRepository,
+    CaptureTraceRepository,
+    PolicyChangeRepository,
+    RiskAssessmentRepository,
+    RiskSignalStatRepository,
+)
 from app.repositories.session_repository import SessionRepository
 from app.repositories.shift_repository import ShiftRepository
+from app.repositories.storage_repository import StorageRepository
+from app.repositories.usage_repository import UsageRepository
 from app.repositories.user_repository import UserRepository
 from app.repositories.validator_device_repository import ValidatorDeviceRepository
 from app.repositories.validator_repository import ValidatorRepository
 from app.repositories.verification_repository import VerificationLogRepository
 from app.services.attempt_guard import FACE_METHODS, MATCH_FAILURES
 from app.services.face_service import SECURITY_REASONS
-from app.services.maintenance_service import PURGES
+from app.services.image_storage import COMPANY_DOCUMENTS, FACE_ENROLLMENT_PHOTOS, PAYMENT_RECEIPTS, USER_AVATARS
+from app.services.maintenance_service import PURGES, SOFT_DELETE_PURGES
 
 #: Empresa grande (20 000 empleados, ids 1..20000) y una de 400 (seed.sql).
 BIG = 1
@@ -70,10 +95,26 @@ BIG_TABLES = (
     "capture_fingerprints",
     "auth_sessions",
     "shift_assignments",
-    "shift_assignment_sites",
     "error_occurrences",
     "remembered_accounts",
     "employee_workdays",
+    "employee_status_events",
+    "validator_status_events",
+    "usage_routes",
+    "usage_users",
+    "usage_daily",
+    "storage_snapshots",
+    "headcount_days",
+    "perf_minutes",
+    "perf_hours",
+    "perf_days",
+    "risk_assessments",
+    "capture_traces",
+    "fraud_cases",
+    "fraud_case_attempts",
+    "fraud_case_events",
+    "fraud_evidence",
+    "employee_devices",
 )
 
 type Case = tuple[str, Callable[[Session], object]]
@@ -151,7 +192,8 @@ def attendance_cases() -> list[Case]:
         ("attendance.sessions_on.page", lambda db: repo(db, BIG).sessions_on(ids(BIG, 50), TODAY)),
         ("attendance.day_counts", lambda db: repo(db, BIG).day_counts(TODAY)),
         ("attendance.breaks_of.page", lambda db: repo(db, BIG).breaks_of(range(1, 1001, 20))),
-        ("attendance.last_located_event", lambda db: repo(db, BIG).last_located_event(4)),
+        # La ventana del viaje imposible con la velocidad máxima por omisión de la política (200 km/h).
+        ("attendance.last_located_event", lambda db: repo(db, BIG).last_located_event(4, NOW - timedelta(hours=100))),
         ("attendance.events_of", lambda db: repo(db, BIG).events_of(4)),
         ("attendance.close_missed_checkouts", lambda db: close_missed_checkouts(db, NOW)),
     ]
@@ -172,8 +214,12 @@ def shift_cases() -> list[Case]:
         ("shifts.employees_per_shift", lambda db: repo(db, BIG).employees_per_shift([1, 2, 3], TODAY)),
         ("shifts.employees_per_site", lambda db: repo(db, BIG).employees_per_site([1, 2, 3, 4, 5], TODAY)),
         ("shifts.shift_in_use", lambda db: repo(db, BIG).shift_in_use(2)),
-        ("shifts.site_in_use", lambda db: repo(db, BIG).site_in_use(2)),
-        ("shifts.sites_of.page", lambda db: repo(db, BIG).sites_of(ids(BIG, 50))),
+        ("shifts.shifts_using_site", lambda db: repo(db, BIG).shifts_using_site(2, limit=6)),
+        ("shifts.site_has_records", lambda db: repo(db, BIG).site_has_records(2)),
+        ("shifts.site_has_records.unused", lambda db: repo(db, BIG).site_has_records(999_999)),
+        ("shifts.sites_of_shifts.page", lambda db: repo(db, BIG).sites_of_shifts([1, 2, 3])),
+        ("shifts.shift_site_ids", lambda db: repo(db, BIG).shift_site_ids(1)),
+        ("shifts.shift_of", lambda db: repo(db, BIG).shift_of(4)),
         ("shifts.assignments_of", lambda db: repo(db, BIG).assignments_of(3, offset=0, limit=10)),
         (
             "shifts.requests.pending",
@@ -303,7 +349,9 @@ def face_cases() -> list[Case]:
             "face_security.attacked_companies",
             lambda db: security(db).attacked_companies(window, SECURITY_REASONS, 5, 20),
         ),
-        ("qr.get_by_token_hash", lambda db: EmployeeQrRepository(db).get_by_token_hash("0" * 64)),
+        # Antifraude 2a: el protocolo de captura en Seguridad facial (una lectura acotada por (created_at, id)).
+        ("face_security.protocol_values", lambda db: security(db).protocol_values(since, 20000)),
+        ("qr.get_by_token_hash", lambda db: EmployeeQrRepository(db).get_by_token_hash("0" * 64, BIG)),
         ("qr.latest_issued", lambda db: EmployeeQrRepository(db).latest_issued(4242)),
         ("qr.latest_used", lambda db: EmployeeQrRepository(db).latest_used(4242)),
         ("qr.revoke_all_for_employee", lambda db: EmployeeQrRepository(db).revoke_all_for_employee(4242)),
@@ -332,6 +380,12 @@ def admin_cases() -> list[Case]:
         ),
         ("companies.search", lambda db: companies(db).search(search=None, active=None, offset=0, limit=10)),
         ("companies.search.term", lambda db: companies(db).search(search="presa 1", active=None, offset=0, limit=10)),
+        # Identificador fiscal (migración 0074): alta, edición, restauración y validación en vivo, por el único parcial.
+        ("companies.tax_id_exists", lambda db: companies(db).tax_id_exists(TaxId("MX", "MX_RFC", "EMP000042AB2"))),
+        (
+            "companies.search.tax_id",
+            lambda db: companies(db).search(search="emp000042", active=None, offset=0, limit=10),
+        ),
         ("companies.counts.page", lambda db: companies(db).counts(range(1, 11))),
         ("companies.stats", lambda db: companies(db).stats()),
         ("companies.admins_page", lambda db: companies(db).admins_page(BIG, offset=0, limit=10)),
@@ -339,6 +393,8 @@ def admin_cases() -> list[Case]:
         ("departments.member_counts", lambda db: DepartmentRepository(db, BIG).member_counts(range(1, 11))),
         ("departments.managers_of", lambda db: DepartmentRepository(db, BIG).managers_of(range(1, 11))),
         ("validators.page", lambda db: ValidatorRepository(db, BIG).page(offset=0, limit=10)),
+        # El uso del límite ("N de M") y el candado de cada alta o activación: por el índice (company_id, role).
+        ("validators.active_count", lambda db: ValidatorRepository(db, BIG).active_count()),
         ("validator_devices.counts", lambda db: ValidatorDeviceRepository(db, BIG).counts([1, 2, 3, 4, 5])),
         ("api_keys.page", lambda db: ApiKeyRepository(db, BIG).page(offset=0, limit=10)),
         ("api_keys.find_by_hash", lambda db: find_by_hash(db, "0" * 64)),
@@ -346,13 +402,327 @@ def admin_cases() -> list[Case]:
 
 
 def purge_cases() -> list[Case]:
-    """Cada depuración del mantenimiento con un lote del tamaño por omisión."""
+    """Cada depuración del mantenimiento con un lote del tamaño por omisión (las de «Eliminados», con el suyo)."""
 
     def purge(db: Session, index: int) -> object:
         item = PURGES[index]
         return delete_batch(db, item.key, item.condition(NOW), 5000)
 
-    return [(f"maintenance.purge.{item.name}", lambda db, i=i: purge(db, i)) for i, item in enumerate(PURGES)]
+    def soft_purge(db: Session, index: int) -> object:
+        item = SOFT_DELETE_PURGES[index]
+        return delete_batch(
+            db, item.key, item.condition(NOW), settings.SOFT_DELETE_PURGE_BATCH_SIZE, objects=item.objects
+        )
+
+    return [
+        *((f"maintenance.purge.{item.name}", lambda db, i=i: purge(db, i)) for i, item in enumerate(PURGES)),
+        *(
+            (f"maintenance.soft_purge.{item.name}", lambda db, i=i: soft_purge(db, i))
+            for i, item in enumerate(SOFT_DELETE_PURGES)
+        ),
+    ]
+
+
+def trash_cases() -> list[Case]:
+    """La papelera («Eliminados», borrado lógico) de cada listado y lo que eliminar y restaurar consultan."""
+    year = (date(TODAY.year, 1, 1), date(TODAY.year, 12, 31))
+    return [
+        (
+            "trash.employees",
+            lambda db: EmployeeRepository(db, BIG).search(search=None, active=None, offset=0, limit=10, deleted=True),
+        ),
+        (
+            "trash.employees.term",
+            lambda db: EmployeeRepository(db, BIG).search(
+                search="garcía", active=None, offset=0, limit=10, deleted=True
+            ),
+        ),
+        ("trash.employees.has_employment", lambda db: EmployeeRepository(db, BIG).has_employment(4242)),
+        ("trash.employees.detach_deleted_from", lambda db: EmployeeRepository(db, BIG).detach_deleted_from(3)),
+        ("trash.validators", lambda db: ValidatorRepository(db, BIG).page(offset=0, limit=10, deleted=True)),
+        (
+            "trash.departments",
+            lambda db: DepartmentRepository(db, BIG).search(search=None, offset=0, limit=10, deleted=True),
+        ),
+        (
+            "trash.sites",
+            lambda db: ShiftRepository(db, BIG).sites(search=None, active=None, offset=0, limit=10, deleted=True),
+        ),
+        (
+            "trash.shifts",
+            lambda db: ShiftRepository(db, BIG).shifts(search=None, active=None, offset=0, limit=10, deleted=True),
+        ),
+        ("trash.shifts.deleted_sites_of", lambda db: ShiftRepository(db, BIG).deleted_sites_of(1)),
+        (
+            "trash.assignments_of",
+            lambda db: ShiftRepository(db, BIG).assignments_of(50, offset=0, limit=10, deleted=True),
+        ),
+        (
+            "trash.holidays",
+            lambda db: CalendarRepository(db, BIG).holidays(*year, offset=0, limit=10, deleted=True),
+        ),
+        (
+            "trash.workdays",
+            lambda db: CalendarRepository(db, BIG).workdays(
+                employee_id=None, start=None, end=None, offset=0, limit=10, deleted=True
+            ),
+        ),
+        ("trash.erase_employee", lambda db: FaceEmbeddingRepository(db).erase_employee(BIG, 4242)),
+        (
+            "companies.trash",
+            lambda db: CompanyRepository(db).search(search=None, active=None, offset=0, limit=10, deleted=True),
+        ),
+        ("auth.user.deleted_with", lambda db: UserRepository(db).deleted_with(SMALL, NOW)),
+    ]
+
+
+def billing_cases() -> list[Case]:
+    """Cobranza: lo que leen sus pantallas y lo que hace el mantenimiento (cargos, suspensión, plantilla)."""
+    billing = BillingRepository
+    start, end = business_day_bounds(TODAY - timedelta(days=1))
+
+    def companies(db: Session, **filters: Any) -> object:
+        options = {"search": None, "suspended": None, "overdue": None} | filters
+        return billing(db).company_page(TODAY, **options, offset=0, limit=10)
+
+    return [
+        ("billing.overview", lambda db: billing(db).overview(TODAY, TODAY.replace(day=1))),
+        ("billing.company_page", lambda db: companies(db)),
+        ("billing.company_page.overdue", lambda db: companies(db, overdue=True)),
+        ("billing.company_page.term", lambda db: companies(db, search="presa 1")),
+        ("billing.balances.page", lambda db: billing(db).balances(range(1, 11), TODAY)),
+        ("billing.plans_by_ids", lambda db: billing(db).plans_by_ids(range(1, 11))),
+        ("billing.charges_page", lambda db: billing(db).charges_page(BIG, None, offset=0, limit=10)),
+        ("billing.charges_page.open", lambda db: billing(db).charges_page(BIG, "OPEN", offset=0, limit=10)),
+        ("billing.payments_page", lambda db: billing(db).payments_page(BIG, None, offset=0, limit=10)),
+        ("billing.statement_page", lambda db: billing(db).statement_page(BIG, offset=0, limit=10)),
+        ("billing.open_charges", lambda db: billing(db).open_charges(BIG)),
+        ("billing.payments_with_credit", lambda db: billing(db).payments_with_credit(10)),
+        ("billing.overdue_companies", lambda db: billing(db).overdue_companies(TODAY)),
+        ("billing.plans_due", lambda db: billing(db).plans_due(TODAY - timedelta(days=1), 500)),
+        ("billing.plans_to_forecast", lambda db: billing(db).plans_to_forecast(start, 2000)),
+        ("billing.headcount.period", lambda db: billing(db).headcount(BIG, TODAY - timedelta(days=31), TODAY)),
+        ("billing.active_headcount", lambda db: billing(db).active_headcount(range(1, 51))),
+        ("billing.closed_days", lambda db: billing(db).closed_days(TODAY - timedelta(days=400), TODAY)),
+        ("billing.close_headcount", lambda db: billing(db).close_headcount(TODAY - timedelta(days=1), start, end)),
+        ("billing.last_cut", lambda db: billing(db).last_cut(BIG)),
+        # Moneda fija de una empresa (cambiar el plan o registrar un pago): la primera fila por su índice.
+        ("billing.movement_currency", lambda db: billing(db).movement_currency(BIG)),
+    ]
+
+
+def usage_cases() -> list[Case]:
+    """Consumo: la pantalla del ADMIN (un mes de toda la plataforma y de una empresa) y la foto diaria."""
+    usage = UsageRepository
+    month = TODAY - timedelta(days=30)
+
+    def company_page(db: Session, sort: str) -> object:
+        return usage(db).company_usage_page(month, TODAY, search=None, sort=sort, offset=0, limit=10)
+
+    return [
+        ("usage.platform_totals", lambda db: usage(db).platform_totals(month, TODAY)),
+        ("usage.platform_days", lambda db: usage(db).platform_days(month, TODAY)),
+        ("usage.companies_with_traffic", lambda db: usage(db).companies_with_traffic(month, TODAY)),
+        ("usage.company_page.requests", lambda db: company_page(db, "requests")),
+        ("usage.company_page.storage", lambda db: company_page(db, "storage")),
+        ("usage.platform_storage", lambda db: usage(db).platform_storage()),
+        ("usage.company_totals", lambda db: usage(db).company_totals(BIG, month, TODAY)),
+        ("usage.company_days", lambda db: usage(db).company_days(BIG, month, TODAY)),
+        ("usage.routes_page", lambda db: usage(db).routes_page(BIG, month, TODAY, offset=0, limit=10)),
+        ("usage.users_page", lambda db: usage(db).users_page(BIG, month, TODAY, offset=0, limit=10)),
+        ("usage.company_storage", lambda db: usage(db).company_storage(BIG)),
+        ("usage.accounts", lambda db: usage(db).accounts(BIG, list(range(1, 11)))),
+        ("usage.table_counts.daily", lambda db: usage(db).table_counts()),
+    ]
+
+
+def storage_cases() -> list[Case]:
+    """Bucket de imágenes: la cola de borrado del mantenimiento, liberar las fotos de un empleado al
+    borrarlo y los conteos con tope del estado del ADMIN."""
+    storage = StorageRepository
+    face, receipts = FACE_ENROLLMENT_PHOTOS, PAYMENT_RECEIPTS
+    return [
+        ("storage.deletions", lambda db: storage(db).deletions("", 200)),
+        ("storage.count_deletions", lambda db: storage(db).count_deletions(10_000)),
+        ("storage.status", lambda db: storage(db).status("delete")),
+        ("storage.count_stored.face", lambda db: storage(db).count_stored(face, 10_000)),
+        ("storage.count_stored.receipts", lambda db: storage(db).count_stored(receipts, 10_000)),
+        ("storage.count_stored.avatars", lambda db: storage(db).count_stored(USER_AVATARS, 10_000)),
+        (
+            "enrollments.reject_pending.employee",
+            lambda db: FaceEnrollmentRepository(db, BIG).reject_pending("x", 4241),
+        ),
+    ]
+
+
+def avatar_cases() -> list[Case]:
+    """Foto de perfil: la propia, la de un empleado vista por su empresa (permiso y referencia en una consulta), la
+    de una cuenta vista por la plataforma y reemplazarla (bloquear la cuenta y borrar la referencia; encolar la
+    anterior es un INSERT ... SELECT por la llave primaria, que aquí no se explica)."""
+    avatars = AvatarRepository
+    employee = ids(BIG, 2)[1]  # su cuenta (en seed.sql user_id = id) tiene foto: la tienen las pares
+    return [
+        ("avatars.visible.self", lambda db: avatars(db).visible(employee, 96)),
+        ("avatars.visible.company", lambda db: avatars(db).visible(employee, 96, company_id=BIG)),
+        ("avatars.visible.platform", lambda db: avatars(db).visible(100_000 + BIG, 512, staff_only=True)),
+        ("avatars.replace.lock", lambda db: avatars(db).lock_person(employee)),
+        ("avatars.replace.remove", lambda db: avatars(db).remove(employee)),
+    ]
+
+
+def performance_cases() -> list[Case]:
+    """Rendimiento (pantalla del ADMIN y mantenimiento): cada periodo lee su grano (1 h y 6 h por minuto, 24 h y 7 días
+    por hora, 90 días por día) por la llave primaria `(kind, <tiempo>, name)`; la bandeja de alertas por su índice."""
+    perf = PerformanceRepository
+    hour, six, day, week = (NOW - timedelta(hours=n) for n in (1, 6, 24, 168))
+    route = "GET /api/route/7"
+    current_hour = NOW.replace(minute=0, second=0, microsecond=0)
+    start, end = business_day_bounds(TODAY)
+    screens, recent = ["/screen/1", "/screen/2"], timedelta(minutes=10)
+
+    def page(db: Session, grain: Any, kind: str, since: Any, sort: str, search: str | None = None) -> object:
+        return perf(db).metrics_page(grain, kind, since, NOW, sort=sort, search=search, offset=0, limit=10)
+
+    return [
+        ("performance.series.minutes_6h", lambda db: perf(db).series(MINUTES, ("HTTP",), six, NOW)),
+        ("performance.series.hours_7d", lambda db: perf(db).series(HOURS, ("HTTP",), week, NOW)),
+        ("performance.series.days_90d", lambda db: perf(db).series(DAYS, ("HTTP",), TODAY - timedelta(days=89), TODAY)),
+        ("performance.series.route_1h", lambda db: perf(db).series(MINUTES, ("HTTP",), hour, NOW, name=route)),
+        ("performance.metrics.p95_1h", lambda db: page(db, MINUTES, "HTTP", hour, "p95")),
+        ("performance.metrics.impact_24h", lambda db: page(db, HOURS, "HTTP", day, "impact")),
+        ("performance.metrics.functions_7d", lambda db: page(db, HOURS, "FUNCTION", week, "mean")),
+        ("performance.metrics.search_24h", lambda db: page(db, HOURS, "HTTP", day, "count", "route/1")),
+        ("performance.screens_page", lambda db: perf(db).screens_page(MINUTES, six, NOW, offset=0, limit=10)),
+        ("performance.screen_metrics", lambda db: perf(db).screen_metrics(HOURS, screens, week, NOW)),
+        ("performance.alerts_page", lambda db: perf(db).alerts_page(status="OPEN", search=None, offset=0, limit=10)),
+        ("performance.alerts_page.all", lambda db: perf(db).alerts_page(status=None, search=None, offset=0, limit=10)),
+        ("performance.alert_counts", lambda db: perf(db).alert_counts()),
+        ("performance.latest_open", lambda db: perf(db).latest_open()),
+        ("performance.route_totals", lambda db: perf(db).route_totals(HOURS, route, day, NOW)),
+        ("performance.error_of_trace", lambda db: perf(db).error_report_of_trace("t1", NOW - recent, NOW)),
+        ("performance.rollup_hour", lambda db: perf(db).rollup_hour(current_hour)),
+        ("performance.rollup_day", lambda db: perf(db).rollup_day(TODAY, start, end)),
+    ]
+
+
+def antifraud_cases() -> list[Case]:
+    """Antifraude (migración 0062): el reenvío perceptual en CADA verificación 1:1 (las huellas recientes del empleado),
+    la carga de las firmas de ataque (cada proceso, cada ATTACK_SIGNATURE_CACHE_SECONDS), la simulación de la política
+    (las decisiones de 30 días de una empresa), la bandeja y el detalle de los casos (ADMIN), los registros "en
+    revisión" de la empresa y las depuraciones de la evidencia y de los casos decididos."""
+    replay_since = NOW - timedelta(days=settings.FACE_REPLAY_RETENTION_DAYS)
+    simulation_since = NOW - timedelta(days=settings.RISK_SIMULATION_DAYS)
+    fraud = FraudCaseRepository
+
+    def cases_page(db: Session, **filters: Any) -> object:
+        options = {"statuses": None, "company_id": None, "kind": None} | filters
+        return fraud(db).search(**options, offset=0, limit=10)
+
+    def review_history(db: Session) -> object:
+        options = {"employee_id": None, "start": None, "end": None, "status": None, "in_review": True}
+        return AttendanceRepository(db, BIG).history(**options, offset=0, limit=10)
+
+    return [
+        (
+            "antifraud.capture_traces.recent",
+            lambda db: CaptureTraceRepository(db, BIG).recent(
+                4242, replay_since, settings.FACE_PERCEPTUAL_MAX_CAPTURES
+            ),
+        ),
+        (
+            "antifraud.signatures.active",
+            lambda db: AttackSignatureRepository(db).active(NOW, settings.ATTACK_SIGNATURE_MAX_LOADED),
+        ),
+        (
+            "antifraud.signatures.companies_blocking",
+            lambda db: AttackSignatureRepository(db).companies_blocking("CAPTURE_PHASH", ["0" * 16 + ":" + "0" * 16]),
+        ),
+        (
+            "antifraud.assessments.window",
+            lambda db: RiskAssessmentRepository(db).window(
+                BIG, simulation_since, settings.RISK_SIMULATION_MAX_ATTEMPTS
+            ),
+        ),
+        ("antifraud.cases.pending", lambda db: cases_page(db, statuses=["OPEN", "IN_REVIEW"])),
+        ("antifraud.cases.all", lambda db: cases_page(db)),
+        ("antifraud.cases.company", lambda db: cases_page(db, company_id=BIG)),
+        ("antifraud.cases.active_count", lambda db: fraud(db).active_count(settings.FRAUD_CASE_MAX_ATTEMPTS * 20)),
+        ("antifraud.cases.attempts_of", lambda db: fraud(db).attempts_of(4242, settings.FRAUD_CASE_MAX_ATTEMPTS)),
+        ("antifraud.cases.events_of", lambda db: fraud(db).events_of(4242, 50)),
+        ("antifraud.cases.evidence_of", lambda db: fraud(db).evidence_of(4242, settings.FRAUD_EVIDENCE_MAX_PER_CASE)),
+        ("antifraud.cases.expired_evidence", lambda db: fraud(db).expired_evidence(NOW - timedelta(days=90), 1000)),
+        ("antifraud.cases.stale", lambda db: fraud(db).stale_cases(NOW - timedelta(days=365), 1000)),
+        (
+            "antifraud.policy_changes.search",
+            lambda db: PolicyChangeRepository(db, BIG).search(status=None, offset=0, limit=5),
+        ),
+        ("antifraud.policy_changes.pending_count", lambda db: PolicyChangeRepository(db, BIG).pending_count()),
+        ("antifraud.signal_stats.of_company", lambda db: RiskSignalStatRepository(db, BIG).of_company()),
+        ("antifraud.reviews.history", review_history),
+        ("antifraud.reviews.pending", lambda db: AttendanceRepository(db, BIG).pending_reviews(10_000)),
+    ]
+
+
+def device_key(seed: str) -> str:
+    """El hash de llave que siembra seed.sql (`md5('dev-' || e) || md5(e || '-dev')`)."""
+    prefix, suffix = (hashlib.md5(part.encode(), usedforsecurity=False).hexdigest() for part in seed.split(":"))
+    return prefix + suffix
+
+
+def device_cases() -> list[Case]:
+    """Antifraude 1b (migración 0065): el dispositivo de CADA verificación o registro de un empleado (su fila y quién
+    más usó la llave en la ventana de DEVICE_SHARED, y su uso en un upsert), la lista de la ficha del empleado y de Mi
+    perfil, y la fila que la empresa aprueba o revoca."""
+    repo = EmployeeDeviceRepository
+    window = NOW - timedelta(minutes=settings.RISK_DEVICE_SHARED_WINDOW_MINUTES)
+    limit = settings.RISK_DEVICE_SHARED_MIN_EMPLOYEES + 1
+    known, shared = device_key("dev-4242:4242-dev"), device_key("dev-4299:4299-dev")
+    name = "iPhone · Safari"
+    return [
+        ("devices.sightings", lambda db: repo(db, BIG).sightings(known, 4242, window, limit)),
+        # El teléfono del 4299 que también usa el 4300 (seed.sql): las dos filas con la misma llave.
+        ("devices.sightings.shared", lambda db: repo(db, BIG).sightings(shared, 4300, window, limit)),
+        ("devices.sightings.unknown", lambda db: repo(db, BIG).sightings("f" * 64, 4242, window, limit)),
+        ("devices.record.known", lambda db: repo(db, BIG).record(4242, known, name, NOW, stepped_up=True)),
+        ("devices.record.new", lambda db: repo(db, BIG).record(4242, "e" * 64, name, NOW, stepped_up=False)),
+        ("devices.page", lambda db: repo(db, BIG).page(4245, offset=0, limit=10)),
+        ("devices.get", lambda db: repo(db, BIG).get(4242, 4242)),
+    ]
+
+
+def presence_cases() -> list[Case]:
+    """Antifraude 2b (migración 0070): los kioscos de un sitio (su listado, su papelera y el conteo de la página de
+    sitios), lo que pide su tableta (por el código de vinculación y por su id: de la plataforma, aún sin empresa), la
+    última vez que se vio y ligar la sesión de un validador a su llave (una vez por sesión). La firma y la ubicación de
+    cada identificación no consultan nada."""
+    # El código de vinculación pendiente del kiosco 2 (sitio 1) de seed.sql: `md5('p' || sitio) || md5(sitio || 'p')`.
+    pairing = "".join(hashlib.md5(part, usedforsecurity=False).hexdigest() for part in (b"p1", b"1p"))
+    return [
+        ("kiosks.page", lambda db: KioskRepository(db, BIG).page(3, offset=0, limit=10)),
+        ("kiosks.trash", lambda db: KioskRepository(db, BIG).page(3, offset=0, limit=10, deleted=True)),
+        ("kiosks.per_site", lambda db: KioskRepository(db, BIG).per_site(range(1, 6))),
+        ("kiosks.get", lambda db: KioskRepository(db, BIG).get(2, 4)),
+        ("kiosks.seen", lambda db: KioskRepository(db, BIG).seen(5, NOW)),
+        ("kiosks.lookup.by_pairing", lambda db: KioskLookup(db).by_pairing(pairing)),
+        ("kiosks.lookup.by_id", lambda db: KioskLookup(db).by_id(4)),
+        ("auth.sessions.bind_device", lambda db: SessionRepository(db).bind_device(a_session(db), "e" * 64)),
+    ]
+
+
+def document_cases() -> list[Case]:
+    """Documentos de la empresa (migración 0075): su listado (lo vigente, el más reciente primero; también una página
+    profunda) y su papelera, cada uno por id (descargar) y bloqueado (eliminar y restaurar), el conteo con tope del
+    estado del bucket y los bytes de la foto diaria del almacenamiento. Su depuración está en `purge_cases`."""
+    documents = CompanyDocumentRepository
+    return [
+        ("documents.page", lambda db: documents(db, BIG).page(offset=0, limit=10)),
+        ("documents.page.deep", lambda db: documents(db, BIG).page(offset=1500, limit=50)),
+        ("documents.trash", lambda db: documents(db, BIG).page(offset=0, limit=10, deleted=True)),
+        ("documents.get", lambda db: documents(db, BIG).get(1500)),
+        ("documents.get.lock", lambda db: documents(db, BIG).get(1500, include_deleted=True, lock=True)),
+        ("storage.count_stored.documents", lambda db: StorageRepository(db).count_stored(COMPANY_DOCUMENTS, 10_000)),
+        ("usage.document_bytes", lambda db: UsageRepository(db).document_bytes()),
+    ]
 
 
 CASES: list[Case] = [
@@ -364,8 +734,53 @@ CASES: list[Case] = [
     *log_cases(),
     *face_cases(),
     *admin_cases(),
+    *billing_cases(),
+    *usage_cases(),
+    *storage_cases(),
+    *avatar_cases(),
+    *performance_cases(),
+    *antifraud_cases(),
+    *device_cases(),
+    *presence_cases(),
+    *document_cases(),
+    *trash_cases(),
     *purge_cases(),
 ]
+
+#: Casos del código de la plataforma (cruzan empresas a propósito): corren con el rol de la plataforma.
+PLATFORM_CASES = (
+    "auth.",
+    "errors.",
+    "companies.",
+    "billing.",
+    "usage.",
+    "storage.count_",
+    "storage.deletions",
+    "storage.status",
+    "avatars.visible.platform",
+    "maintenance.",
+    "performance.",
+    "face_security.success_values",
+    "face_security.attacked_companies",
+    "face_security.protocol_values",
+    "attendance.close_missed_checkouts",
+    "api_keys.find_by_hash",
+    "face.learning_totals",
+    "face.delete_learned",
+    "employees.shared_accounts",
+    "antifraud.signatures.",
+    "antifraud.cases.",
+    "kiosks.lookup.",
+)
+#: Casos de la empresa chica (los demás son de la grande).
+SMALL_CASES = ("logs.page_for_company.employee",)
+
+
+def scope_of_case(name: str) -> Scope:
+    if name.startswith(PLATFORM_CASES):
+        return PLATFORM
+    return SMALL if name.endswith(".small") or name in SMALL_CASES else BIG
+
 
 _captured: list[tuple[str, Any]] | None = None
 
@@ -390,13 +805,15 @@ def flags_of(plan: str) -> list[str]:
     return found
 
 
-def explain(statement: str, parameters: Any) -> tuple[str, float]:
-    """El plan con caché caliente (segunda corrida) dentro de una transacción que se revierte."""
+def explain(statement: str, parameters: Any, scope: Scope) -> tuple[str, float]:
+    """El plan con caché caliente (segunda corrida) dentro de una transacción que se revierte, con el alcance del
+    caso declarado como lo hace la API al empezar cada transacción."""
     plan = ""
     for _ in range(2):
         with engine.connect() as conn:
             transaction = conn.begin()
             try:
+                apply_scope(conn, scope)
                 # El texto es una sentencia que ya generó SQLAlchemy (no entra nada del usuario).
                 rows = conn.exec_driver_sql("EXPLAIN (ANALYZE, BUFFERS) " + statement, parameters).all()
             finally:
@@ -412,7 +829,8 @@ def run_case(name: str, call: Callable[[Session], object]) -> tuple[list[str], l
     summary: list[str] = []
     detail: list[str] = []
     _captured = []
-    with SessionLocal() as db:
+    scope = scope_of_case(name)
+    with SessionLocal(info={SCOPE_KEY: scope}) as db:
         try:
             call(db)
         except Exception:  # un caso roto se reporta y los demás siguen
@@ -421,9 +839,10 @@ def run_case(name: str, call: Callable[[Session], object]) -> tuple[list[str], l
             statements, _captured = list(_captured), None
             db.rollback()
     for index, (statement, parameters) in enumerate(statements):
-        if not statement.lstrip().upper().startswith(("SELECT", "UPDATE", "DELETE", "WITH")):
+        query = statement.lstrip().upper().startswith(("SELECT", "UPDATE", "DELETE", "WITH"))
+        if not query or "set_config(" in statement:  # el alcance de la transacción no es una consulta que medir
             continue
-        plan, ms = explain(statement, parameters)
+        plan, ms = explain(statement, parameters, scope)
         flags = "; ".join(flags_of(plan))
         summary.append(f"{ms:10.3f} ms  {name}[{index}]  {flags}")
         detail.append(f"### {name} [{index}]  {ms:.3f} ms  {flags}\n{statement}\n{parameters}\n{plan}\n")

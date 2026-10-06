@@ -16,6 +16,7 @@ from datetime import date, datetime
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     CheckConstraint,
     Date,
     DateTime,
@@ -25,6 +26,8 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
+    UniqueConstraint,
+    false,
     func,
     text,
 )
@@ -32,17 +35,22 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
 from app.core.db_schemas import ATTENDANCE, AUTH, CATALOG, WORKFORCE
+from app.core.partitions import partitioned
+from app.models.mixins import company_fk
 
 _BIG_ID = BigInteger().with_variant(Integer, "sqlite")
 
 
+def _employee_fk(table: str) -> ForeignKeyConstraint:
+    return company_fk(table, "employee_id", f"{WORKFORCE}.employees")
+
+
+def _session_fk(table: str) -> ForeignKeyConstraint:
+    return company_fk(table, "session_id", f"{ATTENDANCE}.work_sessions")
+
+
 def _site_fk(table: str, column: str) -> ForeignKeyConstraint:
-    return ForeignKeyConstraint(
-        [column, "company_id"],
-        [f"{WORKFORCE}.work_sites.id", f"{WORKFORCE}.work_sites.company_id"],
-        name=f"fk_{table}_{column.removesuffix('_id')}_company",
-        ondelete="RESTRICT",
-    )
+    return company_fk(table, column, f"{WORKFORCE}.work_sites", ondelete="RESTRICT")
 
 
 class WorkSession(Base):
@@ -50,12 +58,9 @@ class WorkSession(Base):
 
     __tablename__ = "work_sessions"
     __table_args__ = (
-        ForeignKeyConstraint(
-            ["employee_id", "company_id"],
-            [f"{WORKFORCE}.employees.id", f"{WORKFORCE}.employees.company_id"],
-            name="fk_work_sessions_employee_company",
-            ondelete="CASCADE",
-        ),
+        _employee_fk("work_sessions"),
+        # Destino de las FK compuestas de descansos y registros: la jornada y su empresa van juntas.
+        UniqueConstraint("id", "company_id", name="uq_work_sessions_id_company"),
         ForeignKeyConstraint(
             ["assignment_id", "company_id"],
             [f"{WORKFORCE}.shift_assignments.id", f"{WORKFORCE}.shift_assignments.company_id"],
@@ -113,6 +118,23 @@ class WorkSession(Base):
             postgresql_where=text("edited_by_id IS NOT NULL"),
             sqlite_where=text("edited_by_id IS NOT NULL"),
         ),
+        # Registros "en revisión" (motor de riesgo, migración 0062): la bandeja de la empresa en el orden del
+        # historial y el contador del menú, sin leer las jornadas que no están pendientes (casi todas).
+        Index(
+            "ix_work_sessions_review_pending",
+            "company_id",
+            "work_date",
+            "scheduled_start",
+            "id",
+            postgresql_where=text("review_status = 'PENDING'"),
+            sqlite_where=text("review_status = 'PENDING'"),
+        ),
+        Index(
+            "ix_work_sessions_reviewed_by_id",
+            "reviewed_by_id",
+            postgresql_where=text("reviewed_by_id IS NOT NULL"),
+            sqlite_where=text("reviewed_by_id IS NOT NULL"),
+        ),
         CheckConstraint("scheduled_end > scheduled_start", name="schedule"),
         CheckConstraint("check_out_at IS NULL OR check_out_at >= check_in_at", name="check_out"),
         {"schema": ATTENDANCE},
@@ -154,6 +176,17 @@ class WorkSession(Base):
     edited_by_id: Mapped[int | None] = mapped_column(ForeignKey(f"{AUTH}.users.id", ondelete="SET NULL"))
     edited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     edit_reason: Mapped[str | None] = mapped_column(String(500))
+    #: "En revisión" (motor de riesgo, decisión D3): algún registro de la jornada tuvo riesgo alto y quedó guardado
+    #: pendiente de que la empresa lo confirme o lo rechace (catalog.attendance_review_statuses); None = nada que
+    #: revisar. `review_reasons`: códigos de catalog.review_reasons (en términos del negocio) separados por coma.
+    review_status: Mapped[str | None] = mapped_column(
+        String(20), ForeignKey(f"{CATALOG}.attendance_review_statuses.code")
+    )
+    review_reasons: Mapped[str | None] = mapped_column(String(200))
+    #: Quién de la empresa lo confirmó o rechazó, cuándo y su nota (obligatoria al rechazar).
+    reviewed_by_id: Mapped[int | None] = mapped_column(ForeignKey(f"{AUTH}.users.id", ondelete="SET NULL"))
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    review_note: Mapped[str | None] = mapped_column(String(500))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
@@ -172,15 +205,14 @@ class WorkBreak(Base):
         ),
         Index("ix_work_breaks_session", "session_id", "id"),
         Index("ix_work_breaks_company", "company_id"),
+        _session_fk("work_breaks"),
         CheckConstraint("ended_at IS NULL OR ended_at >= started_at", name="times"),
         {"schema": ATTENDANCE},
     )
 
     id: Mapped[int] = mapped_column(_BIG_ID, primary_key=True)
     company_id: Mapped[int] = mapped_column(ForeignKey("tenancy.companies.id", ondelete="CASCADE"), nullable=False)
-    session_id: Mapped[int] = mapped_column(
-        _BIG_ID, ForeignKey(f"{ATTENDANCE}.work_sessions.id", ondelete="CASCADE"), nullable=False
-    )
+    session_id: Mapped[int] = mapped_column(_BIG_ID, nullable=False)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     #: Minutos por encima de lo permitido para cada descanso (al terminarlo).
@@ -188,26 +220,33 @@ class WorkBreak(Base):
 
 
 class AttendanceEvent(Base):
-    """Bitácora de solo inserción: cada registro de asistencia con su evidencia."""
+    """Bitácora de solo inserción: cada registro de asistencia con su evidencia.
+
+    Crece sin límite: particionada por mes en `occurred_at` (`app/core/partitions.py`; en PostgreSQL la llave
+    primaria es `(id, occurred_at)`). Empleado, jornada y sitio son de la MISMA empresa (FK compuestas).
+    `verification_log_id` es una referencia SIN llave foránea: la bitácora también está particionada y una FK
+    hacia ella exigiría copiar su fecha aquí (y le impediría borrar meses viejos); ambas filas se escriben en la
+    misma transacción y se borran juntas con el empleado o la empresa (CASCADE de cada una).
+    """
 
     __tablename__ = "attendance_events"
     __table_args__ = (
+        _employee_fk("attendance_events"),
+        _session_fk("attendance_events"),
         _site_fk("attendance_events", "site_id"),
-        # La última ubicación del empleado (viaje imposible) y la evidencia de una jornada.
-        Index("ix_attendance_events_employee", "employee_id", "id"),
+        # La última ubicación del empleado (viaje imposible: los registros de la ventana en que un viaje aún
+        # podría ser imposible, en el orden del índice; con la fecha, solo las particiones de esa ventana).
+        Index("ix_attendance_events_employee", "employee_id", "occurred_at", "id"),
+        # La evidencia de una jornada.
         Index("ix_attendance_events_session", "session_id", "id"),
-        # FK con RESTRICT hacia el sitio (parcial: un registro remoto no tiene sitio).
+        # FK compuesta con RESTRICT hacia el sitio y "¿ya se checó en el sitio?" sin leer la tabla (también con la
+        # seguridad por fila, que pide company_id). Parcial: un registro remoto no tiene sitio.
         Index(
             "ix_attendance_events_site",
+            "company_id",
             "site_id",
             postgresql_where=text("site_id IS NOT NULL"),
             sqlite_where=text("site_id IS NOT NULL"),
-        ),
-        Index(
-            "ix_attendance_events_verification_log_id",
-            "verification_log_id",
-            postgresql_where=text("verification_log_id IS NOT NULL"),
-            sqlite_where=text("verification_log_id IS NOT NULL"),
         ),
         Index(
             "ix_attendance_events_actor_id",
@@ -220,17 +259,13 @@ class AttendanceEvent(Base):
             "(latitude IS NULL OR (latitude BETWEEN -90 AND 90 AND longitude BETWEEN -180 AND 180))",
             name="coordinates",
         ),
-        {"schema": ATTENDANCE},
+        {"schema": ATTENDANCE, **partitioned("occurred_at")},
     )
 
     id: Mapped[int] = mapped_column(_BIG_ID, primary_key=True)
     company_id: Mapped[int] = mapped_column(nullable=False)
-    employee_id: Mapped[int] = mapped_column(
-        ForeignKey(f"{WORKFORCE}.employees.id", ondelete="CASCADE"), nullable=False
-    )
-    session_id: Mapped[int] = mapped_column(
-        _BIG_ID, ForeignKey(f"{ATTENDANCE}.work_sessions.id", ondelete="CASCADE"), nullable=False
-    )
+    employee_id: Mapped[int] = mapped_column(nullable=False)
+    session_id: Mapped[int] = mapped_column(_BIG_ID, nullable=False)
     action: Mapped[str] = mapped_column(String(20), ForeignKey(f"{CATALOG}.attendance_actions.code"), nullable=False)
     mode: Mapped[str] = mapped_column(String(20), ForeignKey(f"{CATALOG}.work_modes.code"), nullable=False)
     site_id: Mapped[int | None] = mapped_column()
@@ -242,10 +277,17 @@ class AttendanceEvent(Base):
     accuracy_m: Mapped[float | None] = mapped_column(Double)
     distance_m: Mapped[float | None] = mapped_column(Double)
     #: La verificación facial que respaldó el registro (o la identificación del validador).
-    verification_log_id: Mapped[int | None] = mapped_column(
-        ForeignKey(f"{ATTENDANCE}.verification_logs.id", ondelete="SET NULL")
-    )
+    verification_log_id: Mapped[int | None] = mapped_column(Integer)
     #: Quién operó: el propio empleado, la cuenta del validador o la de la empresa (modalidad COMPANY).
     actor_id: Mapped[int | None] = mapped_column(ForeignKey(f"{AUTH}.users.id", ondelete="SET NULL"))
     #: Motivo de un registro de la empresa (lo ve también el empleado en su historial).
     note: Mapped[str | None] = mapped_column(String(500))
+    #: Este registro se guardó "en revisión" (riesgo alto del motor de riesgo): su jornada lo dice en `review_status`.
+    under_review: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false(), nullable=False)
+    #: País y sistema autónomo de la IP del registro (base local DB-IP, migración 0065; nunca la IP): el siguiente
+    #: registro los compara (señal NETWORK_JUMP). None sin base, con una IP privada o en un validador.
+    ip_country: Mapped[str | None] = mapped_column(String(2))
+    ip_asn: Mapped[int | None] = mapped_column(Integer)
+    #: Periodo del código de sitio con que se confirmó la presencia (antifraude 2b, migración 0070; nunca el código):
+    #: el siguiente registro del empleado en ese sitio no puede reutilizar el mismo. None sin código.
+    presence_window: Mapped[int | None] = mapped_column(Integer)

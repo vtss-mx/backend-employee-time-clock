@@ -5,6 +5,7 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
 from app.models import ErrorSeverity, ErrorStatus
 from app.schemas.common import Page
+from app.schemas.storage import ObjectStorageStatus
 
 
 class ErrorReportRead(BaseModel):
@@ -115,8 +116,10 @@ class AdmissionRead(BaseModel):
 
 
 class ServerStatus(BaseModel):
-    """Estado del servidor para el ADMIN: dependencias con su detalle y capacidad del proceso."""
+    """Estado del servidor para el ADMIN: dependencias con su detalle, capacidad del proceso y cómo va
+    la copia de imágenes al bucket."""
 
     status: str
     components: dict[str, dict[str, Any]]
     admission: AdmissionRead
+    storage: ObjectStorageStatus

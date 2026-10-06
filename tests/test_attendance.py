@@ -20,7 +20,7 @@ from app.services.attendance_overview import board_state
 from app.services.shift_rules import occurrence_of
 from tests.conftest import turn_files
 from tests.test_policy import set_policy
-from tests.test_shifts import POINT, assign, create_shift, create_site, employee_with_face
+from tests.test_shifts import POINT, assign, create_shift, create_site, employee_with_face, shift_body
 from tests.test_validators import identify_face, validator_headers
 
 NEAR_KM = (29.0829, -110.9559)  # ~1.1 km al norte del sitio
@@ -55,11 +55,8 @@ def worker(client, company_headers) -> dict:
     """Ana con el turno matutino (8:00-16:00, un descanso de 30 min) desde hoy en la Planta Norte."""
     employee_id, headers = employee_with_face(client, company_headers)
     site = create_site(client, company_headers)
-    shift = create_shift(client, company_headers)
-    assert (
-        assign(client, company_headers, employee_id, shift["id"], business_today(), sites=[site["id"]]).status_code
-        == 201
-    )
+    shift = create_shift(client, company_headers, sites=[site["id"]])
+    assert assign(client, company_headers, employee_id, shift["id"], business_today()).status_code == 201
     return {
         "id": employee_id,
         "headers": headers,
@@ -177,12 +174,28 @@ def test_location_must_be_precise_and_inside_the_site(client, company_headers, w
     assert recorded(act(client, headers, "check-in", accuracy=500))["check_in_mode"] == "ON_SITE"
 
 
+def test_editing_the_shift_place_applies_to_everyone_from_then_on(client, company_headers, worker, clock):
+    """Los sitios y los días remotos son los del turno de hoy: cambiarlos aplica a la jornada abierta (su
+    salida) y a las siguientes; lo registrado conserva dónde se checó."""
+    headers, day, shift = worker["headers"], worker["day"], worker["shift"]
+    clock(day, "07:55")
+    assert recorded(act(client, headers, "check-in"))["check_in_site"] == "Planta Norte"
+    # La empresa vuelve remoto el turno (sin sitios): la salida ya se checa desde cualquier lugar.
+    assert client.put(f"/api/shifts/{shift['id']}", json=shift_body(), headers=company_headers).status_code == 200
+    clock(day, "16:00")
+    now = today(client, headers)
+    assert now["remote_allowed"] is True and now["sites"] == [] and now["shift"]["remote_weekdays"] == list(range(7))
+    closed = recorded(act(client, headers, "check-out", at=NEAR_KM))
+    assert closed["check_in_site"] == "Planta Norte" and closed["check_out_mode"] == "REMOTE"
+    # El sitio ya no está en ningún turno, pero ahí se checó: su historial lo nombra.
+    gone = client.delete(f"/api/sites/{worker['site']['id']}", headers=company_headers)
+    assert gone.status_code == 409 and gone.json()["code"] == "SITE_HAS_RECORDS"
+
+
 def test_remote_days_accept_any_place(client, company_headers, clock):
     employee_id, headers = employee_with_face(client, company_headers)
-    shift = create_shift(client, company_headers)
-    assert (
-        assign(client, company_headers, employee_id, shift["id"], business_today(), remote=range(7)).status_code == 201
-    )
+    shift = create_shift(client, company_headers)  # todos sus días son remotos
+    assert assign(client, company_headers, employee_id, shift["id"], business_today()).status_code == 201
     clock(business_today() + timedelta(days=3), "08:00")
     assert today(client, headers)["remote_allowed"] is True and today(client, headers)["sites"] == []
     session = recorded(act(client, headers, "check-in", at=NEAR_KM))
@@ -200,7 +213,7 @@ def test_without_the_face_nothing_is_recorded(client, worker, clock):
 def test_impossible_travel_is_rejected(client, company_headers, clock):
     employee_id, headers = employee_with_face(client, company_headers)
     shift = create_shift(client, company_headers)
-    assign(client, company_headers, employee_id, shift["id"], business_today(), remote=range(7))
+    assign(client, company_headers, employee_id, shift["id"], business_today())
     day = business_today() + timedelta(days=2)
     clock(day, "07:50")
     recorded(act(client, headers, "check-in"))
@@ -218,14 +231,28 @@ def test_impossible_travel_is_rejected(client, company_headers, clock):
 def test_overnight_shift_and_the_next_morning_shift(client, company_headers, clock):
     employee_id, headers = employee_with_face(client, company_headers)
     site = create_site(client, company_headers)
-    night = create_shift(client, company_headers, name="Nocturno", start_time="22:00", end_time="06:00", breaks_count=0)
+    night = create_shift(
+        client,
+        company_headers,
+        name="Nocturno",
+        start_time="22:00",
+        end_time="06:00",
+        breaks_count=0,
+        sites=[site["id"]],
+    )
     morning = create_shift(
-        client, company_headers, name="Madrugada", start_time="06:00", end_time="14:00", early_check_in_minutes=30
+        client,
+        company_headers,
+        name="Madrugada",
+        start_time="06:00",
+        end_time="14:00",
+        early_check_in_minutes=30,
+        sites=[site["id"]],
     )
     start = business_today()
-    assign(client, company_headers, employee_id, night["id"], start, sites=[site["id"]])
+    assign(client, company_headers, employee_id, night["id"], start)
     change = start + timedelta(days=3)
-    assert assign(client, company_headers, employee_id, morning["id"], change, sites=[site["id"]]).status_code == 201
+    assert assign(client, company_headers, employee_id, morning["id"], change).status_code == 201
 
     clock(change - timedelta(days=1), "21:50")
     recorded(act(client, headers, "check-in"))
@@ -355,7 +382,7 @@ def test_validator_identifications_count_as_check_in_and_out(client, company_hea
 
 def test_board_of_the_day(client, company_headers, worker, clock):
     other_id, _ = employee_with_face(client, company_headers, person="beto", number="EMP-002")
-    assign(client, company_headers, other_id, worker["shift"]["id"], business_today(), sites=[worker["site"]["id"]])
+    assign(client, company_headers, other_id, worker["shift"]["id"], business_today())
     day = worker["day"]
     clock(day, "07:00")
     early = client.get("/api/attendance/board", params={"date": day.isoformat()}, headers=company_headers).json()[

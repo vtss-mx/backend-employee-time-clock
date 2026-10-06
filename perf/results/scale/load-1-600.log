@@ -1,0 +1,35 @@
+ Container timeclock-scale-k6-run-837382a40f5a Creating 
+ Container timeclock-scale-k6-run-837382a40f5a Created 
+
+
+  █ TOTAL RESULTS 
+
+    checks_total.......: 11978  548.85156/s
+    checks_succeeded...: 57.05% 6834 out of 11978
+    checks_failed......: 42.94% 5144 out of 11978
+
+    ✗ respuesta 200
+      ↳  57% — ✓ 6834 / ✗ 5144
+
+    CUSTOM
+    shed_503.......................: 5144   235.706497/s
+
+    HTTP
+    http_req_duration..............: avg=919.39ms p(50)=416.85ms p(95)=5.03s p(99)=5.39s max=6.05s
+      { expected_response:true }...: avg=923.05ms p(50)=515.53ms p(95)=3.29s p(99)=5.44s max=6.05s
+    http_req_failed................: 42.94% 5144 out of 11979
+    http_reqs......................: 11979  548.897381/s
+
+    EXECUTION
+    dropped_iterations.............: 23     1.053898/s
+    iteration_duration.............: avg=919.54ms p(50)=416.96ms p(95)=5.03s p(99)=5.39s max=6.05s
+    iterations.....................: 11978  548.85156/s
+    vus............................: 238    min=238           max=589
+    vus_max........................: 622    min=600           max=622
+
+    NETWORK
+    data_received..................: 46 MB  2.1 MB/s
+    data_sent......................: 6.6 MB 302 kB/s
+
+
+

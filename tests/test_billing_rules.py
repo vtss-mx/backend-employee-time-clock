@@ -20,6 +20,7 @@ from app.services.billing_rules import (
     month_end,
     months_of,
     period_of,
+    representable,
     suspension_due,
     totals,
 )
@@ -29,6 +30,16 @@ D = Decimal
 
 def test_money_rounds_half_up_to_cents():
     assert money(D("0.005")) == D("0.01") and money(D("10.004")) == D("10.00") and money(D("2")) == D("2.00")
+
+
+def test_money_rounds_to_the_decimals_of_the_currency():
+    assert money(D("10.5"), 0) == D("11") and money(D("10.49"), 0) == D("10") and money(D("1.25"), 1) == D("1.3")
+    assert representable(D("10.50"), 2) and representable(D("10"), 0) and not representable(D("10.50"), 0)
+    no_cents = Pricing(PricingMode.FLAT, D("100"), PricePeriod.MONTH, decimals=0)
+    november = [date(2026, 11, day) for day in range(1, 15)]  # 14 días × 100/30 = 46.67 → 47
+    assert line_for(no_cents, date(2026, 11, 1), november, {}).amount == D("47")
+    assert totals(D("47"), D("0"), D("16"), 0).tax == D("8")
+    assert discount_amount(Discount(DiscountType.AMOUNT, D("10.4"), DiscountRecurrence.ALWAYS), D("47"), 1, 0) == 10
 
 
 def test_months_and_cut_dates_at_month_end():

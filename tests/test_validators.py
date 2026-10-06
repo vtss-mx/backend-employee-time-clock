@@ -30,6 +30,7 @@ ADDRESS = {
     "state": "Sonora",
     "municipality": "Hermosillo",
     "city": "Hermosillo",
+    "neighborhood": "Centro",
     "latitude": 29.0729,
     "longitude": -110.9559,
 }
@@ -100,7 +101,7 @@ def test_company_manages_its_validators(client, company_headers, admin_headers):
 
     # Otra empresa no lo ve; un validador no administra validadores.
     assert client.get(url, headers=company_headers).json()["data"]["address"]["city"] == "Hermosillo"
-    create_company(client, admin_headers)
+    create_company(client, admin_headers, max_validators=1)  # con el módulo: el 404 es por ser de otra empresa
     other = login(client, "admin@panificadora.com", "Empresa1234")
     assert client.get(url, headers=other).status_code == 404
     assert client.patch(f"{url}/status", json={"active": False}, headers=other).status_code == 404

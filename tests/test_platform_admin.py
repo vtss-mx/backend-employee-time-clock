@@ -64,12 +64,12 @@ def test_create_company_with_its_first_admin(client, admin_headers):
 def test_create_company_validations_and_duplicates(client, admin_headers):
     create_company(client, admin_headers)
     duplicate_rfc = create_company(client, admin_headers, admin_email="otro@x.com")
-    assert duplicate_rfc.status_code == 409 and duplicate_rfc.json()["errors"][0]["field"] == "rfc"
+    assert duplicate_rfc.status_code == 409 and duplicate_rfc.json()["errors"][0]["field"] == "tax_id"
     duplicate_email = create_company(client, admin_headers, rfc="ACM010101AB2")
     assert duplicate_email.status_code == 409 and duplicate_email.json()["errors"][0]["field"] == "admin_email"
     invalid = create_company(client, admin_headers, rfc="XAXX010101000", admin_email="a@b.com", phone="123")
     fields = {e["field"] for e in invalid.json()["errors"]}
-    assert invalid.status_code == 422 and {"rfc", "phone"} <= fields
+    assert invalid.status_code == 422 and {"tax_id", "phone"} <= fields
     weak = create_company(client, admin_headers, rfc="ACM010101AB2", admin_email="c@d.com", admin_password="corta")
     assert weak.status_code == 422 and weak.json()["errors"][0]["field"] == "admin_password"
 
@@ -87,6 +87,7 @@ def test_availability_for_company_forms(client, admin_headers):
     assert check("company_admin_email", COMPANY_EMAIL) == "TAKEN"
     assert check("company_admin_email", "nuevo@empresa.com") == "AVAILABLE"
     assert check("company_admin_email", "") == "EMPTY"
+    assert check("company_admin_email", "no-es-correo") == "INVALID_FORMAT"
     # Datos de contacto (no únicos): solo el formato, con la misma regla que al guardar.
     assert check("company_phone", "662 123 4567") == "VALID"
     assert check("company_phone", "123") == "INVALID_FORMAT"

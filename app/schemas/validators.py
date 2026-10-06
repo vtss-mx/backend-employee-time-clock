@@ -1,6 +1,7 @@
 """Validadores reutilizables para los schemas."""
 
 import re
+from collections.abc import Callable
 from datetime import date
 from typing import Annotated
 
@@ -9,6 +10,7 @@ from email_validator import EmailNotValidError, validate_email
 from pydantic import AfterValidator, Field
 
 from app.core.clock import business_today
+from app.i18n import LocalizedValueError, Text
 from app.services.catalog_service import get_catalogs
 
 __all__ = ["business_today"]  # fecha del negocio (también la usan las validaciones de fechas)
@@ -44,34 +46,53 @@ PHONE_E164_MAX_LENGTH = 16
 
 def validate_password_strength(value: str) -> str:
     if len(value) < PASSWORD_MIN_LENGTH:
-        raise ValueError(f"La contraseña debe tener al menos {PASSWORD_MIN_LENGTH} caracteres")
+        raise LocalizedValueError("PASSWORD_TOO_SHORT", {"count": PASSWORD_MIN_LENGTH})
     if len(value) > PASSWORD_MAX_LENGTH:
-        raise ValueError(f"La contraseña no debe exceder {PASSWORD_MAX_LENGTH} caracteres")
+        raise LocalizedValueError("PASSWORD_TOO_LONG", {"count": PASSWORD_MAX_LENGTH})
     if not re.search(r"[a-z]", value):
-        raise ValueError("La contraseña debe incluir al menos una letra minúscula")
+        raise LocalizedValueError("PASSWORD_NEEDS_LOWERCASE")
     if not re.search(r"[A-Z]", value):
-        raise ValueError("La contraseña debe incluir al menos una letra mayúscula")
+        raise LocalizedValueError("PASSWORD_NEEDS_UPPERCASE")
     if not re.search(r"\d", value):
-        raise ValueError("La contraseña debe incluir al menos un número")
+        raise LocalizedValueError("PASSWORD_NEEDS_DIGIT")
     return value
 
 
 def normalize_name(value: str) -> str:
     value = " ".join(value.split())
     if not value:
-        raise ValueError("Este campo es obligatorio")
+        raise LocalizedValueError("FIELD_REQUIRED")
     if len(value) > 100:
-        raise ValueError("Máximo 100 caracteres")
+        raise LocalizedValueError("MAX_CHARACTERS", {"count": 100})
     if not _NAME_RE.match(value):
-        raise ValueError("Solo se permiten letras, espacios, apóstrofes, puntos y guiones")
+        raise LocalizedValueError("NAME_INVALID_CHARACTERS")
     return value
 
 
 def normalize_employee_number(value: str) -> str:
     value = value.strip().upper()
     if not _EMPLOYEE_NUMBER_RE.match(value):
-        raise ValueError("El número de empleado debe tener 1-30 caracteres: letras, números, guion o guion bajo")
+        raise LocalizedValueError("EMPLOYEE_NUMBER_INVALID")
     return value
+
+
+#: Lo que se ignora al escribir un documento (RFC, CURP, NSS): espacios y guiones ("PEGJ-900515-AB1").
+_DOCUMENT_SEPARATORS = re.compile(r"[\s-]")
+
+
+def is_blank_document(value: str) -> bool:
+    """Documento sin capturar: vacío, o solo espacios y guiones."""
+    return not _DOCUMENT_SEPARATORS.sub("", value)
+
+
+def optional_document(value: str | None, normalize: Callable[[str], str]) -> str | None:
+    """RFC, CURP y NSS del empleado son OPCIONALES (decisión del dueño del producto: la plataforma se abre a otros
+    países, donde no existen; el identificador fiscal de la empresa también, `app/schemas/tax_ids.py`). Sin capturar es
+    `None` (NULL en la BD, nunca ""; los índices únicos admiten varios NULL); con valor, `normalize` aplica todas sus
+    reglas (formato, longitud y dígito verificador)."""
+    if value is None or is_blank_document(value):
+        return None
+    return normalize(value)
 
 
 def _rfc_date_is_valid(yy: int, mm: int, dd: int) -> bool:
@@ -86,19 +107,18 @@ def _rfc_date_is_valid(yy: int, mm: int, dd: int) -> bool:
 
 
 def normalize_rfc(value: str) -> str:
-    """RFC en mayúsculas, sin espacios ni guiones, validado contra el formato de persona física."""
-    value = re.sub(r"[\s-]", "", value).upper()
-    if not value:
-        raise ValueError("El RFC es obligatorio")
+    """RFC en mayúsculas, sin espacios ni guiones, validado contra el formato de persona física. Uno vacío no es un
+    RFC: si el dato es opcional lo resuelve antes `optional_document`."""
+    value = _DOCUMENT_SEPARATORS.sub("", value).upper()
     if value in _GENERIC_RFCS:
-        raise ValueError("Captura el RFC personal del empleado; el RFC genérico no es válido")
+        raise LocalizedValueError("RFC_GENERIC")
     if len(value) != RFC_LENGTH:
-        raise ValueError(f"El RFC de una persona física tiene {RFC_LENGTH} caracteres; se escribieron {len(value)}")
+        raise LocalizedValueError("RFC_LENGTH", {"length": RFC_LENGTH, "count": len(value)})
     match = _RFC_RE.match(value)
     if not match:
-        raise ValueError("El RFC no tiene un formato válido (p. ej. PEGJ900515AB1)")
+        raise LocalizedValueError("RFC_FORMAT")
     if not _rfc_date_is_valid(*(int(part) for part in match.groups())):
-        raise ValueError("La fecha del RFC (aammdd) no es válida")
+        raise LocalizedValueError("RFC_DATE_INVALID")
     return value
 
 
@@ -116,31 +136,32 @@ def normalize_email(value: str) -> str:
     try:
         return validate_email(value.strip(), check_deliverability=False).normalized.lower()
     except EmailNotValidError as exc:
-        raise ValueError("Correo electrónico inválido") from exc
+        raise LocalizedValueError("EMAIL_INVALID") from exc
 
 
 def normalize_company_rfc(value: str) -> str:
-    """RFC de la empresa: persona moral (12) o persona física con actividad empresarial (13)."""
-    value = re.sub(r"[\s-]", "", value).upper()
-    if not value:
-        raise ValueError("El RFC es obligatorio")
+    """RFC de la empresa (su identificador fiscal de tipo `MX_RFC`, `app/schemas/tax_ids.py`): persona moral (12) o
+    persona física con actividad empresarial (13). Uno vacío no es un RFC: el identificador es opcional y lo resuelve
+    antes quien llama."""
+    value = _DOCUMENT_SEPARATORS.sub("", value).upper()
     if len(value) == RFC_LENGTH:
         # 13 caracteres: persona física (también rechaza los RFC genéricos, que tienen 13).
         return normalize_rfc(value)
     match = _COMPANY_RFC_RE.match(value)
     if not match:
-        raise ValueError("El RFC debe tener 12 caracteres (persona moral) o 13 (persona física)")
+        raise LocalizedValueError("COMPANY_RFC_LENGTH")
     if not _rfc_date_is_valid(*(int(part) for part in match.groups())):
-        raise ValueError("La fecha del RFC (aammdd) no es válida")
+        raise LocalizedValueError("RFC_DATE_INVALID")
     return value
 
 
-def normalize_company_name(value: str, field: str = "El nombre") -> str:
+def normalize_company_name(value: str, required: str = "NAME_REQUIRED") -> str:
+    """Nombre de la empresa; `required` es la llave del mensaje cuando falta (cada campo lo dice con su nombre)."""
     value = " ".join(value.split())
     if len(value) < 2:
-        raise ValueError(f"{field} es obligatorio")
+        raise LocalizedValueError(required)
     if len(value) > 200:
-        raise ValueError("Máximo 200 caracteres")
+        raise LocalizedValueError("MAX_CHARACTERS", {"count": 200})
     return value
 
 
@@ -151,49 +172,47 @@ def curp_check_digit(first17: str) -> str:
 
 
 def normalize_curp(value: str) -> str:
-    value = re.sub(r"[\s-]", "", value).upper()
-    if not value:
-        raise ValueError("La CURP es obligatoria")
+    """CURP en mayúsculas, sin espacios ni guiones, con formato de RENAPO y su dígito verificador (vacía no es una
+    CURP: ver `optional_document`)."""
+    value = _DOCUMENT_SEPARATORS.sub("", value).upper()
     if len(value) != CURP_LENGTH:
-        raise ValueError(f"La CURP tiene {CURP_LENGTH} caracteres; se escribieron {len(value)}")
+        raise LocalizedValueError("CURP_LENGTH", {"length": CURP_LENGTH, "count": len(value)})
     match = _CURP_RE.match(value)
     if not match:
-        raise ValueError("La CURP no tiene un formato válido (p. ej. HEGG560427MVZRRL04)")
+        raise LocalizedValueError("CURP_FORMAT")
     yy, mm, dd = (int(part) for part in match.groups()[:3])
     if not _rfc_date_is_valid(yy, mm, dd):
-        raise ValueError("La fecha de la CURP (aammdd) no es válida")
+        raise LocalizedValueError("CURP_DATE_INVALID")
     if curp_check_digit(value[:17]) != value[17]:
-        raise ValueError("La CURP no es válida: el dígito verificador no corresponde")
+        raise LocalizedValueError("CURP_CHECK_DIGIT")
     return value
 
 
-def _document_date(yymmdd: str, birth_date: date) -> str:
-    """Fecha aammdd de un RFC o una CURP como dd/mm/aaaa (con el siglo de la fecha capturada)."""
-    return f"{yymmdd[4:6]}/{yymmdd[2:4]}/{str(birth_date.year)[:2]}{yymmdd[:2]}"
+def _document_date(yymmdd: str, birth_date: date) -> date | str:
+    """Fecha aammdd de un RFC o una CURP con el siglo de la fecha capturada (se escribe como fecha del idioma). Si
+    con ese siglo no existe (29 de febrero), tal cual dd/mm/aaaa."""
+    year, month, day = int(f"{str(birth_date.year)[:2]}{yymmdd[:2]}"), int(yymmdd[2:4]), int(yymmdd[4:6])
+    try:
+        return date(year, month, day)
+    except ValueError:
+        return f"{yymmdd[4:6]}/{yymmdd[2:4]}/{year}"
 
 
-def rfc_birth_date_error(rfc: str, birth_date: date) -> str | None:
+def rfc_birth_date_error(rfc: str, birth_date: date) -> Text | None:
     """Qué fecha indica el RFC y cuál se capturó, para corregir la que esté mal."""
     if rfc_matches_birth_date(rfc, birth_date):
         return None
-    return (
-        f"El RFC indica nacimiento el {_document_date(rfc[4:10], birth_date)}, "
-        f"pero la fecha de nacimiento es {birth_date:%d/%m/%Y}"
-    )
+    return Text("RFC_BIRTH_DATE_MISMATCH", {"document": _document_date(rfc[4:10], birth_date), "birth": birth_date})
 
 
-def curp_birth_date_error(curp: str, birth_date: date) -> str | None:
+def curp_birth_date_error(curp: str, birth_date: date) -> Text | None:
     """Fecha (aammdd) y siglo (carácter 17) de la CURP contra la fecha de nacimiento capturada."""
     if curp[4:10] != birth_date.strftime("%y%m%d"):
-        return (
-            f"La CURP indica nacimiento el {_document_date(curp[4:10], birth_date)}, "
-            f"pero la fecha de nacimiento es {birth_date:%d/%m/%Y}"
+        return Text(
+            "CURP_BIRTH_DATE_MISMATCH", {"document": _document_date(curp[4:10], birth_date), "birth": birth_date}
         )
     if curp[16].isdigit() != (birth_date.year < 2000):
-        return (
-            "La CURP no corresponde al siglo de la fecha de nacimiento: su carácter 17 es un número "
-            "para quienes nacieron antes de 2000 y una letra a partir de 2000"
-        )
+        return Text("CURP_CENTURY_MISMATCH")
     return None
 
 
@@ -208,14 +227,13 @@ def luhn_valid(digits: str) -> bool:
 
 
 def normalize_nss(value: str) -> str:
-    """Número de Seguridad Social (IMSS): 11 dígitos; el último es verificador (algoritmo Luhn)."""
-    value = re.sub(r"[\s-]", "", value)
-    if not value:
-        raise ValueError("El NSS es obligatorio")
+    """Número de Seguridad Social (IMSS): 11 dígitos; el último es verificador (algoritmo Luhn). Vacío no es un NSS:
+    ver `optional_document`."""
+    value = _DOCUMENT_SEPARATORS.sub("", value)
     if not value.isdigit() or len(value) != NSS_LENGTH:
-        raise ValueError(f"El NSS tiene {NSS_LENGTH} dígitos")
+        raise LocalizedValueError("NSS_LENGTH", {"count": NSS_LENGTH})
     if not luhn_valid(value):
-        raise ValueError("El NSS no es válido: el dígito verificador no corresponde")
+        raise LocalizedValueError("NSS_CHECK_DIGIT")
     return value
 
 
@@ -227,7 +245,7 @@ def normalize_phone(value: str) -> str:
     """
     digits = re.sub(r"\D", "", value)
     if not digits:
-        raise ValueError("El teléfono es obligatorio")
+        raise LocalizedValueError("PHONE_REQUIRED")
     raw = value.strip()
     legacy_mx_mobile = re.fullmatch(r"521(\d{10})", digits)
     if legacy_mx_mobile and (raw.startswith("+") or len(digits) == len("521") + 10):
@@ -235,10 +253,10 @@ def normalize_phone(value: str) -> str:
     try:
         number = phonenumbers.parse(raw, DEFAULT_PHONE_REGION)
     except phonenumbers.NumberParseException:
-        raise ValueError("El teléfono no es válido") from None
+        raise LocalizedValueError("PHONE_INVALID") from None
     national = str(number.national_number)
     if not phonenumbers.is_valid_number(number) or len(set(national)) == 1:
-        raise ValueError(f"El teléfono no es válido para la lada +{number.country_code}")
+        raise LocalizedValueError("PHONE_INVALID_FOR_CODE", {"code": number.country_code})
     return phonenumbers.format_number(number, phonenumbers.PhoneNumberFormat.E164)
 
 
@@ -246,7 +264,7 @@ def ensure_active_country(phone: str) -> str:
     """La lada debe ser de un país activo del catálogo (catalog.countries)."""
     region = phonenumbers.region_code_for_number(phonenumbers.parse(phone))
     if region is None or not get_catalogs().is_active("countries", region):
-        raise ValueError("Los teléfonos de ese país no están disponibles")
+        raise LocalizedValueError("PHONE_COUNTRY_UNAVAILABLE")
     return phone
 
 
@@ -262,10 +280,10 @@ PhoneNumber = Annotated[
 def validate_birth_date(value: date) -> date:
     today = business_today()
     if value >= today:
-        raise ValueError("La fecha de nacimiento debe ser anterior a hoy")
+        raise LocalizedValueError("BIRTH_DATE_NOT_PAST")
     age = today.year - value.year - ((today.month, today.day) < (value.month, value.day))
     if age < MIN_EMPLOYEE_AGE:
-        raise ValueError(f"El empleado debe tener al menos {MIN_EMPLOYEE_AGE} años")
+        raise LocalizedValueError("EMPLOYEE_TOO_YOUNG", {"count": MIN_EMPLOYEE_AGE})
     if age > MAX_EMPLOYEE_AGE:
-        raise ValueError("La fecha de nacimiento no es válida")
+        raise LocalizedValueError("BIRTH_DATE_INVALID")
     return value

@@ -1,0 +1,2 @@
+05:11:12 env COMPOSE_FILE=/Users/server/Desktop/APPS/TIME-CLOCK/docker-compose.yml:/Users/server/Desktop/APPS/TIME-CLOCK/backend-employee-time-clock/perf/scale/docker-compose.scale.yml /Users/server/Desktop/APPS/TIME-CLOCK/scripts/deploy.sh
+05:12:35 terminó: 3 réplicas sanas

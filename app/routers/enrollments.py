@@ -4,6 +4,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 
+from app.core.config import settings
 from app.core.responses import ApiResponse, ok
 from app.dependencies import (
     CameraLabel,
@@ -42,7 +43,8 @@ router = APIRouter(
     summary="EMPLOYEE: registrar su rostro (queda en validación)",
     description=(
         "Disponible cuando `face_status` es NOT_ENROLLED o REJECTED. Multipart con `images` "
-        "(1 a 5 capturas frontales; se recomiendan 3) y, si la prueba de vida está activa, "
+        "(hasta `FACE_ENROLL_MAX_PHOTOS` = 36 fotos frontales completas en orden de la toma; el servidor elige las "
+        "mejores como referencias y exige `FACE_ENROLL_MIN_USABLE` útiles) y, si la prueba de vida está activa, "
         "`challenge_id` (de `/api/face/challenge`) + `challenge_image` + `flash_image`. Se validan calidad, pose, "
         "accesorios, consistencia y prueba de vida; los embeddings quedan inactivos y el estado "
         "pasa a PENDING_REVIEW hasta que COMPANY lo apruebe."
@@ -67,7 +69,7 @@ def submit_enrollment(
     ] = False,
     camera_label: CameraLabel = None,
 ) -> ApiResponse[EnrollmentSubmitResponse]:
-    frontal = read_image_uploads(images, max_files=5)
+    frontal = read_image_uploads(images, max_files=settings.FACE_ENROLL_MAX_PHOTOS)
     result = EnrollmentService(db, company_of(user)).submit(
         user,
         frontal,
@@ -78,7 +80,6 @@ def submit_enrollment(
     )
     return ok(
         result,
-        "Registro facial enviado. Tu identidad está en validación.",
         code="ENROLLMENT_SUBMITTED",
         status_code=201,
     )
@@ -97,7 +98,7 @@ def list_enrollments(
     status: Annotated[EnrollmentStatus | None, Query(description="Por defecto: PENDING")] = EnrollmentStatus.PENDING,
 ) -> ApiResponse[FaceEnrollmentList]:
     result = EnrollmentService(db, company).list_enrollments(status=status, page=page)
-    return ok(result, f"{result.total} registro(s) facial(es)", code="ENROLLMENTS_LISTED")
+    return ok(result, code="ENROLLMENTS_LISTED", params={"count": result.total})
 
 
 @router.get(
@@ -108,9 +109,7 @@ def list_enrollments(
     dependencies=[Depends(require_screen(Screen.COMPANY_VALIDATIONS))],
 )
 def get_enrollment(enrollment_id: int, company: CompanyScope, db: DbSession) -> ApiResponse[FaceEnrollmentDetail]:
-    return ok(
-        EnrollmentService(db, company).detail(enrollment_id), "Registro facial encontrado", code="ENROLLMENT_FOUND"
-    )
+    return ok(EnrollmentService(db, company).detail(enrollment_id), code="ENROLLMENT_FOUND")
 
 
 @router.post(
@@ -124,7 +123,7 @@ def approve_enrollment(
     enrollment_id: int, reviewer: CompanyUser, company: CompanyScope, db: DbSession
 ) -> ApiResponse[FaceEnrollmentDetail]:
     detail = EnrollmentService(db, company).approve(enrollment_id, reviewer)
-    return ok(detail, "Usuario aceptado. Ya puede verificar su identidad.", code="ENROLLMENT_APPROVED")
+    return ok(detail, code="ENROLLMENT_APPROVED", key="ENROLLMENT_APPROVED_DONE")
 
 
 @router.post(
@@ -138,4 +137,4 @@ def reject_enrollment(
     enrollment_id: int, payload: EnrollmentRejectRequest, reviewer: CompanyUser, company: CompanyScope, db: DbSession
 ) -> ApiResponse[FaceEnrollmentDetail]:
     detail = EnrollmentService(db, company).reject(enrollment_id, reviewer, payload.reason)
-    return ok(detail, "Usuario rechazado. Deberá registrar su rostro de nuevo.", code="ENROLLMENT_REJECTED")
+    return ok(detail, code="ENROLLMENT_REJECTED")

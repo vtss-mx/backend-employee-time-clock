@@ -12,6 +12,7 @@ from datetime import date, datetime
 from sqlalchemy import and_, delete, func, select, update
 from sqlalchemy.orm import Session
 
+from app.core.soft_delete import with_deleted
 from app.models import (
     AttendanceEvent,
     User,
@@ -23,6 +24,9 @@ from app.models import (
     WorkSite,
 )
 from app.repositories.aggregates import LOG_COUNT_CAP, affected_rows, insert_many, paginate
+
+#: Registro "en revisión" que espera la decisión de la empresa (catalog.attendance_review_statuses).
+REVIEW_PENDING = "PENDING"
 
 
 class AttendanceRepository:
@@ -84,8 +88,13 @@ class AttendanceRepository:
         status: str | None,
         offset: int,
         limit: int,
+        in_review: bool = False,
     ) -> tuple[list[WorkSession], int]:
         stmt = select(WorkSession).where(WorkSession.company_id == self.company_id)
+        if in_review:
+            # La bandeja "en revisión": el índice parcial (company_id, work_date, scheduled_start, id) WHERE
+            # review_status = 'PENDING' entrega el mismo orden sin leer las demás jornadas.
+            stmt = stmt.where(WorkSession.review_status == REVIEW_PENDING)
         if employee_id is not None:
             stmt = stmt.where(WorkSession.employee_id == employee_id)
         if start is not None:
@@ -98,6 +107,16 @@ class AttendanceRepository:
         # jornadas crecen sin fin (una por empleado y día): el total se cuenta con tope, como la bitácora.
         order = (WorkSession.work_date.desc(), WorkSession.scheduled_start.desc(), WorkSession.id.desc())
         return paginate(self.db, stmt, order, offset=offset, limit=limit, count_cap=LOG_COUNT_CAP)
+
+    def pending_reviews(self, cap: int) -> int:
+        """Jornadas "en revisión" de la empresa (contador del menú), contadas hasta `cap` en el índice parcial."""
+        inner = (
+            select(WorkSession.id)
+            .where(WorkSession.company_id == self.company_id, WorkSession.review_status == REVIEW_PENDING)
+            .limit(cap)
+            .subquery()
+        )
+        return int(self.db.scalar(select(func.count()).select_from(inner)) or 0)
 
     def sessions_on(self, employee_ids: Iterable[int], work_date: date) -> dict[int, WorkSession]:
         """Jornada de cada empleado ese día (tablero): una consulta para toda la página."""
@@ -146,21 +165,27 @@ class AttendanceRepository:
 
     # ---------- Bitácora ----------
 
-    def last_located_event(self, employee_id: int) -> AttendanceEvent | None:
-        """El último registro del empleado con ubicación (para detectar un viaje imposible)."""
+    def last_located_event(self, employee_id: int, since: datetime) -> AttendanceEvent | None:
+        """El último registro del empleado con ubicación desde `since` (para detectar un viaje imposible).
+
+        `since` acota la búsqueda a los meses en que un viaje aún podría ser imposible (§3.1.5): la bitácora está
+        particionada por mes en `occurred_at`, así se leen solo esas particiones, en el orden del índice
+        `(employee_id, occurred_at, id)`, en lugar de la historia completa del empleado."""
         stmt = (
             select(AttendanceEvent)
             .where(
                 AttendanceEvent.company_id == self.company_id,
                 AttendanceEvent.employee_id == employee_id,
+                AttendanceEvent.occurred_at >= since,
                 AttendanceEvent.latitude.is_not(None),
             )
-            .order_by(AttendanceEvent.id.desc())
+            .order_by(AttendanceEvent.occurred_at.desc(), AttendanceEvent.id.desc())
         )
         return self.db.scalar(stmt.limit(1))
 
     def events_of(self, session_id: int) -> list[tuple[AttendanceEvent, float | None, str | None]]:
-        """Cada registro de la jornada con la confianza de su verificación y quién operó."""
+        """Cada registro de la jornada con la confianza de su verificación y quién operó (historial: también un
+        validador o una cuenta que ya está en «Eliminados»)."""
         operator = func.coalesce(Validator.name, User.email)
         stmt = (
             select(AttendanceEvent, VerificationLog.score, operator)
@@ -172,14 +197,15 @@ class AttendanceRepository:
             .where(AttendanceEvent.company_id == self.company_id, AttendanceEvent.session_id == session_id)
             .order_by(AttendanceEvent.id)
         )
-        return [(event, score, name) for event, score, name in self.db.execute(stmt)]
+        return [(event, score, name) for event, score, name in self.db.execute(with_deleted(stmt))]
 
     def site_names(self, site_ids: Iterable[int | None]) -> dict[int, str]:
+        """Nombre de los sitios donde se checó (historial: también los que están en «Eliminados»)."""
         ids = list({site_id for site_id in site_ids if site_id is not None})
         if not ids:
             return {}
         stmt = select(WorkSite.id, WorkSite.name).where(WorkSite.company_id == self.company_id, WorkSite.id.in_(ids))
-        return dict(self.db.execute(stmt).all())  # filas (id, nombre)
+        return dict(self.db.execute(with_deleted(stmt)).all())  # filas (id, nombre)
 
 
 def close_missed_checkouts(db: Session, now: datetime) -> int:

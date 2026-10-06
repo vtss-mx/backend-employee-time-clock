@@ -1,12 +1,12 @@
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, LargeBinary, String, text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, String, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
 from app.core.db_schemas import AUTH, WORKFORCE
-from app.models.mixins import TimestampMixin
+from app.models.mixins import TimestampMixin, company_fk
 
 if TYPE_CHECKING:
     from app.models.employee import Employee
@@ -24,7 +24,6 @@ class EmployeeQr(TimestampMixin, Base):
       sentencia atómica: dos lecturas simultáneas del mismo QR no pueden ganar ambas.
     - `completed_at`: el uso terminó. Con QR basta el escaneo; con QR + rostro, el escaneo aparta el
       QR para ese validador y se completa al comparar el rostro (o vence a QR_FACE_WINDOW_SECONDS).
-    - `token_encrypted`: solo los QR fijos anteriores (ya no válidos); los dinámicos no lo guardan.
     """
 
     __tablename__ = "employee_qr_codes"
@@ -56,15 +55,16 @@ class EmployeeQr(TimestampMixin, Base):
             postgresql_where=text("used_at IS NOT NULL"),
             sqlite_where=text("used_at IS NOT NULL"),
         ),
+        # El empleado es de la MISMA empresa del QR (FK compuesta; también la usa el borrado en cascada).
+        company_fk("employee_qr_codes", "employee_id", f"{WORKFORCE}.employees"),
         {"schema": WORKFORCE},
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    employee_id: Mapped[int] = mapped_column(
-        ForeignKey(f"{WORKFORCE}.employees.id", ondelete="CASCADE"), nullable=False
-    )
+    #: Empresa del empleado (copia): la seguridad por fila aísla los QR por empresa.
+    company_id: Mapped[int] = mapped_column(nullable=False)
+    employee_id: Mapped[int] = mapped_column(nullable=False)
     token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
-    token_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary)
     active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     #: Vencimiento (se depuran los vencidos tras QR_TOKEN_RETENTION_DAYS).
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
@@ -73,4 +73,6 @@ class EmployeeQr(TimestampMixin, Base):
     used_by_id: Mapped[int | None] = mapped_column(ForeignKey(f"{AUTH}.users.id", ondelete="SET NULL"))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
-    employee: Mapped[Employee] = relationship(back_populates="qr_codes")
+    employee: Mapped[Employee] = relationship(
+        back_populates="qr_codes", primaryjoin="EmployeeQr.employee_id == Employee.id", foreign_keys=[employee_id]
+    )

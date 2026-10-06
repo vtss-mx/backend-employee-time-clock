@@ -12,6 +12,7 @@ from typing import Annotated, Literal, Self
 from pydantic import AfterValidator, BaseModel, Field
 
 from app.core.exceptions import AppError
+from app.i18n import LocalizedValueError
 from app.schemas.common import EmployeeRef
 
 #: Empleados por operación: lo que cabe en una pantalla de selección y en una transacción corta.
@@ -22,7 +23,7 @@ BulkResultCode = Literal["DONE", "UNCHANGED", "SKIPPED"]
 
 def _unique(ids: list[int]) -> list[int]:
     if len(set(ids)) != len(ids):
-        raise ValueError("Cada empleado va una sola vez")
+        raise LocalizedValueError("EMPLOYEE_IDS_REPEATED")
     return ids
 
 

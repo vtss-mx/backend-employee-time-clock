@@ -69,9 +69,9 @@ def _expired_counters(count: int) -> None:
 
 
 def test_a_round_stops_at_the_batch_cap_and_the_next_one_continues(monkeypatch):
-    """Una tabla con muchísimo vencido no acapara la vuelta: a lo más MAX_BATCHES_PER_TABLE lotes y
-    lo demás sale en la siguiente."""
-    monkeypatch.setattr(maintenance_service, "MAX_BATCHES_PER_TABLE", 2)
+    """Una tabla con muchísimo vencido no acapara la vuelta: a lo más MAINTENANCE_MAX_BATCHES_PER_TABLE lotes
+    y lo demás sale en la siguiente."""
+    monkeypatch.setattr(settings, "MAINTENANCE_MAX_BATCHES_PER_TABLE", 2)
     name = _purge_name(RateLimitCounter.key)
     _expired_counters(5)
     with SessionLocal() as db:
@@ -82,8 +82,9 @@ def test_a_round_stops_at_the_batch_cap_and_the_next_one_continues(monkeypatch):
 
 class _AdvisoryLock:
     """Motor y conexión de PostgreSQL simulados SOLO para el candado de asesoría (la depuración sigue
-    usando la BD de pruebas). `granted` es lo que respondería `pg_try_advisory_lock`: False = otra
-    instancia está depurando."""
+    usando la BD de pruebas). `granted` es lo que respondería `pg_try_advisory_xact_lock`: False = otra
+    instancia está depurando. Salir del `with` de la conexión termina su transacción (y suelta el candado):
+    se anota como "fin"."""
 
     dialect = SimpleNamespace(name="postgresql")
 
@@ -98,9 +99,13 @@ class _AdvisoryLock:
         return self
 
     def __exit__(self, *_exc) -> None:
-        return None
+        self.calls.append("fin")
 
-    def execute(self, statement, params):
+    def execute(self, statement, params=None):
+        if params is None:  # el candado apaga para sí el límite de transacción inactiva del rol de la API
+            assert str(statement) == "SET LOCAL idle_in_transaction_session_timeout = 0"
+            self.calls.append("SET LOCAL")
+            return None
         assert params == {"key": maintenance_service.MAINTENANCE_LOCK_KEY}
         self.calls.append(str(statement).removeprefix("SELECT ").split("(")[0])
         return SimpleNamespace(scalar=lambda: self.granted)
@@ -113,7 +118,7 @@ def test_on_postgresql_only_the_instance_holding_the_lock_purges(monkeypatch):
     busy = _AdvisoryLock(granted=False)
     monkeypatch.setattr(maintenance_service, "engine", busy)
     assert run_once() is None  # otra instancia tiene el candado: esta se salta la vuelta
-    assert busy.calls == ["pg_try_advisory_lock"]  # no suelta un candado que no es suyo
+    assert busy.calls == ["pg_try_advisory_xact_lock", "fin"]  # nada más: no toca un candado que no es suyo
     with SessionLocal() as db:
         assert _count(db, RateLimitCounter) == 1
 
@@ -121,7 +126,9 @@ def test_on_postgresql_only_the_instance_holding_the_lock_purges(monkeypatch):
     monkeypatch.setattr(maintenance_service, "engine", holder)
     removed = run_once()
     assert removed is not None and removed[name] == 1
-    assert holder.calls == ["pg_try_advisory_lock", "pg_advisory_unlock"]
+    # De transacción: se suelta al terminar la transacción de su conexión (también tras PgBouncer en modo
+    # transacción, donde un candado de sesión quedaría pegado a una conexión que luego usa otro cliente).
+    assert holder.calls == ["pg_try_advisory_xact_lock", "SET LOCAL", "fin"]
 
 
 def test_the_lock_is_released_even_if_the_round_fails(monkeypatch):
@@ -134,7 +141,7 @@ def test_the_lock_is_released_even_if_the_round_fails(monkeypatch):
     monkeypatch.setattr(maintenance_service, "purge_expired", broken)
     with pytest.raises(RuntimeError):
         run_once()
-    assert holder.calls == ["pg_try_advisory_lock", "pg_advisory_unlock"]  # las demás instancias siguen
+    assert holder.calls == ["pg_try_advisory_xact_lock", "SET LOCAL", "fin"]  # las demás instancias siguen
 
 
 def test_the_scheduler_survives_failures_and_only_logs_real_work(monkeypatch, caplog):

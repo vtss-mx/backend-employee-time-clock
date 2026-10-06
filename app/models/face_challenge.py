@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, String, false, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -29,3 +29,12 @@ class FaceChallenge(Base):
     #: Cuándo se emitió: el tiempo humano mínimo de respuesta se mide desde aquí.
     issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True, nullable=False)
+    #: Reto de "un paso más" (motor de riesgo, riesgo medio): el máximo de movimientos y el destello OBLIGATORIO
+    #: para este intento aunque la empresa solo lo mida. Superarlo cumple el paso extra.
+    step_up: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false(), nullable=False)
+    #: La empresa estaba reforzada por ataques al emitirlo (señal COMPANY_UNDER_ATTACK sin otra consulta).
+    reinforced: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false(), nullable=False)
+    #: Destello dictado por el servidor (antifraude 2a): el reto NO entregó sus colores; se revelan uno por uno por el
+    #: canal en vivo (`flash_pacing`) y la respuesta trae el comprobante. `flash_colors` queda para el respaldo sin
+    #: canal.
+    flash_paced: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false(), nullable=False)

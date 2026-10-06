@@ -8,9 +8,10 @@ identificarse o mostrar su QR, una identidad aprobada por su empresa.
 from app.core.exceptions import PermissionDeniedError
 from app.models import Employee, FaceStatus, User
 
+#: Llave del mensaje según el estado del registro facial (sin registro: `FACE_NOT_ENROLLED_YET`).
 _NOT_APPROVED = {
-    FaceStatus.PENDING_REVIEW: "Tu registro facial está en validación por tu empresa",
-    FaceStatus.REJECTED: "Tu registro facial fue rechazado. Regístrate de nuevo",
+    FaceStatus.PENDING_REVIEW: "FACE_PENDING_REVIEW",
+    FaceStatus.REJECTED: "FACE_REJECTED_ENROLL_AGAIN",
 }
 
 
@@ -18,9 +19,9 @@ def active_employee(user: User) -> Employee:
     """El empleo con el que opera la persona (activo)."""
     employee = user.employee
     if employee is None:
-        raise PermissionDeniedError("Solo los empleados pueden usar esta función")
+        raise PermissionDeniedError(key="EMPLOYEES_ONLY")
     if not employee.active or not user.active:
-        raise PermissionDeniedError("El empleado está inactivo", code="USER_INACTIVE")
+        raise PermissionDeniedError(code="USER_INACTIVE", key="EMPLOYEE_INACTIVE")
     return employee
 
 
@@ -29,6 +30,6 @@ def approved_employee(user: User) -> Employee:
     employee = active_employee(user)
     if employee.face_status != FaceStatus.APPROVED:
         raise PermissionDeniedError(
-            _NOT_APPROVED.get(employee.face_status, "Primero debes registrar tu rostro"), code="FACE_NOT_APPROVED"
+            code="FACE_NOT_APPROVED", key=_NOT_APPROVED.get(employee.face_status, "FACE_NOT_ENROLLED_YET")
         )
     return employee

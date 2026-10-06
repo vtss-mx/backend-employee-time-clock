@@ -13,18 +13,18 @@ class EmployeeQrRepository:
     def __init__(self, db: Session) -> None:
         self.db = db
 
-    def get_by_token_hash(self, token_hash: str) -> EmployeeQr | None:
-        return self.db.scalar(select(EmployeeQr).where(EmployeeQr.token_hash == token_hash))
+    def get_by_token_hash(self, token_hash: str, company_id: int) -> EmployeeQr | None:
+        """El QR de ese token SOLO si es de la empresa del validador: uno de otra empresa no existe para él (ni
+        por su motivo se sabe que existe en otra; la seguridad por fila además lo oculta)."""
+        stmt = select(EmployeeQr).where(EmployeeQr.token_hash == token_hash, EmployeeQr.company_id == company_id)
+        return self.db.scalar(stmt)
 
     def get_for_employee(self, employee_id: int, qr_id: int) -> EmployeeQr | None:
         return self.db.scalar(select(EmployeeQr).where(EmployeeQr.id == qr_id, EmployeeQr.employee_id == employee_id))
 
     def latest_issued(self, employee_id: int) -> EmployeeQr | None:
         return self.db.scalar(
-            select(EmployeeQr)
-            .where(EmployeeQr.employee_id == employee_id, EmployeeQr.token_encrypted.is_(None))
-            .order_by(EmployeeQr.id.desc())
-            .limit(1)
+            select(EmployeeQr).where(EmployeeQr.employee_id == employee_id).order_by(EmployeeQr.id.desc()).limit(1)
         )
 
     def latest_used(self, employee_id: int) -> EmployeeQr | None:

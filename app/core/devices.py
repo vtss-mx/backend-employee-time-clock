@@ -31,3 +31,34 @@ def classify_device(user_agent: str | None, ch_mobile: str | None = None) -> Dev
     if _PHONE.search(ua):
         return "phone"
     return "tablet" if _ANDROID.search(ua) else "desktop"
+
+
+#: Sistema operativo y navegador que se reconocen en el User-Agent, en orden (el primero que coincide gana). Son
+#: nombres propios: se muestran igual en cualquier idioma.
+_SYSTEMS = (
+    ("iPhone", re.compile(r"iPhone|iPod", re.IGNORECASE)),
+    ("iPad", re.compile(r"iPad", re.IGNORECASE)),
+    ("Android", re.compile(r"Android", re.IGNORECASE)),
+    ("ChromeOS", re.compile(r"CrOS", re.IGNORECASE)),
+    ("Windows", re.compile(r"Windows", re.IGNORECASE)),
+    ("Mac", re.compile(r"Macintosh|Mac OS X", re.IGNORECASE)),
+    ("Linux", re.compile(r"Linux", re.IGNORECASE)),
+)
+_BROWSERS = (
+    ("Edge", re.compile(r"Edg(A|iOS)?/", re.IGNORECASE)),
+    ("Opera", re.compile(r"OPR/|Opera", re.IGNORECASE)),
+    ("Samsung Internet", re.compile(r"SamsungBrowser", re.IGNORECASE)),
+    ("Firefox", re.compile(r"Firefox/|FxiOS", re.IGNORECASE)),
+    ("Chrome", re.compile(r"Chrome/|CriOS", re.IGNORECASE)),
+    ("Safari", re.compile(r"Safari/", re.IGNORECASE)),
+)
+
+
+def device_label(user_agent: str | None) -> str | None:
+    """Nombre amigable del dispositivo por su navegador ("iPhone · Safari", "Android · Chrome"); None si el
+    User-Agent no dice nada reconocible (quien lo muestra usa entonces el tipo: teléfono, tableta o computadora)."""
+    ua = user_agent or ""
+    system = next((name for name, pattern in _SYSTEMS if pattern.search(ua)), None)
+    browser = next((name for name, pattern in _BROWSERS if pattern.search(ua)), None)
+    parts = [part for part in (system, browser) if part]
+    return " · ".join(parts) or None

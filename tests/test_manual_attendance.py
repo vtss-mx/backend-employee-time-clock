@@ -194,7 +194,7 @@ def test_the_company_corrects_a_session(client, company_headers, worker, clock, 
 def test_correcting_an_open_session_keeps_it_open(client, company_headers, clock):
     employee_id, headers = employee_with_face(client, company_headers)
     night = create_shift(client, company_headers, name="Nocturno", start_time="22:00", end_time="06:00")
-    assign(client, company_headers, employee_id, night["id"], business_today(), remote=range(7))
+    assign(client, company_headers, employee_id, night["id"], business_today())
     day = business_today() + timedelta(days=2)
     clock(day, "21:55")
     live = recorded(act(client, headers, "check-in"))

@@ -98,7 +98,8 @@ def test_holidays_by_year_with_the_official_ones(client, company_headers, admin_
     assert client.get(f"{CAL}/holidays", params={"year": year}, headers=other).json()["data"]["total"] == 0
     assert client.delete(f"{CAL}/holidays/{holiday_id}", headers=other).json()["code"] == "HOLIDAY_NOT_FOUND"
     assert client.delete(f"{CAL}/holidays/{holiday_id}", headers=company_headers).status_code == 200
-    assert client.delete(f"{CAL}/holidays/{holiday_id}", headers=company_headers).status_code == 404
+    again = client.delete(f"{CAL}/holidays/{holiday_id}", headers=company_headers)  # ya en «Eliminados»
+    assert again.status_code == 409 and again.json()["code"] == "ALREADY_DELETED"
 
 
 def test_two_holidays_on_the_same_day_at_the_same_time(client, company_headers, monkeypatch):
@@ -319,7 +320,7 @@ def test_an_absence_type_missing_from_the_cached_catalog_still_reads(client, com
         )
         db.commit()
     shift = create_shift(client, company_headers)
-    assert assign(client, company_headers, requester["id"], shift["id"], TODAY, remote=range(7)).status_code == 201
+    assert assign(client, company_headers, requester["id"], shift["id"], TODAY).status_code == 201
     clock(day, "08:00")
     off = attendance_today(client, requester["headers"])
     assert off["day_off"]["kind"] == "STUDY" and off["day_off"]["name"] == "STUDY"

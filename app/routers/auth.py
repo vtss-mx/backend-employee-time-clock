@@ -17,13 +17,14 @@ from app.core.responses import ApiResponse, ok
 from app.core.tokens import jwks
 from app.dependencies import (
     CurrentUser,
-    DbSession,
     EmployeeAccount,
     OptionalTokenPayload,
     Pagination,
+    PlatformDb,
     request_meta,
     require_screen,
 )
+from app.i18n import Text
 from app.middleware.rate_limit import enforce, ip_rate_limit
 from app.models import Screen, SessionRevocationReason
 from app.schemas.auth import (
@@ -103,7 +104,7 @@ def _token_response(issued: IssuedSession) -> TokenResponse:
     dependencies=[Depends(ip_rate_limit("login", lambda: settings.RATE_LIMIT_LOGIN_IP_PER_MINUTE))],
 )
 def login(
-    payload: LoginRequest, request: Request, response: Response, db: DbSession, remembered: RememberCookie = None
+    payload: LoginRequest, request: Request, response: Response, db: PlatformDb, remembered: RememberCookie = None
 ) -> ApiResponse[TokenResponse]:
     # Límite adicional por cuenta para frenar fuerza bruta sobre un mismo correo.
     enforce(f"login:email:{payload.email}", settings.RATE_LIMIT_LOGIN_PER_MINUTE)
@@ -114,10 +115,13 @@ def login(
     ensure_device_allowed(db, user, request.headers)
     ip, user_agent = request_meta(request)
     # Validador: solo desde un dispositivo que su empresa autorizó (firma el reto con su llave).
-    ensure_device_authorized(db, user, payload.device, ip=ip, user_agent=user_agent)
+    # La sesión queda ligada a esa llave: cada identificación la vuelve a firmar (antifraude 2b, `request_signing`).
+    device_key = ensure_device_authorized(db, user, payload.device, ip=ip, user_agent=user_agent)
     # Validador que requiere ubicación: solo dentro del radio de su domicilio.
     ensure_location_allowed(user, payload.location)
-    issued = SessionService(db).create(user, ip=ip, user_agent=user_agent, persistent=payload.remember)
+    issued = SessionService(db).create(
+        user, ip=ip, user_agent=user_agent, persistent=payload.remember, device_key_hash=device_key
+    )
     _set_refresh_cookie(response, request, issued, issued.refresh_token or "")
     try:  # recordar la cuenta es un extra: si falla, la sesión (ya creada) no se pierde
         accounts = RememberedAccountService(db)
@@ -131,7 +135,7 @@ def login(
     except SQLAlchemyError:
         db.rollback()
         logger.warning("No se pudo recordar la cuenta en este dispositivo; la sesión sí se inició", exc_info=True)
-    return ok(_token_response(issued), "Sesión iniciada correctamente", code="LOGIN_SUCCESS")
+    return ok(_token_response(issued), code="LOGIN_SUCCESS")
 
 
 @router.get(
@@ -146,11 +150,10 @@ def login(
     responses={429: {"model": ErrorResponse}},
     dependencies=[Depends(ip_rate_limit("session", lambda: settings.RATE_LIMIT_LOGIN_IP_PER_MINUTE))],
 )
-def session_status(db: DbSession, token: RefreshCookie = None) -> ApiResponse[SessionStatus]:
+def session_status(db: PlatformDb, token: RefreshCookie = None) -> ApiResponse[SessionStatus]:
     signed_in = SessionService(db).has_session(token)
-    return ok(
-        SessionStatus(signed_in=signed_in), "Sesión vigente" if signed_in else "Sin sesión", code="SESSION_STATUS"
-    )
+    key = "SESSION_ACTIVE" if signed_in else "SESSION_NONE"
+    return ok(SessionStatus(signed_in=signed_in), code="SESSION_STATUS", key=key)
 
 
 @router.post(
@@ -165,7 +168,7 @@ def session_status(db: DbSession, token: RefreshCookie = None) -> ApiResponse[Se
     dependencies=[Depends(ip_rate_limit("refresh", lambda: settings.RATE_LIMIT_LOGIN_IP_PER_MINUTE))],
 )
 def refresh(
-    request: Request, response: Response, db: DbSession, token: RefreshCookie = None
+    request: Request, response: Response, db: PlatformDb, token: RefreshCookie = None
 ) -> ApiResponse[TokenResponse]:
     # Por sesión (la cookie): una oficina entera detrás de una sola IP no se bloquea entre sí.
     sid, _ = split_token(token)
@@ -174,7 +177,7 @@ def refresh(
     issued = SessionService(db).refresh(token)
     if issued.refresh_token:
         _set_refresh_cookie(response, request, issued, issued.refresh_token)
-    return ok(_token_response(issued), "Sesión renovada", code="TOKEN_REFRESHED")
+    return ok(_token_response(issued), code="TOKEN_REFRESHED")
 
 
 @router.post(
@@ -190,15 +193,12 @@ def refresh(
     dependencies=[Depends(require_screen(Screen.EMPLOYEE_SELECT_COMPANY))],
 )
 def select_company(
-    payload: CompanySelection, request: Request, user: EmployeeAccount, db: DbSession
+    payload: CompanySelection, request: Request, user: EmployeeAccount, db: PlatformDb
 ) -> ApiResponse[UserRead]:
     SessionService(db).select_company(request.state.session_id, user, payload.company_id, request.headers)
-    company = user.current_company
-    return ok(
-        user_read(user),
-        f"Entraste a {company.name if company else 'tu empresa'}",
-        code="COMPANY_SELECTED",
-    )
+    company = user.current_company  # la que acaba de elegir (sin ella, "tu empresa")
+    name = company.name if company else Text("YOUR_COMPANY")
+    return ok(user_read(user), code="COMPANY_SELECTED", params={"company": name})
 
 
 @router.get(
@@ -210,10 +210,10 @@ def select_company(
         "`null` si no hay ninguno o ya venció."
     ),
 )
-def remembered_account(db: DbSession, remembered: RememberCookie = None) -> ApiResponse[RememberedAccountRead | None]:
+def remembered_account(db: PlatformDb, remembered: RememberCookie = None) -> ApiResponse[RememberedAccountRead | None]:
     account = RememberedAccountService(db).lookup(remembered)
     data = RememberedAccountRead(email=account.user.email) if account else None
-    return ok(data, "Cuenta recordada" if data else "Sin cuenta recordada", code="REMEMBERED_ACCOUNT")
+    return ok(data, code="REMEMBERED_ACCOUNT", key="REMEMBERED_ACCOUNT" if data else "REMEMBERED_ACCOUNT_NONE")
 
 
 @router.delete(
@@ -222,11 +222,11 @@ def remembered_account(db: DbSession, remembered: RememberCookie = None) -> ApiR
     summary='Olvidar la cuenta recordada en este dispositivo ("Usar otra cuenta")',
 )
 def forget_remembered_account(
-    request: Request, response: Response, db: DbSession, remembered: RememberCookie = None
+    request: Request, response: Response, db: PlatformDb, remembered: RememberCookie = None
 ) -> ApiResponse[None]:
     RememberedAccountService(db).forget(remembered)
     _clear_cookie(response, request, settings.REMEMBER_COOKIE_NAME)
-    return ok(None, "Este dispositivo ya no recuerda la cuenta", code="REMEMBERED_ACCOUNT_FORGOTTEN")
+    return ok(None, code="REMEMBERED_ACCOUNT_FORGOTTEN")
 
 
 @router.post(
@@ -242,7 +242,7 @@ def forget_remembered_account(
 def logout(
     request: Request,
     response: Response,
-    db: DbSession,
+    db: PlatformDb,
     payload: OptionalTokenPayload,
     token: RefreshCookie = None,
 ) -> ApiResponse[None]:
@@ -251,7 +251,7 @@ def logout(
         sessions.revoke_quietly(str(payload["sid"]), int(payload["sub"]))
     sessions.revoke_by_refresh_token(token)
     _clear_cookie(response, request, settings.REFRESH_COOKIE_NAME)
-    return ok(None, "Sesión cerrada", code="LOGGED_OUT")
+    return ok(None, code="LOGGED_OUT")
 
 
 @router.post(
@@ -265,15 +265,12 @@ def logout(
     responses={401: {"model": ErrorResponse}, 422: {"model": ErrorResponse}, 429: {"model": ErrorResponse}},
 )
 def change_password(
-    payload: ChangePasswordRequest, request: Request, user: CurrentUser, db: DbSession
+    payload: ChangePasswordRequest, request: Request, user: CurrentUser, db: PlatformDb
 ) -> ApiResponse[dict]:
     enforce(f"change-password:user:{user.id}", settings.RATE_LIMIT_LOGIN_PER_MINUTE)
     current = getattr(request.state, "session_id", None)
     revoked = SessionService(db).change_password(user, payload.current_password, payload.new_password, keep=current)
-    message = "Contraseña actualizada." + (
-        f" Se cerraron {revoked} sesión(es) en otros dispositivos." if revoked else ""
-    )
-    return ok({"revoked_sessions": revoked}, message, code="PASSWORD_CHANGED")
+    return ok({"revoked_sessions": revoked}, code="PASSWORD_CHANGED", params={"count": revoked})
 
 
 @router.post(
@@ -282,10 +279,10 @@ def change_password(
     summary="Cerrar sesión en todos los dispositivos",
     responses={401: {"model": ErrorResponse}},
 )
-def logout_all(request: Request, response: Response, user: CurrentUser, db: DbSession) -> ApiResponse[dict]:
+def logout_all(request: Request, response: Response, user: CurrentUser, db: PlatformDb) -> ApiResponse[dict]:
     revoked = SessionService(db).revoke_all(user.id, SessionRevocationReason.LOGOUT_ALL)
     _clear_cookie(response, request, settings.REFRESH_COOKIE_NAME)
-    return ok({"revoked": revoked}, f"Se cerraron {revoked} sesión(es)", code="LOGGED_OUT_ALL")
+    return ok({"revoked": revoked}, code="LOGGED_OUT_ALL", params={"count": revoked})
 
 
 @router.get(
@@ -294,11 +291,11 @@ def logout_all(request: Request, response: Response, user: CurrentUser, db: DbSe
     summary="Mis sesiones activas (dispositivos)",
     responses={401: {"model": ErrorResponse}},
 )
-def list_sessions(request: Request, user: CurrentUser, db: DbSession, page: Pagination) -> ApiResponse[SessionList]:
+def list_sessions(request: Request, user: CurrentUser, db: PlatformDb, page: Pagination) -> ApiResponse[SessionList]:
     current = getattr(request.state, "session_id", None)
     sessions, total = SessionService(db).page_active(user.id, page)
     items = [SessionRead.model_validate(s).model_copy(update={"current": s.id == current}) for s in sessions]
-    return ok(SessionList.of(items, total, page), f"{total} sesión(es) activa(s)", code="SESSIONS_LISTED")
+    return ok(SessionList.of(items, total, page), code="SESSIONS_LISTED", params={"count": total})
 
 
 @router.delete(
@@ -307,9 +304,9 @@ def list_sessions(request: Request, user: CurrentUser, db: DbSession, page: Pagi
     summary="Revocar una de mis sesiones",
     responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
 )
-def revoke_session(session_id: str, user: CurrentUser, db: DbSession) -> ApiResponse[None]:
+def revoke_session(session_id: str, user: CurrentUser, db: PlatformDb) -> ApiResponse[None]:
     SessionService(db).revoke(session_id, user.id, SessionRevocationReason.REVOKED_BY_USER)
-    return ok(None, "Sesión revocada", code="SESSION_REVOKED")
+    return ok(None, code="SESSION_REVOKED")
 
 
 @router.get(
@@ -319,4 +316,4 @@ def revoke_session(session_id: str, user: CurrentUser, db: DbSession) -> ApiResp
     description="Las llaves están en `data.keys`, con el formato RFC 7517. Con HS256 la lista está vacía.",
 )
 def get_jwks() -> ApiResponse[JwksResponse]:
-    return ok(JwksResponse.model_validate(jwks()), "Llaves públicas de firma", code="JWKS")
+    return ok(JwksResponse.model_validate(jwks()), code="JWKS")

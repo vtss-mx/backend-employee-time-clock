@@ -1,12 +1,13 @@
 from collections.abc import Collection, Iterable
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import ColumnElement, Select, delete, func, select, true, update
 from sqlalchemy.orm import Session
 
-from app.models import Employee, FaceEmbedding, FaceStatus
-from app.repositories.aggregates import affected_rows
+from app.models import CaptureTrace, Employee, FaceEmbedding, FaceEnrollment, FaceStatus, FraudEvidence
+from app.repositories.aggregates import affected_rows, insert_many
 
 #: (muestra, empleado, embedding cifrado, dimensión) de una fila de la galería.
 GalleryRow = tuple[int, int, bytes, int]
@@ -47,8 +48,11 @@ class FaceEmbeddingRepository:
 
     @staticmethod
     def _gallery_filter(company_id: int, model_name: str) -> tuple[ColumnElement[bool], ...]:
-        """Muestras activas del modelo actual de los empleados activos y con identidad aprobada."""
+        """Muestras activas del modelo actual de los empleados activos y con identidad aprobada. La empresa va en
+        las DOS tablas (§3.1.2): las muestras de la empresa salen de `ix_face_embeddings_company_model` sin leer
+        las de toda la plataforma."""
         return (
+            FaceEmbedding.company_id == company_id,
             Employee.company_id == company_id,
             Employee.active.is_(True),
             Employee.face_status == FaceStatus.APPROVED,
@@ -166,14 +170,18 @@ class FaceEmbeddingRepository:
             )
             .select_from(FaceEmbedding)
             .join(Employee, FaceEmbedding.employee_id == Employee.id)
-            .where(Employee.company_id == company_id, FaceEmbedding.active.is_(True))
+            .where(
+                FaceEmbedding.company_id == company_id,
+                Employee.company_id == company_id,
+                FaceEmbedding.active.is_(True),
+            )
         ).one()
         return LearningTotals(int(row[0] or 0), int(row[1]), int(row[2]), int(row[3]), int(row[4]), row[5])
 
-    def add(self, embedding: FaceEmbedding) -> FaceEmbedding:
-        self.db.add(embedding)
-        self.db.flush()
-        return embedding
+    def add_all(self, embeddings: Iterable[FaceEmbedding]) -> list[FaceEmbedding]:
+        """Las muestras de un registro (o una aprendida) en UNA sentencia (`insert_many`): el registro cuesta las mismas
+        consultas con 1 que con FACE_MAX_SAMPLES_PER_EMPLOYEE referencias, en cualquier motor."""
+        return insert_many(self.db, list(embeddings))
 
     def credit(self, sample_id: int, moment: datetime) -> None:
         """La muestra decidió una identificación exitosa: suma a su utilidad (sentencia atómica, sin
@@ -190,13 +198,38 @@ class FaceEmbeddingRepository:
         stmt = delete(FaceEmbedding).where(FaceEmbedding.employee_id == employee_id, FaceEmbedding.learned.is_(True))
         return affected_rows(self.db, stmt)
 
+    def delete_learned_since(self, employee_id: int, since: datetime) -> int:
+        """Olvida lo aprendido del empleado desde un momento (un intento que la revisión confirmó como fraude: lo
+        que se aprendió de él o después ya no se considera suyo). Su registro aprobado se queda."""
+        stmt = delete(FaceEmbedding).where(
+            FaceEmbedding.employee_id == employee_id,
+            FaceEmbedding.learned.is_(True),
+            FaceEmbedding.created_at >= since,
+        )
+        return affected_rows(self.db, stmt)
+
     def delete_for_company(self, company_id: int, employee_id: int | None = None) -> int:
         """Todas las muestras de los empleados de la empresa (o de uno): en una sola sentencia, sin
         cargar filas, aunque sean miles (nueva verificación de identidad de toda la empresa)."""
         people = select(Employee.id).where(Employee.company_id == company_id)
         if employee_id is not None:
             people = people.where(Employee.id == employee_id)
-        return affected_rows(self.db, delete(FaceEmbedding).where(FaceEmbedding.employee_id.in_(people)))
+        # Por los empleados (su índice) y con la empresa también en las muestras (§3.1.2).
+        stmt = delete(FaceEmbedding).where(
+            FaceEmbedding.company_id == company_id, FaceEmbedding.employee_id.in_(people)
+        )
+        return affected_rows(self.db, stmt)
+
+    def erase_employee(self, company_id: int, employee_id: int) -> None:
+        """Borrado DE VERDAD de lo biométrico de un empleado que se elimina (regla 13; LFPDPPP, datos sensibles): sus
+        plantillas, sus registros faciales (con sus marcas; las fotos ya se encolaron para salir del bucket), las
+        huellas perceptuales de sus capturas (llevan su embedding) y los fotogramas de evidencia de sus casos de
+        fraude. Una sentencia por tabla, sin cargar filas, cada una por su índice de empleado (la evidencia, que se
+        depura a los 90 días, por la empresa). Su ficha y su historial de asistencia se conservan (borrado lógico)."""
+        models: tuple[Any, ...] = (FaceEmbedding, FaceEnrollment, CaptureTrace, FraudEvidence)
+        for model in models:
+            stmt = delete(model).where(model.company_id == company_id, model.employee_id == employee_id)
+            affected_rows(self.db, stmt)
 
     def delete_all(self, employee_id: int) -> None:
         """Borrado físico: los datos biométricos no se conservan al reemplazarse o eliminarse."""

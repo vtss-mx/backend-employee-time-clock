@@ -1,8 +1,11 @@
-from sqlalchemy import select, update
+from datetime import UTC, datetime
+
+from sqlalchemy import and_, select, update
 from sqlalchemy.orm import Session
 
 from app.models import EnrollmentStatus, FaceEnrollment
-from app.repositories.aggregates import affected_rows, paginate
+from app.repositories.aggregates import affected_rows, get_scoped, paginate
+from app.repositories.storage_repository import StorageRepository
 
 
 class FaceEnrollmentRepository:
@@ -16,9 +19,7 @@ class FaceEnrollmentRepository:
         """`for_update`: bloquea la fila hasta el commit (aprobar y rechazar a la vez se serializan:
         la segunda petición ve el registro ya revisado)."""
         # FOR UPDATE OF solo esta tabla: el empleado se carga con un JOIN externo que no se bloquea.
-        lock = {"of": FaceEnrollment} if for_update else None
-        enrollment = self.db.get(FaceEnrollment, enrollment_id, with_for_update=lock, populate_existing=for_update)
-        return enrollment if enrollment is not None and enrollment.company_id == self.company_id else None
+        return get_scoped(self.db, FaceEnrollment, enrollment_id, self.company_id, lock=for_update)
 
     def add(self, enrollment: FaceEnrollment) -> FaceEnrollment:
         enrollment.company_id = self.company_id
@@ -57,11 +58,18 @@ class FaceEnrollmentRepository:
 
     def reject_pending(self, reason: str, employee_id: int | None = None) -> int:
         """Rechaza los registros en validación de la empresa (o de un empleado) y borra su fotografía
-        (minimización de datos), en una sola sentencia aunque sean miles."""
-        stmt = update(FaceEnrollment).where(
-            FaceEnrollment.company_id == self.company_id, FaceEnrollment.status == EnrollmentStatus.PENDING
-        )
+        (minimización de datos: su objeto pasa a la cola de borrado del bucket y la fila queda sin
+        referencia), en unas cuantas sentencias aunque sean miles."""
+        conditions = [FaceEnrollment.company_id == self.company_id, FaceEnrollment.status == EnrollmentStatus.PENDING]
         if employee_id is not None:
-            stmt = stmt.where(FaceEnrollment.employee_id == employee_id)
-        values = {"status": EnrollmentStatus.REJECTED, "rejection_reason": reason, "photo_encrypted": None}
-        return affected_rows(self.db, stmt.values(**values))
+            conditions.append(FaceEnrollment.employee_id == employee_id)
+        StorageRepository(self.db).enqueue_from(FaceEnrollment.photo_object, and_(*conditions), datetime.now(UTC))
+        values = {
+            "status": EnrollmentStatus.REJECTED,
+            "rejection_reason": reason,
+            "photo_object": None,
+            "photo_size": None,
+            "photo_sha256": None,
+            "photo_uploaded_at": None,
+        }
+        return affected_rows(self.db, update(FaceEnrollment).where(*conditions).values(**values))

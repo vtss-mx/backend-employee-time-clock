@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.core.error_events import CONTEXT_LIMIT, DETAIL_LIMIT, ErrorEvent, clip
 from app.models import ErrorOccurrence, ErrorReport
 from app.repositories.aggregates import affected_rows, paginate
+from app.repositories.search import contains_text, search_term
 
 
 class ErrorReportRepository:
@@ -137,7 +138,7 @@ def _filters(status: str | None, severity: str | None, search: str | None) -> li
         conditions.append(ErrorReport.status == status)
     if severity:
         conditions.append(ErrorReport.severity == severity)
-    term = " ".join((search or "").split()).lower()
+    term = search_term(search)
     if term:
         conditions.append(_matches(term))
     return conditions
@@ -147,7 +148,7 @@ def _matches(term: str) -> ColumnElement[bool]:
     """Búsqueda por código, mensaje, ruta o tipo de excepción (sin distinguir mayúsculas)."""
     return or_(
         *(
-            func.lower(column).contains(term, autoescape=True)
+            contains_text(func.lower(column), term)
             for column in (ErrorReport.code, ErrorReport.message, ErrorReport.location, ErrorReport.exception_type)
         )
     )

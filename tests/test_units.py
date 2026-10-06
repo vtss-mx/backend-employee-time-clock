@@ -289,28 +289,4 @@ def test_database_rate_limiter_fails_open(monkeypatch):
     assert rate_limit.DatabaseRateLimiter().hit("k", 1, 60) is None
 
 
-def test_project_env_file_is_clean():
-    """`backend/.env`: solo variables con valor, que alguien lee y sin repetir.
-
-    Las lee Settings o entrypoint.sh (al arrancar el contenedor). Sin comentarios al final de la
-    línea ni comillas: `docker run --env-file`, Kubernetes y systemd los tomarían como parte del valor.
-    """
-    import re
-    from pathlib import Path
-
-    from app.core.config import ENV_FILE, Settings
-
-    if not ENV_FILE.is_file():
-        pytest.skip("Sin backend/.env en este entorno")
-    lines = ENV_FILE.read_text(encoding="utf-8").splitlines()
-    keys = [m.group(1) for line in lines if (m := re.match(r"^([A-Z][A-Z0-9_]*)=", line))]
-    assert len(keys) == len(set(keys)), "Variables repetidas en .env"
-    empty = [line.split("=")[0] for line in lines if re.match(r"^[A-Z][A-Z0-9_]*=[ \t]*$", line)]
-    assert not empty, f"Variables vacías en .env: {empty}"
-    entrypoint = (Path(__file__).resolve().parent.parent / "entrypoint.sh").read_text(encoding="utf-8")
-    runtime = set(re.findall(r"\$\{?([A-Z][A-Z0-9_]*)", entrypoint))
-    unused = [k for k in keys if k not in Settings.model_fields and k not in runtime]
-    assert not unused, f"Variables que nadie lee: {unused}"
-    inline = [line for line in lines if re.match(r"^[A-Z][A-Z0-9_]*=.*\s#", line)]
-    quoted = [line for line in lines if re.match(r"^[A-Z][A-Z0-9_]*=[\"']", line)]
-    assert not inline and not quoted, [line.split("=")[0] for line in inline + quoted]
+# El `.env` del proyecto (completo, sin repetidos ni variables que nadie lee) lo verifica tests/test_env_files.py.

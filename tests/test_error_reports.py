@@ -67,7 +67,7 @@ def test_server_failures_are_recorded_and_grouped(client, admin_headers, company
 
     occurrences = client.get(f"{URL}/{report['id']}/occurrences", headers=admin_headers).json()["data"]
     assert occurrences["total"] == 2
-    assert occurrences["items"][0]["user_label"] == "admin@empresa.com (Company)"  # quién lo provocó
+    assert occurrences["items"][0]["user_label"] == "admin@empresa.com (Empresa)"  # quién lo provocó
     assert occurrences["items"][-1]["trace_id"] == first.headers["X-Request-ID"]
 
 
@@ -335,7 +335,7 @@ def test_every_failure_keeps_its_literal_context_without_secrets(client, admin_h
     assert failed.status_code == 500
     error = _occurrence(client, admin_headers, location="/api/employees", code="INTERNAL_ERROR")
     context = error["context"]
-    assert error["user_label"] == "admin@empresa.com (Company)" and error["company_name"]
+    assert error["user_label"] == "admin@empresa.com (Empresa)" and error["company_name"]
     assert context["user"] == {"id": context["user"]["id"], "email": "admin@empresa.com", "role": "COMPANY"}
     assert (
         context["request"]["body"]["email"] == "juan@empresa.com"
@@ -372,7 +372,7 @@ def test_uploaded_photos_are_summarized_never_stored(client, admin_headers, comp
         "size": 6,
     }
     assert {"name": "allow_headwear", "value": "true"} in parts
-    assert occurrence["user_label"] == "admin@empresa.com (Company)"
+    assert occurrence["user_label"] == "admin@empresa.com (Empresa)"
 
 
 def test_messages_and_details_are_kept_literal(client, admin_headers):

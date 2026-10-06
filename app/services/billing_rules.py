@@ -10,8 +10,11 @@
 - **Demo:** los días de prueba y los anteriores al inicio del cobro no se cobran.
 - **Descuento:** porcentaje del subtotal o monto fijo (nunca mayor que el subtotal); en todos los
   cargos, solo en los primeros N o cada N cargos.
-- **IVA:** sobre el subtotal con descuento, a la tasa de la empresa (16 % por omisión; 0 permitido).
-- **Redondeo:** a centavos, mitad hacia arriba, al cerrar cada importe (nunca en los pasos intermedios).
+- **IVA:** sobre el subtotal con descuento, a la tasa de la empresa (16 % por omisión; 0 permitido). No
+  depende de la moneda: un cliente del extranjero (USD, EUR) suele llevar 0 %.
+- **Moneda:** la del plan de la empresa; todo su dinero está en ella (nunca se suman ni se convierten monedas).
+- **Redondeo:** a los decimales de la moneda (2 en MXN, USD y EUR; los dice el catálogo `currencies`), mitad
+  hacia arriba, al cerrar cada importe (nunca en los pasos intermedios).
 - **Pagos:** se aplican al cargo abierto más antiguo primero; lo que sobra queda a favor.
 """
 
@@ -26,11 +29,18 @@ from app.models.enums import DiscountRecurrence, DiscountType, PricePeriod, Pric
 CENT = Decimal("0.01")
 ZERO = Decimal("0")
 HUNDRED = Decimal("100")
+#: Decimales de las monedas del catálogo (MXN, USD y EUR): los centavos.
+CENTS = 2
 
 
-def money(value: Decimal) -> Decimal:
-    """Importe a centavos (mitad hacia arriba)."""
-    return value.quantize(CENT, rounding=ROUND_HALF_UP)
+def money(value: Decimal, decimals: int = CENTS) -> Decimal:
+    """Importe a los decimales de su moneda (por omisión, centavos), mitad hacia arriba."""
+    return value.quantize(Decimal(1).scaleb(-decimals), rounding=ROUND_HALF_UP)
+
+
+def representable(amount: Decimal, decimals: int) -> bool:
+    """¿El importe se puede escribir en una moneda con esos decimales? (p. ej. 10.50 no, en una sin centavos)."""
+    return amount == money(amount, decimals)
 
 
 # ---------------------------------------------------------------- periodos
@@ -87,6 +97,8 @@ class Pricing:
     mode: PricingMode
     unit_price: Decimal
     period: PricePeriod
+    #: Decimales de la moneda del plan: el importe de cada línea se redondea a ellos.
+    decimals: int = CENTS
 
 
 def day_rate(pricing: Pricing, day: date) -> Decimal:
@@ -103,16 +115,34 @@ class Line:
     """Una línea del cargo (un mes): cuántas unidades-día y su importe."""
 
     month: date
-    #: Días-empleado (PER_USER) o días cobrables (FLAT).
+    #: Días-persona (PER_USER: cada empleado y cada validador activos, día por día) o días cobrables (FLAT).
     units: int
     amount: Decimal
+    #: De esos días-persona, cuántos fueron de validadores (el desglose; los demás son de empleados). None: monto fijo
+    #: o sin el dato.
+    validator_units: int | None = None
 
 
-def line_for(pricing: Pricing, month: date, month_days: Sequence[date], headcount: Mapping[date, int]) -> Line:
-    """Importe de un mes: la tarifa de cada día por los empleados activos ese día (o 1 si es fijo)."""
-    per_day = [(day, headcount.get(day, 0) if pricing.mode == PricingMode.PER_USER else 1) for day in month_days]
+def line_for(
+    pricing: Pricing,
+    month: date,
+    month_days: Sequence[date],
+    headcount: Mapping[date, int],
+    validators: Mapping[date, int] | None = None,
+) -> Line:
+    """Importe de un mes: la tarifa de cada día por las personas activas ese día (o 1 si es fijo). `headcount` es lo
+    que se cobra cada día (empleados + validadores) y `validators`, cuántos de ellos eran validadores: solo cuenta el
+    desglose, nunca cambia el importe."""
+    per_user = pricing.mode == PricingMode.PER_USER
+    per_day = [(day, headcount.get(day, 0) if per_user else 1) for day in month_days]
     amount = sum((day_rate(pricing, day) * units for day, units in per_day), ZERO)
-    return Line(month=month, units=sum(units for _, units in per_day), amount=money(amount))
+    split = sum(validators.get(day, 0) for day in month_days) if per_user and validators is not None else None
+    return Line(
+        month=month,
+        units=sum(units for _, units in per_day),
+        amount=money(amount, pricing.decimals),
+        validator_units=split,
+    )
 
 
 @dataclass(frozen=True)
@@ -134,12 +164,12 @@ def discount_applies(discount: Discount, sequence: int) -> bool:
     return sequence % periods == 0
 
 
-def discount_amount(discount: Discount | None, subtotal: Decimal, sequence: int) -> Decimal:
+def discount_amount(discount: Discount | None, subtotal: Decimal, sequence: int, decimals: int = CENTS) -> Decimal:
     if discount is None or not discount_applies(discount, sequence):
         return ZERO
     if discount.type == DiscountType.PERCENT:
-        return money(subtotal * min(discount.value, HUNDRED) / HUNDRED)
-    return min(money(discount.value), subtotal)
+        return money(subtotal * min(discount.value, HUNDRED) / HUNDRED, decimals)
+    return min(money(discount.value, decimals), subtotal)
 
 
 @dataclass(frozen=True)
@@ -151,10 +181,11 @@ class Totals:
     total: Decimal
 
 
-def totals(subtotal: Decimal, discount: Decimal, tax_rate: Decimal) -> Totals:
-    """IVA sobre lo que queda después del descuento (`tax_rate` en porcentaje: 16 = 16 %)."""
+def totals(subtotal: Decimal, discount: Decimal, tax_rate: Decimal, decimals: int = CENTS) -> Totals:
+    """IVA sobre lo que queda después del descuento (`tax_rate` en porcentaje: 16 = 16 %), en los decimales de
+    la moneda."""
     taxable = subtotal - discount
-    tax = money(taxable * tax_rate / HUNDRED)
+    tax = money(taxable * tax_rate / HUNDRED, decimals)
     return Totals(subtotal=subtotal, discount=discount, taxable=taxable, tax=tax, total=taxable + tax)
 
 

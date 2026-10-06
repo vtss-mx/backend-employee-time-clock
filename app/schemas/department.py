@@ -2,7 +2,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.schemas.common import Page
+from app.i18n import LocalizedValueError
+from app.schemas.common import Deletion, Page
 
 
 def clean_name(value: str) -> str:
@@ -21,7 +22,7 @@ class DepartmentCreate(BaseModel):
     def _name(cls, value: str) -> str:
         cleaned = clean_name(value)
         if not cleaned:
-            raise ValueError("El nombre es obligatorio")
+            raise LocalizedValueError("NAME_REQUIRED")
         return cleaned
 
     @field_validator("description")
@@ -51,7 +52,7 @@ class DepartmentPerson(BaseModel):
     active: bool
 
 
-class DepartmentRead(BaseModel):
+class DepartmentRead(Deletion):
     id: int
     name: str
     description: str | None = None

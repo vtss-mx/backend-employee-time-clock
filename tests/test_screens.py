@@ -34,7 +34,17 @@ def _revoke(role: str, screen: Screen) -> None:
 
 def test_every_role_gets_its_screens_and_home(client, admin_headers, company_headers):
     admin = _me(client, admin_headers)
-    assert _codes(admin) == ["ADMIN_DASHBOARD", "ADMIN_COMPANIES", "ADMIN_ERRORS", "ADMIN_FACE_SECURITY", "PROFILE"]
+    assert _codes(admin) == [
+        "ADMIN_DASHBOARD",
+        "ADMIN_COMPANIES",
+        "ADMIN_BILLING",  # módulo Negocio: cobranza y consumo, después de Plataforma
+        "ADMIN_USAGE",
+        "ADMIN_ERRORS",
+        "ADMIN_FACE_SECURITY",
+        "ADMIN_PERFORMANCE",  # módulo Operación: rendimiento y alertas de peticiones lentas (regla 18)
+        "ADMIN_FRAUD_CASES",  # y los casos de fraude que revisa el ADMIN (antifraude, migración 0062)
+        "PROFILE",
+    ]
     assert admin["home"] == "/admin/dashboard"
     assert admin["screens"][1] == {
         "code": "ADMIN_COMPANIES",
@@ -46,7 +56,7 @@ def test_every_role_gets_its_screens_and_home(client, admin_headers, company_hea
         "module": "PLATFORM",
     }
     # El menú se agrupa en módulos: solo los que usan sus pantallas, en orden.
-    assert [m["code"] for m in admin["modules"]] == ["PLATFORM", "OPERATIONS", "ACCOUNT"]
+    assert [m["code"] for m in admin["modules"]] == ["PLATFORM", "BUSINESS", "OPERATIONS", "ACCOUNT"]
     assert admin["modules"][0] == {"code": "PLATFORM", "name": "Plataforma", "icon": "Building2"}
 
     company = _me(client, company_headers)
@@ -61,6 +71,7 @@ def test_every_role_gets_its_screens_and_home(client, admin_headers, company_hea
         "COMPANY_SITES",
         "COMPANY_VALIDATORS",
         "COMPANY_API",
+        "COMPANY_DOCUMENTS",  # módulo Cuenta, junto a Mi perfil (documentos de la empresa, migración 0075)
         "PROFILE",
     ]
     assert company["home"] == "/company/dashboard" and company["screens"][3]["badge"] == "PENDING_ENROLLMENTS"
@@ -128,8 +139,8 @@ def test_only_companies_without_employees_can_be_deleted(client, admin_headers, 
 
     deleted = client.delete(url, headers=admin_headers)
     assert deleted.status_code == 200 and deleted.json()["code"] == "COMPANY_DELETED"
-    assert client.get(url, headers=admin_headers).status_code == 404
-    assert client.get("/api/users/me", headers=other_admin).status_code == 401  # su cuenta ya no existe
+    assert client.get(url, headers=admin_headers).json()["data"]["deleted_at"]  # en «Eliminados»
+    assert client.get("/api/users/me", headers=other_admin).status_code == 401  # su cuenta se eliminó con ella
     gone = client.post("/api/auth/login", json={"email": "admin@panificadora.com", "password": "Empresa1234"})
     assert gone.status_code == 401
 

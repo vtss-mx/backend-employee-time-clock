@@ -1,35 +1,40 @@
 """Consultas de sitios de trabajo, turnos, asignaciones y solicitudes de cambio de UNA empresa.
 
 Un id de otra empresa se comporta como inexistente (404). Los listados cargan lo relacionado por
-lotes (una consulta por página, nunca una por elemento).
+lotes (una consulta por página, nunca una por elemento). Con borrado lógico (sitios, turnos y asignaciones): toda
+consulta ve solo lo vigente, salvo la papelera, eliminar/restaurar (`include_deleted`) y las búsquedas por id que
+resuelven referencias del historial (`shifts_by_ids`, `sites_of_shifts`, `employees_by_ids`).
 """
 
 from collections.abc import Iterable
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import ColumnElement, Select, and_, delete, exists, func, or_, select, update
 from sqlalchemy.orm import Session, lazyload
 
+from app.core.soft_delete import with_deleted
 from app.models import (
+    AttendanceEvent,
     Employee,
     EmployeeAbsence,
     EmployeeWorkday,
     Shift,
     ShiftAssignment,
-    ShiftAssignmentSite,
     ShiftChangeRequest,
     ShiftRequestStatus,
+    ShiftSite,
     WorkSession,
     WorkSite,
 )
-from app.repositories.aggregates import affected_rows, group_counts, insert_many, paginate
+from app.repositories.aggregates import affected_rows, get_scoped, group_counts, insert_many, paginate, trash_page
 from app.repositories.calendar_repository import absence_touches
+from app.repositories.search import contains_text, search_term
 
 
 def _search(column: Any, search: str | None) -> ColumnElement[bool] | None:
-    term = " ".join((search or "").split()).lower()
-    return func.lower(column).contains(term, autoescape=True) if term else None
+    term = search_term(search)
+    return contains_text(func.lower(column), term) if term else None
 
 
 def _valid_on(day: date) -> ColumnElement[bool]:
@@ -51,10 +56,9 @@ class ShiftRepository:
         self.company_id = company_id
 
     def _get[T: (WorkSite, Shift, ShiftAssignment, ShiftChangeRequest)](
-        self, model: type[T], record_id: int, *, lock: bool = False
+        self, model: type[T], record_id: int, *, lock: bool = False, include_deleted: bool = False
     ) -> T | None:
-        record = self.db.get(model, record_id, with_for_update=lock or None, populate_existing=lock)
-        return record if record is not None and record.company_id == self.company_id else None
+        return get_scoped(self.db, model, record_id, self.company_id, lock=lock, include_deleted=include_deleted)
 
     def add[T: (WorkSite, Shift, ShiftAssignment, ShiftChangeRequest)](self, record: T) -> T:
         record.company_id = self.company_id
@@ -64,16 +68,21 @@ class ShiftRepository:
 
     # ---------- Sitios de trabajo ----------
 
-    def site(self, site_id: int) -> WorkSite | None:
-        return self._get(WorkSite, site_id)
+    def site(self, site_id: int, *, include_deleted: bool = False) -> WorkSite | None:
+        return self._get(WorkSite, site_id, include_deleted=include_deleted)
 
-    def sites(self, *, search: str | None, active: bool | None, offset: int, limit: int) -> tuple[list[WorkSite], int]:
+    def sites(
+        self, *, search: str | None, active: bool | None, offset: int, limit: int, deleted: bool = False
+    ) -> tuple[list[WorkSite], int]:
+        """Los vigentes por nombre o, con `deleted`, la papelera (el eliminado más reciente primero)."""
         stmt = select(WorkSite).where(WorkSite.company_id == self.company_id)
         condition = _search(WorkSite.name, search)
         if condition is not None:
             stmt = stmt.where(condition)
         if active is not None:
             stmt = stmt.where(WorkSite.active.is_(active))
+        if deleted:
+            return trash_page(self.db, stmt, WorkSite, offset=offset, limit=limit)
         return paginate(self.db, stmt, (func.lower(WorkSite.name), WorkSite.id), offset=offset, limit=limit)
 
     def sites_by_ids(self, site_ids: Iterable[int]) -> list[WorkSite]:
@@ -91,56 +100,81 @@ class ShiftRepository:
             stmt = stmt.where(WorkSite.id != exclude_id)
         return self.db.scalar(stmt.limit(1)) is not None
 
-    def site_in_use(self, site_id: int) -> bool:
-        stmt = select(ShiftAssignmentSite.site_id).where(
-            ShiftAssignmentSite.company_id == self.company_id, ShiftAssignmentSite.site_id == site_id
+    def shifts_using_site(self, site_id: int, *, limit: int) -> list[str]:
+        """Nombres de los turnos que incluyen el sitio (orden alfabético, hasta `limit`): por qué no se
+        puede borrar. Índice por sitio de `shift_sites`; la empresa va en ambas tablas."""
+        stmt = (
+            select(Shift.name)
+            .join(ShiftSite, ShiftSite.shift_id == Shift.id)
+            .where(
+                ShiftSite.company_id == self.company_id,
+                ShiftSite.site_id == site_id,
+                Shift.company_id == self.company_id,
+            )
+            .order_by(func.lower(Shift.name), Shift.id)
+            .limit(limit)
         )
-        return self.db.scalar(stmt.limit(1)) is not None
+        return list(self.db.scalars(stmt))
 
-    def delete_site(self, site: WorkSite) -> None:
-        affected_rows(self.db, delete(WorkSite).where(WorkSite.company_id == self.company_id, WorkSite.id == site.id))
-        self.db.expunge(site)
+    def site_has_records(self, site_id: int) -> bool:
+        """¿Ya se checó en el sitio? (toda jornada con sitio tiene su registro con ese sitio en la bitácora).
+
+        `EXISTS` con la empresa (§3.1.2) sobre el índice parcial `(company_id, site_id)` (index-only, también con
+        la seguridad por fila, que pide `company_id`): se detiene en el primer registro y un sitio sin registros
+        —el que sí se puede borrar— cuesta una búsqueda en el índice de cada mes. Medido con la base de volumen:
+        0.1 ms en ambos casos, contra 8-29 ms de contar los 148 mil registros de un sitio en uso. (Antes de ese
+        índice, `LIMIT 1` recorría TODA la bitácora cuando el sitio no tenía ninguno.) Las FK `RESTRICT` de la
+        bitácora y las jornadas no bastan: SQLite no las crea entre esquemas."""
+        found = exists().where(AttendanceEvent.company_id == self.company_id, AttendanceEvent.site_id == site_id)
+        return bool(self.db.scalar(select(found)))
 
     def employees_per_site(self, site_ids: Iterable[int], day: date) -> dict[int, int]:
-        """Empleados con una asignación vigente ese día que incluye cada sitio."""
+        """Empleados con una asignación vigente ese día cuyo turno incluye cada sitio (a lo más una
+        asignación rige cada día: no se enciman)."""
         ids = list(site_ids)
         if not ids:
             return {}
         return group_counts(
             self.db,
-            select(ShiftAssignmentSite.site_id, func.count())
-            .join(ShiftAssignment, ShiftAssignment.id == ShiftAssignmentSite.assignment_id)
+            select(ShiftSite.site_id, func.count())
+            .join(ShiftAssignment, ShiftAssignment.shift_id == ShiftSite.shift_id)
             .where(
-                ShiftAssignmentSite.company_id == self.company_id,
-                ShiftAssignmentSite.site_id.in_(ids),
+                ShiftSite.company_id == self.company_id,
+                ShiftSite.site_id.in_(ids),
                 # La empresa también del lado de las asignaciones: sin ella PostgreSQL recorría las de
                 # TODAS las empresas (no deduce la igualdad a través del JOIN).
                 ShiftAssignment.company_id == self.company_id,
                 _valid_on(day),
             )
-            .group_by(ShiftAssignmentSite.site_id),
+            .group_by(ShiftSite.site_id),
         )
 
     # ---------- Turnos ----------
 
-    def shift(self, shift_id: int) -> Shift | None:
-        return self._get(Shift, shift_id)
+    def shift(self, shift_id: int, *, include_deleted: bool = False) -> Shift | None:
+        return self._get(Shift, shift_id, include_deleted=include_deleted)
 
-    def shifts(self, *, search: str | None, active: bool | None, offset: int, limit: int) -> tuple[list[Shift], int]:
+    def shifts(
+        self, *, search: str | None, active: bool | None, offset: int, limit: int, deleted: bool = False
+    ) -> tuple[list[Shift], int]:
+        """Los vigentes por nombre o, con `deleted`, la papelera (el eliminado más reciente primero)."""
         stmt = select(Shift).where(Shift.company_id == self.company_id)
         condition = _search(Shift.name, search)
         if condition is not None:
             stmt = stmt.where(condition)
         if active is not None:
             stmt = stmt.where(Shift.active.is_(active))
+        if deleted:
+            return trash_page(self.db, stmt, Shift, offset=offset, limit=limit)
         return paginate(self.db, stmt, (func.lower(Shift.name), Shift.id), offset=offset, limit=limit)
 
     def shifts_by_ids(self, shift_ids: Iterable[int]) -> dict[int, Shift]:
+        """Turnos por id (asignaciones, solicitudes, jornadas): referencias del historial, también en «Eliminados»."""
         ids = list(set(shift_ids))
         if not ids:
             return {}
         stmt = select(Shift).where(Shift.company_id == self.company_id, Shift.id.in_(ids))
-        return {shift.id: shift for shift in self.db.scalars(stmt)}
+        return {shift.id: shift for shift in self.db.scalars(with_deleted(stmt))}
 
     def shift_name_exists(self, name: str, exclude_id: int | None = None) -> bool:
         stmt = select(Shift.id).where(Shift.company_id == self.company_id, func.lower(Shift.name) == name.lower())
@@ -154,11 +188,6 @@ class ShiftRepository:
         )
         return self.db.scalar(assigned.limit(1)) is not None
 
-    def delete_shift(self, shift: Shift) -> None:
-        """Sus solicitudes de cambio se van con él (ON DELETE CASCADE); con asignaciones no se borra."""
-        affected_rows(self.db, delete(Shift).where(Shift.company_id == self.company_id, Shift.id == shift.id))
-        self.db.expunge(shift)
-
     def employees_per_shift(self, shift_ids: Iterable[int], day: date) -> dict[int, int]:
         ids = list(shift_ids)
         if not ids:
@@ -170,15 +199,96 @@ class ShiftRepository:
             .group_by(ShiftAssignment.shift_id),
         )
 
+    def sites_of_shifts(self, shift_ids: Iterable[int]) -> dict[int, list[WorkSite]]:
+        """Sitios de cada turno (orden alfabético): una consulta para toda la página (llave primaria
+        `shift_id, site_id` de `shift_sites`). Referencias: también los que están en «Eliminados» (un turno vigente
+        nunca tiene uno, `SITE_IN_USE`; uno eliminado o una asignación del historial los muestran con su marca)."""
+        ids = list(set(shift_ids))
+        if not ids:
+            return {}
+        stmt = (
+            select(ShiftSite.shift_id, WorkSite)
+            .join(WorkSite, WorkSite.id == ShiftSite.site_id)
+            .where(
+                ShiftSite.company_id == self.company_id,
+                ShiftSite.shift_id.in_(ids),
+                WorkSite.company_id == self.company_id,
+            )
+            .order_by(func.lower(WorkSite.name), WorkSite.id)
+        )
+        rows = self.db.execute(with_deleted(stmt)).all()
+        found: dict[int, list[WorkSite]] = {shift_id: [] for shift_id in ids}
+        for shift_id, site in rows:
+            found[shift_id].append(site)
+        return found
+
+    def deleted_sites_of(self, shift_id: int) -> list[str]:
+        """Nombres de los sitios del turno que están en «Eliminados» (restaurar el turno los necesita vigentes)."""
+        stmt = (
+            select(WorkSite.name)
+            .join(ShiftSite, ShiftSite.site_id == WorkSite.id)
+            .where(
+                ShiftSite.company_id == self.company_id,
+                ShiftSite.shift_id == shift_id,
+                WorkSite.company_id == self.company_id,
+                WorkSite.deleted_at.is_not(None),
+            )
+            .order_by(func.lower(WorkSite.name), WorkSite.id)
+        )
+        return list(self.db.scalars(with_deleted(stmt)))
+
+    def shift_site_ids(self, shift_id: int) -> set[int]:
+        """Los sitios que el turno tiene hoy (llave primaria de `shift_sites`)."""
+        stmt = select(ShiftSite.site_id).where(ShiftSite.company_id == self.company_id, ShiftSite.shift_id == shift_id)
+        return set(self.db.scalars(stmt))
+
+    def set_shift_sites(self, shift_id: int, current: set[int], wanted: set[int]) -> None:
+        """Los sitios del turno quedan exactamente `wanted`: una sentencia borra los que salen y una
+        inserción agrega los que entran (los que siguen no se tocan)."""
+        removed = current - wanted
+        if removed:
+            affected_rows(
+                self.db,
+                delete(ShiftSite).where(
+                    ShiftSite.company_id == self.company_id,
+                    ShiftSite.shift_id == shift_id,
+                    ShiftSite.site_id.in_(removed),
+                ),
+            )
+        self.db.add_all(
+            ShiftSite(shift_id=shift_id, site_id=site_id, company_id=self.company_id)
+            for site_id in sorted(wanted - current)
+        )
+        self.db.flush()
+
+    def shift_of(self, assignment_id: int) -> Shift | None:
+        """El turno de una asignación (dónde y cuándo checa una jornada abierta) en una consulta."""
+        stmt = (
+            select(Shift)
+            .join(ShiftAssignment, ShiftAssignment.shift_id == Shift.id)
+            .where(
+                ShiftAssignment.company_id == self.company_id,
+                ShiftAssignment.id == assignment_id,
+                Shift.company_id == self.company_id,
+            )
+        )
+        return self.db.scalar(stmt)
+
     # ---------- Asignaciones ----------
 
-    def assignment(self, assignment_id: int) -> ShiftAssignment | None:
-        return self._get(ShiftAssignment, assignment_id)
+    def assignment(self, assignment_id: int, *, include_deleted: bool = False) -> ShiftAssignment | None:
+        return self._get(ShiftAssignment, assignment_id, include_deleted=include_deleted)
 
-    def assignments_of(self, employee_id: int, *, offset: int, limit: int) -> tuple[list[ShiftAssignment], int]:
+    def assignments_of(
+        self, employee_id: int, *, offset: int, limit: int, deleted: bool = False
+    ) -> tuple[list[ShiftAssignment], int]:
+        """Las asignaciones vigentes del empleado (la más reciente primero) o, con `deleted`, sus cambios cancelados
+        (el más reciente primero; el súper-índice del empleado lleva `deleted_at` en su INCLUDE)."""
         stmt = select(ShiftAssignment).where(
             ShiftAssignment.company_id == self.company_id, ShiftAssignment.employee_id == employee_id
         )
+        if deleted:
+            return trash_page(self.db, stmt, ShiftAssignment, offset=offset, limit=limit)
         order = (ShiftAssignment.valid_from.desc(), ShiftAssignment.id.desc())
         return paginate(self.db, stmt, order, offset=offset, limit=limit)
 
@@ -261,15 +371,6 @@ class ShiftRepository:
             assignment.company_id = self.company_id
         return insert_many(self.db, assignments)
 
-    def delete_assignment(self, assignment: ShiftAssignment) -> None:
-        affected_rows(
-            self.db,
-            delete(ShiftAssignment).where(
-                ShiftAssignment.company_id == self.company_id, ShiftAssignment.id == assignment.id
-            ),
-        )
-        self.db.expunge(assignment)
-
     def reopen_previous(self, employee_id: int, valid_to: date) -> None:
         """Al cancelar un cambio programado, la asignación que terminaba un día antes vuelve a no tener fin."""
         affected_rows(
@@ -282,32 +383,6 @@ class ShiftRepository:
             )
             .values(valid_to=None),
         )
-
-    def set_sites(self, assignments: Iterable[ShiftAssignment], site_ids: Iterable[int]) -> None:
-        """Los mismos sitios para cada asignación (una inserción para todas)."""
-        unique = set(site_ids)
-        self.db.add_all(
-            ShiftAssignmentSite(assignment_id=assignment.id, site_id=site_id, company_id=self.company_id)
-            for assignment in assignments
-            for site_id in unique
-        )
-        self.db.flush()
-
-    def sites_of(self, assignment_ids: Iterable[int]) -> dict[int, list[WorkSite]]:
-        """Sitios de cada asignación (orden alfabético): una consulta para toda la página."""
-        ids = list(assignment_ids)
-        if not ids:
-            return {}
-        rows = self.db.execute(
-            select(ShiftAssignmentSite.assignment_id, WorkSite)
-            .join(WorkSite, WorkSite.id == ShiftAssignmentSite.site_id)
-            .where(ShiftAssignmentSite.company_id == self.company_id, ShiftAssignmentSite.assignment_id.in_(ids))
-            .order_by(func.lower(WorkSite.name), WorkSite.id)
-        ).all()
-        found: dict[int, list[WorkSite]] = {assignment_id: [] for assignment_id in ids}
-        for assignment_id, site in rows:
-            found[assignment_id].append(site)
-        return found
 
     def _assigned(self, day: date) -> Select[ShiftAssignment, Employee]:
         """Empleados activos con una asignación vigente ese día cuyo turno trabaja ese día de la semana.
@@ -368,14 +443,11 @@ class ShiftRepository:
     ) -> tuple[list[tuple[ShiftAssignment, Employee]], int]:
         """Empleados activos con una asignación vigente ese día (tablero), por nombre."""
         stmt = self._assigned(day)
-        term = " ".join((search or "").split()).lower()
+        term = search_term(search)
         if term:
             full_name = func.lower(Employee.first_name.concat(" ").concat(Employee.last_name))
             stmt = stmt.where(
-                or_(
-                    full_name.contains(term, autoescape=True),
-                    func.lower(Employee.employee_number).contains(term, autoescape=True),
-                )
+                or_(contains_text(full_name, term), contains_text(func.lower(Employee.employee_number), term))
             )
         total = self.db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
         # Sin los JOIN de carga de la cuenta y la empresa del empleado (el tablero no los usa): con ellos
@@ -410,6 +482,21 @@ class ShiftRepository:
         )
         return int(self.db.scalar(stmt) or 0)
 
+    def cancel_pending_requests(
+        self, *, actor_id: int, now: datetime, employee_id: int | None = None, shift_id: int | None = None
+    ) -> None:
+        """Las solicitudes PENDIENTES de un empleado o de un turno que se eliminan quedan canceladas (una sentencia;
+        el empleado ve el cambio en su lista). Antes se borraban en cascada con el turno o el empleado."""
+        stmt = update(ShiftChangeRequest).where(
+            ShiftChangeRequest.company_id == self.company_id, ShiftChangeRequest.status == ShiftRequestStatus.PENDING
+        )
+        if employee_id is not None:
+            stmt = stmt.where(ShiftChangeRequest.employee_id == employee_id)
+        if shift_id is not None:
+            stmt = stmt.where(ShiftChangeRequest.shift_id == shift_id)
+        values = {"status": ShiftRequestStatus.CANCELLED, "reviewed_by_id": actor_id, "reviewed_at": now}
+        affected_rows(self.db, stmt.values(**values))
+
     def has_pending_request(self, employee_id: int) -> bool:
         stmt = select(ShiftChangeRequest.id).where(
             ShiftChangeRequest.company_id == self.company_id,
@@ -419,8 +506,9 @@ class ShiftRepository:
         return self.db.scalar(stmt.limit(1)) is not None
 
     def employees_by_ids(self, employee_ids: Iterable[int]) -> dict[int, Employee]:
+        """Empleados por id (solicitudes, jornadas): referencias del historial, también en «Eliminados»."""
         ids = list(set(employee_ids))
         if not ids:
             return {}
         stmt = select(Employee).where(Employee.company_id == self.company_id, Employee.id.in_(ids))
-        return {employee.id: employee for employee in self.db.scalars(stmt)}
+        return {employee.id: employee for employee in self.db.scalars(with_deleted(stmt))}

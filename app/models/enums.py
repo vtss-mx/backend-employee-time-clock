@@ -58,6 +58,10 @@ class SessionRevocationReason(StrEnum):
     LOCATION_POLICY_CHANGED = "LOCATION_POLICY_CHANGED"
     #: La empresa revocó o rechazó el dispositivo del validador.
     DEVICE_REVOKED = "DEVICE_REVOKED"
+    #: El ADMIN de la plataforma suspendió a la empresa (falta de pago o decisión manual).
+    COMPANY_SUSPENDED = "COMPANY_SUSPENDED"
+    #: La cuenta (validador) o su empresa se eliminó (borrado lógico, migración 0068).
+    ACCOUNT_DELETED = "ACCOUNT_DELETED"
 
 
 class DeviceStatus(StrEnum):
@@ -84,6 +88,30 @@ class ErrorStatus(StrEnum):
     IN_PROGRESS = "IN_PROGRESS"
     IN_REVIEW = "IN_REVIEW"
     RESOLVED = "RESOLVED"
+
+
+class SlowAlertStatus(StrEnum):
+    """Seguimiento de una alerta de peticiones lentas (catalog.slow_alert_statuses, regla 18): lo decide el ADMIN;
+    una RESUELTA que vuelve a ocurrir se reabre sola."""
+
+    OPEN = "OPEN"
+    ACKNOWLEDGED = "ACKNOWLEDGED"
+    RESOLVED = "RESOLVED"
+
+
+class PerfKind(StrEnum):
+    """Qué mide una fila de `ops.perf_*` (columna `kind`). No es un catálogo: nadie lo lee como texto (la pantalla
+    nombra cada tipo en sus diccionarios) y solo lo escribe el código."""
+
+    HTTP = "HTTP"  # una petición, por método y plantilla de su ruta
+    FUNCTION = "FUNCTION"  # una función clave medida con `observed`
+    WEB_API = "WEB_API"  # una petición vista desde el navegador
+    WEB_LCP = "WEB_LCP"  # Web Vitals de cada pantalla de la aplicación web (CLS × 1000 en el histograma)
+    WEB_INP = "WEB_INP"
+    WEB_CLS = "WEB_CLS"
+    WEB_FCP = "WEB_FCP"
+    WEB_TTFB = "WEB_TTFB"
+    WEB_LONG_TASK = "WEB_LONG_TASK"  # tareas largas del hilo principal del navegador
 
 
 class ErrorSeverity(StrEnum):
@@ -173,6 +201,18 @@ class PricePeriod(StrEnum):
     YEAR = "YEAR"
 
 
+class Currency(StrEnum):
+    """Monedas en que se cobra a una empresa (catalog.currencies; código ISO 4217).
+
+    Cada empresa se cobra en la moneda de su plan y TODO su dinero (cargos, pagos, saldos, pronóstico)
+    queda en esa moneda: nunca se suman ni se convierten monedas distintas. La lógica solo nombra la
+    moneda por omisión; cuáles se ofrecen y sus decimales los decide el catálogo."""
+
+    MXN = "MXN"  # peso mexicano (por omisión)
+    USD = "USD"
+    EUR = "EUR"
+
+
 class DiscountType(StrEnum):
     """Descuento en porcentaje del subtotal o monto fijo por cargo (catalog.discount_types)."""
 
@@ -186,6 +226,45 @@ class DiscountRecurrence(StrEnum):
     ALWAYS = "ALWAYS"  # en todos los cargos
     FIRST = "FIRST"  # solo en los primeros N cargos
     EVERY = "EVERY"  # cada N cargos (el N-ésimo, el 2N-ésimo...)
+
+
+class BillingStatus(StrEnum):
+    """Estado de servicio de una empresa (catalog.billing_statuses): se deriva de `companies.suspended_at`."""
+
+    ACTIVE = "ACTIVE"
+    SUSPENDED = "SUSPENDED"  # nadie de la empresa inicia sesión ni opera hasta que se reactive
+
+
+class SuspensionReason(StrEnum):
+    """Por qué se suspendió una empresa (catalog.suspension_reasons)."""
+
+    NON_PAYMENT = "NON_PAYMENT"  # automática: un cargo siguió sin pagarse después de la gracia
+    MANUAL = "MANUAL"  # la decidió el ADMIN, con su motivo
+
+
+class ChargeStatus(StrEnum):
+    """Estado de un cargo (catalog.charge_statuses)."""
+
+    OPEN = "OPEN"  # con saldo pendiente
+    PAID = "PAID"
+    VOID = "VOID"  # anulado: no se cobra y lo que tenía aplicado queda a favor
+
+
+class PaymentStatus(StrEnum):
+    """Estado de un pago registrado a mano por el ADMIN (catalog.payment_statuses)."""
+
+    CONFIRMED = "CONFIRMED"
+    VOID = "VOID"  # anulado: los cargos que cubría vuelven a quedar por pagar
+
+
+class StorageCategory(StrEnum):
+    """Grupos del almacenamiento que ocupa cada empresa (catalog.storage_categories)."""
+
+    PEOPLE = "PEOPLE"
+    BIOMETRICS = "BIOMETRICS"
+    ATTENDANCE = "ATTENDANCE"
+    SECURITY = "SECURITY"
+    BILLING = "BILLING"
 
 
 class ApiKeyStatus(StrEnum):
@@ -202,6 +281,155 @@ class EnrollmentStatus(StrEnum):
     REJECTED = "REJECTED"
 
 
+class FraudKind(StrEnum):
+    """Tipo de fraude de un caso y familia de las señales del motor de riesgo (catalog.fraud_kinds)."""
+
+    PRESENTATION = "PRESENTATION"  # foto, pantalla o máscara frente a la cámara
+    INJECTION = "INJECTION"  # cámara virtual, programa o llamada directa a la API
+    REPLAY = "REPLAY"  # capturas reenviadas o artefactos de un ataque conocido
+    LOCATION = "LOCATION"  # ubicación falsa
+    BUDDY_PUNCHING = "BUDDY_PUNCHING"  # una persona registra por otra
+    INTERNAL = "INTERNAL"  # abuso desde la empresa o un validador
+    MORPH = "MORPH"  # registro facial con rasgos de dos personas
+    OTHER = "OTHER"
+
+
+class SignalMode(StrEnum):
+    """Modo de una señal del motor de riesgo (catalog.signal_modes)."""
+
+    OFF = "OFF"  # no se mide
+    OBSERVE = "OBSERVE"  # se mide y se registra, sin cambiar la decisión (calibración)
+    ENFORCE = "ENFORCE"  # sus puntos deciden; una regla dura niega
+
+
+class RiskSignal(StrEnum):
+    """Señales que mide el motor de riesgo (catalog.risk_signals: puntos, modo y tipo por omisión)."""
+
+    SPOOF_PROB_LOW = "SPOOF_PROB_LOW"
+    FLASH_WEAK = "FLASH_WEAK"
+    FLASH_FLAT = "FLASH_FLAT"
+    REPLAY_PERCEPTUAL = "REPLAY_PERCEPTUAL"
+    KNOWN_ATTACK = "KNOWN_ATTACK"
+    MATCH_MARGIN_LOW = "MATCH_MARGIN_LOW"
+    CAMERA_LABEL_MISSING = "CAMERA_LABEL_MISSING"
+    LOCATION_EDGE = "LOCATION_EDGE"
+    LOCATION_ROUND_ACCURACY = "LOCATION_ROUND_ACCURACY"
+    COMPANY_UNDER_ATTACK = "COMPANY_UNDER_ATTACK"
+    # --- Antifraude 1b (migración 0065): nacen en "solo medir" y nunca niegan (risk_rules.ASK_ONLY_SIGNALS) ---
+    DEVICE_NEW = "DEVICE_NEW"
+    DEVICE_KEY_MISSING = "DEVICE_KEY_MISSING"
+    DEVICE_SHARED = "DEVICE_SHARED"
+    IDENTITY_MISMATCH = "IDENTITY_MISMATCH"
+    NETWORK_HOSTING = "NETWORK_HOSTING"
+    NETWORK_COUNTRY_MISMATCH = "NETWORK_COUNTRY_MISMATCH"
+    NETWORK_JUMP = "NETWORK_JUMP"
+    LOCATION_STATIC = "LOCATION_STATIC"
+    LOCATION_JUMP = "LOCATION_JUMP"
+    AUTOMATION = "AUTOMATION"
+    VIRTUAL_CAMERA_PRESENT = "VIRTUAL_CAMERA_PRESENT"
+    TRACK_INCONSISTENT = "TRACK_INCONSISTENT"
+    FRAME_TIMING_SYNTHETIC = "FRAME_TIMING_SYNTHETIC"
+    SCREEN_INCOHERENT = "SCREEN_INCOHERENT"
+    TELEMETRY_MISSING = "TELEMETRY_MISSING"
+    JPEG_TABLE_UNKNOWN = "JPEG_TABLE_UNKNOWN"
+    # --- Antifraude 2a (migración 0066): protocolo de captura; igual, nacen en "solo medir" y nunca niegan ---
+    BURST_MISSING = "BURST_MISSING"
+    BURST_DISCONTINUOUS = "BURST_DISCONTINUOUS"
+    BURST_FROZEN = "BURST_FROZEN"
+    BURST_LOOP = "BURST_LOOP"
+    MOIRE_HIGH = "MOIRE_HIGH"
+    NOISE_MISMATCH = "NOISE_MISMATCH"
+    PERSPECTIVE_FLAT = "PERSPECTIVE_FLAT"
+    PULSE_ABSENT = "PULSE_ABSENT"  # solo se mide (risk_rules.MEASURE_ONLY_SIGNALS): nunca decide
+    FLASH_UNPACED = "FLASH_UNPACED"
+    FLASH_PACE_TIMING = "FLASH_PACE_TIMING"
+    FLASH_PACE_MISMATCH = "FLASH_PACE_MISMATCH"
+    # --- Antifraude 2b (migración 0070): presencia del validador y del empleado; nacen en "solo medir" ---
+    VALIDATOR_UNSIGNED = "VALIDATOR_UNSIGNED"
+    VALIDATOR_SIGNATURE_INVALID = "VALIDATOR_SIGNATURE_INVALID"  # regla dura (firma alterada), también en "solo medir"
+    VALIDATOR_KEY_MISMATCH = "VALIDATOR_KEY_MISMATCH"
+    VALIDATOR_LOCATION_MISSING = "VALIDATOR_LOCATION_MISSING"
+    VALIDATOR_LOCATION_INACCURATE = "VALIDATOR_LOCATION_INACCURATE"
+    VALIDATOR_OUT_OF_ZONE = "VALIDATOR_OUT_OF_ZONE"
+    SITE_CODE_MISSING = "SITE_CODE_MISSING"
+    SITE_CODE_INVALID = "SITE_CODE_INVALID"
+
+
+class RiskTier(StrEnum):
+    """Nivel del puntaje de riesgo (catalog.risk_tiers)."""
+
+    LOW = "LOW"
+    MEDIUM = "MEDIUM"
+    HIGH = "HIGH"
+    CRITICAL = "CRITICAL"
+
+
+class RiskAction(StrEnum):
+    """Qué se hace con un intento según su nivel de riesgo (catalog.risk_actions), de menos a más estricto."""
+
+    ALLOW = "ALLOW"
+    ALERT = "ALERT"  # permitir y abrir un caso para el ADMIN
+    STEP_UP = "STEP_UP"  # un reto más exigente en el momento
+    REVIEW = "REVIEW"  # se registra "en revisión" (la empresa confirma o rechaza) y se abre un caso
+    DENY = "DENY"  # se niega, cuenta para el bloqueo y se abre un caso
+
+
+class AttendanceReviewStatus(StrEnum):
+    """Seguimiento de un registro de asistencia "en revisión" (catalog.attendance_review_statuses)."""
+
+    PENDING = "PENDING"
+    CONFIRMED = "CONFIRMED"
+    REJECTED = "REJECTED"
+
+
+class EmployeeDeviceMode(StrEnum):
+    """Dispositivo del empleado (catalog.employee_device_modes; decisión D2, `app/services/employee_devices.py`)."""
+
+    OFF = "OFF"
+    OBSERVE = "OBSERVE"
+    STEP_UP = "STEP_UP"
+    APPROVAL = "APPROVAL"
+
+
+class PolicyPreset(StrEnum):
+    """Niveles predefinidos de la política de verificación (catalog.policy_presets)."""
+
+    STANDARD = "STANDARD"
+    HIGH = "HIGH"
+    MAXIMUM = "MAXIMUM"
+
+
+class PolicyChangeStatus(StrEnum):
+    """Estado de un cambio de la política de verificación (catalog.policy_change_statuses)."""
+
+    APPLIED = "APPLIED"
+    PENDING = "PENDING"  # relaja la seguridad: espera la aprobación de otro ADMIN (regla de dos personas)
+    REJECTED = "REJECTED"
+    CANCELLED = "CANCELLED"
+
+
+class FraudCaseStatus(StrEnum):
+    """Estado de un caso de fraude (catalog.fraud_case_statuses)."""
+
+    OPEN = "OPEN"
+    IN_REVIEW = "IN_REVIEW"
+    CONFIRMED = "CONFIRMED"
+    FALSE_POSITIVE = "FALSE_POSITIVE"
+    INCONCLUSIVE = "INCONCLUSIVE"
+
+
+class FraudCaseEventKind(StrEnum):
+    """Qué pasó en el historial de un caso de fraude (catalog.fraud_case_event_kinds)."""
+
+    OPENED = "OPENED"
+    STATUS_CHANGED = "STATUS_CHANGED"
+    NOTE = "NOTE"
+    EVIDENCE_VIEWED = "EVIDENCE_VIEWED"
+    SIGNATURES_BLOCKED = "SIGNATURES_BLOCKED"
+    SIGNATURES_RELEASED = "SIGNATURES_RELEASED"
+    LEARNING_FORGOTTEN = "LEARNING_FORGOTTEN"
+
+
 class Screen(StrEnum):
     """Pantallas de la aplicación (catalog.screens). Qué rol tiene cada una vive en catalog.role_screens."""
 
@@ -209,12 +437,17 @@ class Screen(StrEnum):
     ADMIN_COMPANIES = "ADMIN_COMPANIES"
     ADMIN_ERRORS = "ADMIN_ERRORS"
     ADMIN_FACE_SECURITY = "ADMIN_FACE_SECURITY"
+    ADMIN_FRAUD_CASES = "ADMIN_FRAUD_CASES"
+    ADMIN_BILLING = "ADMIN_BILLING"
+    ADMIN_USAGE = "ADMIN_USAGE"
+    ADMIN_PERFORMANCE = "ADMIN_PERFORMANCE"
     COMPANY_DASHBOARD = "COMPANY_DASHBOARD"
     COMPANY_EMPLOYEES = "COMPANY_EMPLOYEES"
     COMPANY_DEPARTMENTS = "COMPANY_DEPARTMENTS"
     COMPANY_VALIDATIONS = "COMPANY_VALIDATIONS"
     COMPANY_VALIDATORS = "COMPANY_VALIDATORS"
     COMPANY_API = "COMPANY_API"
+    COMPANY_DOCUMENTS = "COMPANY_DOCUMENTS"
     COMPANY_SHIFTS = "COMPANY_SHIFTS"
     COMPANY_CALENDAR = "COMPANY_CALENDAR"
     COMPANY_SITES = "COMPANY_SITES"

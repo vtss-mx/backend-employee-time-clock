@@ -30,4 +30,4 @@ def list_catalogs(_: CurrentUser) -> ApiResponse[CatalogsRead]:
         {**mode, "methods": list(catalogs.mode_methods.get(mode["code"], ()))} for mode in entries["validator_modes"]
     ]
     data = CatalogsRead.model_validate({**entries, "validator_modes": modes})
-    return ok(data, "Catálogos", code="CATALOGS")
+    return ok(data, code="CATALOGS")

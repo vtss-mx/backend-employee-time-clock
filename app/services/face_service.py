@@ -6,7 +6,6 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from functools import partial
-from itertools import combinations
 from typing import Any
 
 import cv2
@@ -16,21 +15,30 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.crypto import encrypt_bytes, try_decrypt
 from app.core.exceptions import ServiceUnavailableError, UnprocessableError
+from app.core.object_storage import StorageError
 from app.facial_recognition import FaceAnalysis, FacePipeline, FacePolicy, FaceValidationError
-from app.facial_recognition.matcher import cosine_similarity, embedding_from_bytes, embedding_to_bytes
+from app.facial_recognition.matcher import embedding_from_bytes, embedding_to_bytes
 from app.facial_recognition.pipeline import Accessory, accessory_consensus
-from app.models import Employee, EnrollmentStatus, FaceEmbedding
+from app.i18n import t
+from app.models import Employee, EnrollmentStatus, FaceEmbedding, FaceEnrollment
 from app.repositories.enrollment_repository import FaceEnrollmentRepository
 from app.repositories.face_repository import FaceEmbeddingRepository
+from app.services import face_signals, image_storage
 from app.services.catalog_service import get_catalogs
+from app.services.image_storage import FACE_ENROLLMENT_PHOTOS, ImageUnreadable
 
-MAX_ENROLL_IMAGES = 5
 logger = logging.getLogger(__name__)
 
 
-def face_rejection(code: str, details: Mapping[str, Any] | None = None, prefix: str = "") -> UnprocessableError:
-    """422 de la captura facial con el mensaje del catálogo `face_errors` (el motor solo informa el código)."""
-    message = prefix + get_catalogs().face_error_message(code, details)
+def _of_photo(message: str, photo: int | None) -> str:
+    """El mensaje de una captura; con varias, dice de cuál foto se trata («Foto 2: …»)."""
+    return message if photo is None else t("PHOTO_ERROR", {"number": photo, "message": message})
+
+
+def face_rejection(code: str, details: Mapping[str, Any] | None = None, photo: int | None = None) -> UnprocessableError:
+    """422 de la captura facial con el mensaje del catálogo `face_errors` (el motor solo informa el código), en el
+    idioma de la petición."""
+    message = _of_photo(get_catalogs().face_error_message(code, details), photo)
     return UnprocessableError(message, code=code, details=dict(details) if details else None)
 
 
@@ -45,6 +53,12 @@ SECURITY_REASONS = (
     "VIRTUAL_CAMERA",
     "CHALLENGE_TOO_FAST",
     "FLASH_MISMATCH",
+    # Antifraude (migración 0062): destello plano (pantalla o papel), reglas duras del motor de riesgo (reenvío
+    # perceptual y ataque conocido, cuando la empresa las exige) y un puntaje de riesgo crítico.
+    "FLASH_FLAT",
+    "REPLAY_PERCEPTUAL",
+    "KNOWN_ATTACK",
+    "RISK_DENIED",
 )
 
 
@@ -60,27 +74,28 @@ class SuspiciousCapture(UnprocessableError):
         )
 
 
-def accessories_rejection(found: Sequence[Accessory | str], prefix: str = "") -> UnprocessableError:
+def accessories_rejection(found: Sequence[Accessory | str], photo: int | None = None) -> UnprocessableError:
     """422 "Quítate los lentes para continuar": los nombres salen del catálogo de accesorios
     (el motor facial corre en otros procesos, sin base de datos, y solo informa los códigos)."""
     codes = [str(a) for a in found]
-    message = prefix + get_catalogs().accessories_message(codes)
+    message = _of_photo(get_catalogs().accessories_message(codes), photo)
     return UnprocessableError(message, code="ACCESSORIES_DETECTED", details={"accessories": codes})
 
 
-def _run(fn: Callable[[], FaceAnalysis], prefix: str = "") -> FaceAnalysis:
-    """Traduce errores de calidad de imagen a HTTP 422 (con código y detalles)."""
+def _run(fn: Callable[[], FaceAnalysis], photo: int | None = None) -> FaceAnalysis:
+    """Traduce errores de calidad de imagen a HTTP 422 (con código y detalles); `photo`: el número de la captura
+    cuando son varias."""
     try:
         return fn()
     except FaceValidationError as exc:
         if exc.code in SECURITY_REASONS:  # p. ej. una imagen con metadatos de cámara (no es de la app)
             raise SuspiciousCapture(exc.code, exc.details) from exc
         if exc.code == "ACCESSORIES_DETECTED":
-            raise accessories_rejection((exc.details or {}).get("accessories", []), prefix) from exc
-        raise face_rejection(exc.code, exc.details, prefix) from exc
+            raise accessories_rejection((exc.details or {}).get("accessories", []), photo) from exc
+        raise face_rejection(exc.code, exc.details, photo) from exc
     except cv2.error as exc:
         logger.warning("OpenCV no pudo procesar la imagen: %s", exc)
-        raise face_rejection("INVALID_IMAGE", prefix=prefix) from exc
+        raise face_rejection("INVALID_IMAGE", photo=photo) from exc
     except Exception as exc:
         raise engine_failure() from exc
 
@@ -131,7 +146,9 @@ def analyze_frames(
     def analyze(image: bytes) -> FaceAnalysis:
         return pipeline.analyze_frontal(image, policy=policy, enforce_accessories=False)
 
-    analyses = [_run(partial(analyze, img), f"Foto {i}: " if many else "") for i, img in enumerate(images, start=1)]
+    analyses = [_run(partial(analyze, img), i if many else None) for i, img in enumerate(images, start=1)]
+    # Sus números (y sus huellas) quedan en el intento aunque lo rechace la suplantación: el caso los necesita.
+    face_signals.current().frontal = list(analyses)
     found = accessory_consensus([a.accessories_found for a in analyses])
     spoof = check_spoof and spoof_consensus(analyses, policy)
     if spoof:
@@ -219,49 +236,34 @@ class FaceService:
     ) -> tuple[list[FaceAnalysis], tuple[str, ...]]:
         return analyze_frames(self.pipeline, images, policy=policy, allow_review=allow_review)
 
-    def analyze_enrollment(
-        self, images: list[bytes], *, policy: FacePolicy, allow_review: bool = False
-    ) -> tuple[list[FaceAnalysis], tuple[str, ...]]:
-        """Valida cada muestra, los accesorios por consenso y que todas sean la misma persona."""
-        if not 1 <= len(images) <= MAX_ENROLL_IMAGES:
-            raise UnprocessableError(
-                f"Envía entre 1 y {MAX_ENROLL_IMAGES} fotografías del rostro", code="INVALID_SAMPLE_COUNT"
-            )
-        analyses, flagged = self.analyze_frames(images, policy=policy, allow_review=allow_review)
-        for a, b in combinations(analyses, 2):
-            if cosine_similarity(a.embedding, b.embedding) < settings.FACE_ENROLL_CONSISTENCY_THRESHOLD:
-                raise face_rejection("ENROLL_INCONSISTENT")
-        return analyses, flagged
-
     # ---------- Persistencia ----------
 
     def store(
         self,
-        employee_id: int,
+        employee: Employee,
         analyses: list[FaceAnalysis],
         *,
         active: bool = True,
         enrollment_id: int | None = None,
         learned: bool = False,
     ) -> list[FaceEmbedding]:
-        """Guarda las muestras (cifradas). Reemplazar un registro lo decide quien llama (`delete_all`);
-        las aprendidas y su lugar los administra face_learning."""
-        return [
-            self.repo.add(
-                FaceEmbedding(
-                    employee_id=employee_id,
-                    embedding_encrypted=encrypt_bytes(embedding_to_bytes(a.embedding)),
-                    model_name=self.pipeline.model_name,
-                    dimension=int(a.embedding.shape[0]),
-                    detection_score=a.detection_score,
-                    quality_score=a.quality_score,
-                    active=active,
-                    enrollment_id=enrollment_id,
-                    learned=learned,
-                )
+        """Guarda las muestras (cifradas) en una inserción. Reemplazar un registro lo decide quien llama
+        (`delete_all`); las aprendidas y su lugar los administra face_learning."""
+        return self.repo.add_all(
+            FaceEmbedding(
+                employee_id=employee.id,
+                company_id=employee.company_id,
+                embedding_encrypted=encrypt_bytes(embedding_to_bytes(a.embedding)),
+                model_name=self.pipeline.model_name,
+                dimension=int(a.embedding.shape[0]),
+                detection_score=a.detection_score,
+                quality_score=a.quality_score,
+                active=active,
+                enrollment_id=enrollment_id,
+                learned=learned,
             )
             for a in analyses[: settings.FACE_MAX_SAMPLES_PER_EMPLOYEE]
-        ]
+        )
 
     def load_references(self, employee_id: int) -> list[Reference]:
         """Muestras activas del empleado generadas con el modelo actual (las aprobadas y las aprendidas).
@@ -284,19 +286,28 @@ class FaceService:
         if migration_blocked(employee.id):
             return []
         enrollment = FaceEnrollmentRepository(self.db, employee.company_id).latest_for_employee(employee.id)
-        if enrollment is None or enrollment.status != EnrollmentStatus.APPROVED or enrollment.photo_encrypted is None:
-            # Sin foto aprobada de dónde migrar: no se vuelve a buscar en cada identificación (ni frena
-            # la migración por lotes del resto de la empresa).
+        photo = self._approved_photo(employee.id, enrollment)
+        if enrollment is None or photo is None:
+            # Sin foto aprobada de dónde migrar (ilegible o el bucket no respondió): no se vuelve a buscar en
+            # cada identificación (ni frena la migración por lotes del resto de la empresa); se reintenta luego.
             block_migration(employee.id)
             return []
-        photo = try_decrypt(enrollment.photo_encrypted)
-        if photo is None:
-            logger.error("La foto aprobada del empleado %s es ilegible: no se puede migrar su rostro", employee.id)
-            block_migration(employee.id)
-            return []
-        return self.migrate_from_photo(employee.id, enrollment.id, photo)
+        return self.migrate_from_photo(employee, enrollment.id, photo)
 
-    def migrate_from_photo(self, employee_id: int, enrollment_id: int, photo: bytes) -> list[Reference]:
+    @staticmethod
+    def _approved_photo(employee_id: int, enrollment: FaceEnrollment | None) -> bytes | None:
+        """La foto aprobada (del bucket, con tiempo límite), o None si no la hay o no se pudo leer."""
+        if enrollment is None or enrollment.status != EnrollmentStatus.APPROVED:
+            return None
+        try:
+            return image_storage.read(FACE_ENROLLMENT_PHOTOS, enrollment)
+        except ImageUnreadable:
+            logger.error("La foto aprobada del empleado %s es ilegible: no se puede migrar su rostro", employee_id)
+        except StorageError:
+            logger.exception("No se pudo leer del bucket la foto aprobada del empleado %s", employee_id)
+        return None
+
+    def migrate_from_photo(self, employee: Employee, enrollment_id: int, photo: bytes) -> list[Reference]:
         """Genera el embedding del modelo actual a partir de la foto de referencia aprobada.
 
         Al cambiar de motor (p. ej. SFace → fusión) los empleados aprobados no tienen que volver
@@ -313,17 +324,17 @@ class FaceService:
         try:
             analysis = self.pipeline.analyze_frontal(photo, policy=permissive, enforce_accessories=False)
         except (FaceValidationError, cv2.error, ValueError) as exc:
-            logger.warning("No se pudo migrar el rostro del empleado %s: %s", employee_id, exc)
-            block_migration(employee_id)
+            logger.warning("No se pudo migrar el rostro del empleado %s: %s", employee.id, exc)
+            block_migration(employee.id)
             return []
         except Exception:  # falla inesperada del motor: se registra y la identificación sigue sin él
-            logger.exception("El motor falló al migrar el rostro del empleado %s", employee_id)
-            block_migration(employee_id)
+            logger.exception("El motor falló al migrar el rostro del empleado %s", employee.id)
+            block_migration(employee.id)
             return []
-        self.store(employee_id, [analysis], active=True, enrollment_id=enrollment_id)
+        self.store(employee, [analysis], active=True, enrollment_id=enrollment_id)
         self.db.commit()
-        logger.info("Embedding del empleado %s migrado al modelo %s", employee_id, self.pipeline.model_name)
-        return self.load_references(employee_id)
+        logger.info("Embedding del empleado %s migrado al modelo %s", employee.id, self.pipeline.model_name)
+        return self.load_references(employee.id)
 
     def delete_all(self, employee_id: int) -> None:
         self.repo.delete_all(employee_id)

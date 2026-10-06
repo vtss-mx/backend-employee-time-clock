@@ -25,7 +25,6 @@ from sqlalchemy import (
     ForeignKeyConstraint,
     Index,
     String,
-    UniqueConstraint,
     false,
     text,
 )
@@ -33,7 +32,8 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
 from app.core.db_schemas import AUTH, CATALOG, TENANCY, WORKFORCE
-from app.models.mixins import TimestampMixin
+from app.core.sql_safety import sql_identifier
+from app.models.mixins import SoftDeleteMixin, TimestampMixin, company_fk, live_unique, trash_index
 
 #: Días máximos de una ausencia (ambos incluidos): un año, incluido uno bisiesto.
 ABSENCE_MAX_DAYS = 366
@@ -43,12 +43,7 @@ ACTIVE_ABSENCE = "status IN ('PENDING', 'APPROVED')"
 
 def _employee_fk(table: str) -> ForeignKeyConstraint:
     """El empleado es de la MISMA empresa (FK compuesta): la base impide mezclar empresas."""
-    return ForeignKeyConstraint(
-        ["employee_id", "company_id"],
-        [f"{WORKFORCE}.employees.id", f"{WORKFORCE}.employees.company_id"],
-        name=f"fk_{table}_employee_company",
-        ondelete="CASCADE",
-    )
+    return company_fk(table, "employee_id", f"{WORKFORCE}.employees")
 
 
 def _by_user(table: str, column: str) -> Index:
@@ -56,18 +51,21 @@ def _by_user(table: str, column: str) -> Index:
     return Index(
         f"ix_{table}_{column}",
         column,
-        postgresql_where=text(f"{column} IS NOT NULL"),
-        sqlite_where=text(f"{column} IS NOT NULL"),
+        postgresql_where=text(f"{sql_identifier(column)} IS NOT NULL"),
+        sqlite_where=text(f"{sql_identifier(column)} IS NOT NULL"),
     )
 
 
-class CompanyHoliday(TimestampMixin, Base):
-    """Día festivo de la empresa: nadie checa ese día, salvo quien lo tenga como laborable."""
+class CompanyHoliday(SoftDeleteMixin, TimestampMixin, Base):
+    """Día festivo de la empresa: nadie checa ese día, salvo quien lo tenga como laborable. Con borrado lógico
+    (migración 0068): eliminado deja de ser día libre y su fecha queda libre para otro."""
 
     __tablename__ = "company_holidays"
     __table_args__ = (
-        # Un festivo por día; también da el listado por año (company_id + rango de fechas).
-        UniqueConstraint("company_id", "holiday_date", name="uq_company_holidays_company_date"),
+        # Un festivo VIGENTE por día; también da el listado por año (company_id + rango de fechas).
+        live_unique("uq_company_holidays_company_date", "company_id", "holiday_date"),
+        # Papelera de la empresa (el más reciente primero) y depuración de los eliminados.
+        trash_index("company_holidays", "company_id", "deleted_at", "id"),
         _by_user("company_holidays", "created_by_id"),
         {"schema": WORKFORCE},
     )
@@ -133,14 +131,19 @@ class EmployeeAbsence(TimestampMixin, Base):
     decision_note: Mapped[str | None] = mapped_column(String(500))
 
 
-class EmployeeWorkday(TimestampMixin, Base):
-    """El empleado SÍ trabaja ese día aunque sea festivo o esté dentro de una ausencia suya."""
+class EmployeeWorkday(SoftDeleteMixin, TimestampMixin, Base):
+    """El empleado SÍ trabaja ese día aunque sea festivo o esté dentro de una ausencia suya. Con borrado lógico
+    (migración 0068): eliminado, ese día vuelve a ser libre para él."""
 
     __tablename__ = "employee_workdays"
     __table_args__ = (
         _employee_fk("employee_workdays"),
-        # Uno por empleado y día; también da su lista por fecha.
-        UniqueConstraint("employee_id", "work_date", name="uq_employee_workdays_employee_date"),
+        # Uno VIGENTE por empleado y día; también da su lista por fecha.
+        live_unique("uq_employee_workdays_employee_date", "employee_id", "work_date"),
+        # La FK del empleado (su depuración borra sus días laborables en cascada): el único parcial no la cubre.
+        Index("ix_employee_workdays_employee", "employee_id"),
+        # Papelera de la empresa (el más reciente primero) y depuración de los eliminados.
+        trash_index("employee_workdays", "company_id", "deleted_at", "id"),
         # Listado de la empresa y tablero de un día.
         Index("ix_employee_workdays_company_date", "company_id", "work_date", "id"),
         _by_user("employee_workdays", "created_by_id"),

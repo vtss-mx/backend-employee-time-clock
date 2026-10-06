@@ -27,7 +27,7 @@ NOT_FOUND: dict[int | str, dict[str, Any]] = {404: {"model": ErrorResponse, "des
 @router.get("", response_model=ApiResponse[ApiKeyList], summary="Llaves de la empresa (paginado, sin secretos)")
 def list_api_keys(company: CompanyScope, db: DbSession, page: Pagination) -> ApiResponse[ApiKeyList]:
     result = ApiKeyService(db, company).list_keys(page)
-    return ok(result, f"{result.total} llave(s)", code="API_KEYS_LISTED")
+    return ok(result, code="API_KEYS_LISTED", params={"count": result.total})
 
 
 @router.post(
@@ -41,7 +41,7 @@ def create_api_key(
     payload: ApiKeyCreate, company: CompanyScope, user: CompanyUser, db: DbSession
 ) -> ApiResponse[ApiKeyCreated]:
     created = ApiKeyService(db, company).create(payload, user)
-    return ok(created, "Llave creada", code="API_KEY_CREATED", status_code=201)
+    return ok(created, code="API_KEY_CREATED", status_code=201)
 
 
 @router.post(
@@ -53,7 +53,7 @@ def create_api_key(
 )
 def rotate_api_key(key_id: int, company: CompanyScope, user: CompanyUser, db: DbSession) -> ApiResponse[ApiKeyCreated]:
     created = ApiKeyService(db, company).rotate(key_id, user)
-    return ok(created, "Llave rotada", code="API_KEY_ROTATED", status_code=201)
+    return ok(created, code="API_KEY_ROTATED", status_code=201)
 
 
 @router.delete(
@@ -63,4 +63,4 @@ def rotate_api_key(key_id: int, company: CompanyScope, user: CompanyUser, db: Db
     responses=NOT_FOUND,
 )
 def revoke_api_key(key_id: int, company: CompanyScope, user: CompanyUser, db: DbSession) -> ApiResponse[ApiKeyRead]:
-    return ok(ApiKeyService(db, company).revoke(key_id, user), "Llave revocada", code="API_KEY_REVOKED")
+    return ok(ApiKeyService(db, company).revoke(key_id, user), code="API_KEY_REVOKED", key="API_KEY_REVOKED_DONE")

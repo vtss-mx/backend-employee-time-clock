@@ -20,6 +20,12 @@ from app.services.catalog_service import Catalogs, get_catalogs
 
 _ENROLLMENT = {FaceStatus.NOT_ENROLLED, FaceStatus.REJECTED}
 
+#: Pantallas que exigen la identidad aprobada (decisión del dueño del producto): mientras el registro
+#: facial del empleado no esté aprobado, solo usa su identidad (registrar su rostro, verlo en validación)
+#: y su cuenta (perfil, elegir empresa). Además de quitarlas del menú, `require_screen` cierra con 403
+#: FACE_NOT_APPROVED cada endpoint que solo sirve a estas pantallas: una API nueva no puede olvidarlo.
+IDENTITY_SCREENS = frozenset({Screen.EMPLOYEE_VERIFY, Screen.EMPLOYEE_ATTENDANCE, Screen.EMPLOYEE_QR})
+
 
 def _face_status(user: User) -> FaceStatus | None:
     return user.employee.face_status if user.employee else None
@@ -34,13 +40,13 @@ def _in_company(user: User) -> bool:
 AVAILABILITY: dict[Screen, Callable[[User], bool]] = {
     Screen.EMPLOYEE_ENROLL: lambda user: _in_company(user) and _face_status(user) in _ENROLLMENT,
     Screen.EMPLOYEE_PENDING: lambda user: _face_status(user) == FaceStatus.PENDING_REVIEW,
-    Screen.EMPLOYEE_VERIFY: lambda user: _face_status(user) == FaceStatus.APPROVED,
-    # Cada registro de asistencia se confirma con su rostro: solo con el registro facial aprobado.
-    Screen.EMPLOYEE_ATTENDANCE: lambda user: _face_status(user) == FaceStatus.APPROVED,
-    Screen.EMPLOYEE_QR: lambda user: _face_status(user) == FaceStatus.APPROVED,
+    # IDENTITY_SCREENS: verificarse, la asistencia (cada registro se confirma con su rostro) y el QR.
+    **dict.fromkeys(IDENTITY_SCREENS, lambda user: _face_status(user) == FaceStatus.APPROVED),
     Screen.EMPLOYEE_SELECT_COMPANY: lambda user: len(user.employees) > 1,
     # Integraciones (API): solo si el ADMIN le dio acceso a la empresa.
     Screen.COMPANY_API: lambda user: bool(user.company and user.company.api_enabled),
+    # Validadores: solo si el ADMIN le dio un límite mayor que cero (sus APIs: 403 VALIDATORS_DISABLED).
+    Screen.COMPANY_VALIDATORS: lambda user: bool(user.company and user.company.validators_enabled),
 }
 
 

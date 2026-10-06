@@ -12,6 +12,9 @@ Cada comprobación cierra una forma concreta de engañar al sistema:
 | Programa que responde al reto al instante | tiempo humano mínimo por movimiento y color | CHALLENGE_TOO_FAST |
 | Foto, pantalla o video frente a la cámara | anti-spoofing en frontales y en cada movimiento | SPOOF_DETECTED |
 | Video inyectado o generado que no ve la pantalla | el rostro refleja los colores del destello | FLASH_MISMATCH |
+| Pantalla o papel frente a la cámara bajo el destello | el rostro responde más que el fondo | FLASH_FLAT |
+| Captura reenviada con cambios mínimos (recomprimida) | pHash + embedding (motor de riesgo) | REPLAY_PERCEPTUAL |
+| Artefacto de un ataque ya confirmado (otra empresa incluida) | lista de bloqueo (motor de riesgo) | KNOWN_ATTACK |
 
 Todas lanzan `SuspiciousCapture`: se registran en la bitácora y cuentan para el bloqueo temporal
 (attempt_guard). Ninguna sustituye a las demás: un atacante tendría que superarlas todas a la vez.
@@ -175,13 +178,19 @@ def inspect_take(
     *,
     actions: Sequence[LivenessAction] = (),
     flash: Sequence[FlashCapture] = (),
+    others: Sequence[FaceAnalysis] = (),
 ) -> None:
     """Comprobaciones de la toma completa (las que la empresa tenga activas), después del análisis de
     cada captura. El reenvío al final: solo se recuerdan capturas que superaron lo demás. Los fotogramas
-    del destello cuentan solo cuando el destello es obligatorio (mientras se observa no bloquean)."""
+    del destello cuentan solo cuando el destello es obligatorio (mientras se observa no bloquean).
+
+    `others` (las fotos útiles del registro que no quedaron como referencia, decisión del dueño 2026-10-06) solo
+    cuentan para el reenvío: sin recordarlas, cualquiera de las 31 no elegidas serviría en otro registro. Las fotos
+    fijas y la continuidad se revisan solo en las frontales: 36 fotos seguidas de una persona quieta pueden quedar,
+    entre sí, bajo FACE_STATIC_MIN_DIFFERENCE y jamás deben llamarse STATIC_CAPTURE."""
     if policy.detect_static_captures:
         ensure_not_static(frontal, turns, flash)
     if policy.check_capture_continuity:
         ensure_same_take(frontal, turns, actions, flash)
     if policy.detect_replays:
-        ensure_not_replayed(db, company_id, [*frontal, *turns, *flash])
+        ensure_not_replayed(db, company_id, [*frontal, *turns, *flash, *others])

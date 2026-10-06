@@ -25,6 +25,7 @@ from app.services.catalog_service import get_catalogs
 from app.services.face_service import FaceService, analyze_frames
 from app.services.identity_core import MAX_FRONTAL_FRAMES, ensure_frame_count
 from tests.conftest import FakePipeline, approved_employee, create_employee, login
+from tests.storage_support import UNREADABLE, swap_object
 from tests.test_capture_security import attempt, employee_id
 from tests.test_face import _verify
 from tests.test_policy import _old_model_only
@@ -124,15 +125,6 @@ def test_every_identification_takes_one_to_three_frontal_frames():
     ensure_frame_count([b"face:juan"] * MAX_FRONTAL_FRAMES)
 
 
-def test_an_enrollment_analysis_takes_one_to_five_samples():
-    with SessionLocal() as db:
-        faces = FaceService(db, FakePipeline())
-        for images in ([], [b"face:juan"] * 6):
-            with pytest.raises(UnprocessableError) as error:
-                faces.analyze_enrollment(images, policy=DEFAULT_POLICY)
-            assert error.value.code == "INVALID_SAMPLE_COUNT"
-
-
 # ---------------------------------------------------------------- muestras y migración
 
 
@@ -149,36 +141,40 @@ def test_a_sample_with_the_wrong_size_is_skipped_and_logged(client, company_head
     assert f"Muestra facial {damaged} ilegible" in caplog.text
 
 
-def _photo(employee: int, photo: bytes) -> None:
+def _photo(bucket, employee: int, payload: bytes = UNREADABLE) -> None:
+    """Cambia en el bucket la foto (ya cifrada) del registro del empleado y anota su SHA-256."""
     with SessionLocal() as db:
-        db.query(FaceEnrollment).filter_by(employee_id=employee).update({"photo_encrypted": photo})
+        for row in db.query(FaceEnrollment).filter_by(employee_id=employee):
+            row.photo_sha256 = swap_object(bucket, row.photo_object, payload)
         db.commit()
 
 
-def test_an_unreadable_reference_photo_is_not_migrated_nor_retried(client, company_headers, caplog, monkeypatch):
+def test_an_unreadable_reference_photo_is_not_migrated_nor_retried(
+    client, company_headers, bucket, caplog, monkeypatch
+):
     """Cambió el motor y la foto aprobada no se puede descifrar (otra llave): se registra, el empleado
     queda sin rostro con qué compararse y no se vuelve a intentar en cada captura."""
     headers = approved_employee(client, company_headers)
     employee = employee_id(client, headers)
     _old_model_only(employee)
-    _photo(employee, b"cifrado-con-otra-llave")
+    _photo(bucket, employee)
 
     with caplog.at_level(logging.ERROR, logger="app.services.face_service"):
         assert _verify(client, headers).json()["code"] == "FACE_NOT_REGISTERED"
     assert f"La foto aprobada del empleado {employee} es ilegible" in caplog.text
     assert face_service.migration_blocked(employee)
 
-    decrypted: list[bytes] = []
-    monkeypatch.setattr(face_service, "try_decrypt", lambda data: decrypted.append(data))
+    reads: list[object] = []
+    monkeypatch.setattr(face_service.image_storage, "read", lambda *args, **kwargs: reads.append(args))
     assert _verify(client, headers).json()["code"] == "FACE_NOT_REGISTERED"
-    assert decrypted == []  # bloqueado: ni siquiera vuelve a leer la foto
+    assert reads == []  # bloqueado: ni siquiera vuelve a leer la foto
 
 
-def test_a_reference_photo_the_engine_rejects_blocks_its_migration(client, company_headers):
+def test_a_reference_photo_the_engine_rejects_blocks_its_migration(client, company_headers, bucket):
     headers = approved_employee(client, company_headers)
     employee = employee_id(client, headers)
     _old_model_only(employee)
-    _photo(employee, encrypt_bytes(b"noface"))
+    _photo(bucket, employee, encrypt_bytes(b"noface"))
     with SessionLocal() as db:
         assert FaceService(db, FakePipeline()).references_for(db.get(Employee, employee)) == []
     assert employee in face_service.blocked_migrations()

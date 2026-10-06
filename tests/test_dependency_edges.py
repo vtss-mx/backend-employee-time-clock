@@ -100,7 +100,7 @@ def test_the_number_of_images_per_request_is_bounded(count, code):
 @pytest.mark.parametrize(
     ("raw", "message"),
     [
-        (" - ", "obligatorio"),
+        (" - ", "12 caracteres"),  # vacío no es un RFC: el opcional lo resuelve antes `optional_document`
         ("XAXX010101000", "genérico"),  # 13 caracteres: se valida como persona física
         ("AB1231231XX1", "12 caracteres"),  # 12 con formato incorrecto
         ("ABC991332XX1", "fecha"),  # mes 13
@@ -115,12 +115,14 @@ def test_company_rfc_of_a_legal_entity_is_normalized():
     assert validators.normalize_company_rfc("abc-990101-xx1") == "ABC990101XX1"
 
 
-@pytest.mark.parametrize(("raw", "message"), [("  a  ", "La razón social es obligatorio"), ("x" * 201, "200")])
+@pytest.mark.parametrize(("raw", "message"), [("  a  ", "La razón social es obligatoria"), ("x" * 201, "200")])
 def test_company_name_limits(raw, message):
     with pytest.raises(ValueError, match=message):
-        validators.normalize_company_name(raw, "La razón social")
+        validators.normalize_company_name(raw, "LEGAL_NAME_REQUIRED")
 
 
-def test_nss_is_required():
-    with pytest.raises(ValueError, match="obligatorio"):
-        validators.normalize_nss(" - ")
+def test_a_document_of_only_spaces_and_hyphens_is_not_captured():
+    """RFC, CURP y NSS son opcionales: solo espacios o guiones = sin capturar (NULL), nunca un error ni ""."""
+    assert validators.optional_document(" - ", validators.normalize_nss) is None
+    assert validators.optional_document(None, validators.normalize_nss) is None
+    assert validators.optional_document("1234 5678 903", validators.normalize_nss) == "12345678903"

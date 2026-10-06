@@ -12,10 +12,12 @@ import time
 from typing import Any
 
 from sqlalchemy import text
+from sqlalchemy.orm import Session
 
 from app.core.admission import admission
 from app.core.database import engine
 from app.facial_recognition import face_engine_status
+from app.services import storage_jobs
 
 #: La revisión de dependencias se reutiliza unos segundos: muchas sondas (balanceador, orquestador,
 #: monitoreo) no abren una conexión a la BD cada una.
@@ -23,10 +25,12 @@ _READY_CACHE_SECONDS = 2.0
 _ready_lock = threading.Lock()
 _ready_cache: tuple[float, dict[str, dict[str, Any]]] | None = None
 
+#: Estado → llave de su mensaje (catálogo de mensajes; la sonda responde en el idioma de la petición).
 MESSAGES = {
-    "ok": "Todos los componentes están disponibles",
-    "degraded": "Servicio disponible con funciones limitadas (motor facial no disponible)",
-    "unavailable": "La base de datos no está disponible",
+    "ok": "HEALTH_OK",
+    "degraded": "HEALTH_DEGRADED",
+    "unavailable": "HEALTH_UNAVAILABLE",
+    "shutting_down": "SHUTTING_DOWN",
 }
 
 
@@ -72,7 +76,13 @@ def readiness() -> dict[str, Any]:
     }
 
 
-def server_status() -> dict[str, Any]:
-    """Vista del ADMIN: todo el detalle de los componentes y la capacidad adaptativa del proceso."""
+def server_status(db: Session) -> dict[str, Any]:
+    """Vista del ADMIN: todo el detalle de los componentes, la capacidad adaptativa del proceso y el
+    almacenamiento de imágenes en el bucket (conteos de la BD; ninguna llamada al bucket)."""
     found = components()
-    return {"status": overall(found), "components": found, "admission": admission.snapshot()}
+    return {
+        "status": overall(found),
+        "components": found,
+        "admission": admission.snapshot(),
+        "storage": storage_jobs.status(db),
+    }

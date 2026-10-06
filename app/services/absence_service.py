@@ -35,16 +35,14 @@ from app.services.calendar_rules import span_days
 from app.services.catalog_service import get_catalogs
 from app.services.shift_service import employee_ref
 
-ABSENCE_NOT_FOUND = "Ausencia no encontrada"
-
 
 def _overlap(absence: EmployeeAbsence) -> ConflictError:
     catalogs = get_catalogs()
     kind = catalogs.name("day_off_types", absence.type_code)
     state = catalogs.name("shift_request_statuses", absence.status).lower()
     return ConflictError(
-        f"Se encima con su ausencia «{kind}» ({state}) del {absence.starts_on:%d/%m/%Y} al {absence.ends_on:%d/%m/%Y}",
         code="ABSENCE_OVERLAP",
+        params={"kind": kind, "state": state, "start": absence.starts_on, "end": absence.ends_on},
         details={"absence_id": absence.id},
     )
 
@@ -81,13 +79,9 @@ class AbsenceService:
         """El tipo existe y está activo en el catálogo; el empleado solo pide los que se pueden pedir."""
         row = get_catalogs().get("day_off_types", type_code)
         if row is None or not row["active"]:
-            raise UnprocessableError("Elige un tipo de ausencia válido", code="DAY_OFF_TYPE_INVALID", field="type")
+            raise UnprocessableError(code="DAY_OFF_TYPE_INVALID", field="type")
         if requestable and not row["requestable"]:
-            raise UnprocessableError(
-                f"«{row['name']}» lo registra tu empresa: pídeselo directamente",
-                code="DAY_OFF_TYPE_NOT_REQUESTABLE",
-                field="type",
-            )
+            raise UnprocessableError(code="DAY_OFF_TYPE_NOT_REQUESTABLE", params={"name": row["name"]}, field="type")
 
     # ---------- Empresa ----------
 
@@ -123,8 +117,8 @@ class AbsenceService:
         missing = set(data.employee_ids) - {employee.id for employee in employees}
         if missing:
             raise NotFoundError(
-                "Algunos empleados ya no existen: actualiza la lista",
                 code="EMPLOYEE_NOT_FOUND",
+                key="EMPLOYEES_GONE",
                 details={"employee_ids": sorted(missing)},
             )
         active = self.repo.active_overlapping(data.employee_ids, data.starts_on, data.ends_on)
@@ -178,7 +172,7 @@ class AbsenceService:
         """La empresa retira una ausencia pendiente o aprobada: sus días vuelven a ser laborables."""
         absence = self._get(absence_id, lock=True)
         if absence.status not in ACTIVE_STATUSES:
-            raise ConflictError("La ausencia ya no está vigente", code="ABSENCE_CLOSED")
+            raise ConflictError(code="ABSENCE_CLOSED", key="ABSENCE_NOT_ACTIVE")
         return self._decide(absence, ShiftRequestStatus.CANCELLED, actor, None)
 
     # ---------- Empleado ----------
@@ -199,7 +193,7 @@ class AbsenceService:
         """Pide vacaciones o un permiso desde hoy en adelante; queda pendiente de la empresa."""
         self._ensure_type(data.type, requestable=True)
         if data.starts_on < business_today():
-            raise UnprocessableError("Pide tus días desde hoy en adelante", code="ABSENCE_IN_PAST", field="starts_on")
+            raise UnprocessableError(code="ABSENCE_IN_PAST", field="starts_on")
         self.employees.get_by_id(employee.id, lock=True)  # dos solicitudes a la vez se revisan en orden
         clash = next(iter(self.repo.active_overlapping([employee.id], data.starts_on, data.ends_on)[employee.id]), None)
         if clash is not None:
@@ -221,7 +215,7 @@ class AbsenceService:
         """El empleado retira su solicitud mientras siga pendiente (una ausencia ajena no existe)."""
         absence = self._get(absence_id, lock=True)
         if absence.employee_id != employee.id:
-            raise NotFoundError(ABSENCE_NOT_FOUND, code="ABSENCE_NOT_FOUND")
+            raise NotFoundError(code="ABSENCE_NOT_FOUND")
         self._ensure_pending(absence)
         absence.status = ShiftRequestStatus.CANCELLED
         self.db.commit()
@@ -232,13 +226,13 @@ class AbsenceService:
     def _get(self, absence_id: int, *, lock: bool = False) -> EmployeeAbsence:
         absence = self.repo.absence(absence_id, lock=lock)
         if absence is None:
-            raise NotFoundError(ABSENCE_NOT_FOUND, code="ABSENCE_NOT_FOUND")
+            raise NotFoundError(code="ABSENCE_NOT_FOUND")
         return absence
 
     @staticmethod
     def _ensure_pending(absence: EmployeeAbsence) -> None:
         if absence.status != ShiftRequestStatus.PENDING:
-            raise ConflictError("La solicitud ya fue atendida", code="ABSENCE_CLOSED")
+            raise ConflictError(code="ABSENCE_CLOSED", key="REQUEST_ALREADY_HANDLED")
 
     def _decide(
         self, absence: EmployeeAbsence, status: ShiftRequestStatus, actor: User, note: str | None
@@ -256,7 +250,7 @@ def _outcome(
 ) -> tuple[BulkResultCode, AppError | None]:
     """Las reglas de una ausencia colectiva para un empleado."""
     if not employee.active:
-        return "SKIPPED", ConflictError("El empleado está inactivo", code="EMPLOYEE_INACTIVE")
+        return "SKIPPED", ConflictError(code="EMPLOYEE_INACTIVE")
     found = list(active)
     same = (data.type, data.starts_on, data.ends_on, ShiftRequestStatus.APPROVED)
     if any((a.type_code, a.starts_on, a.ends_on, a.status) == same for a in found):

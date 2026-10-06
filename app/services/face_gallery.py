@@ -11,20 +11,25 @@ descarta), en lugar de descifrar otra vez toda la empresa.
 """
 
 import threading
+import time
 from collections import OrderedDict
 from collections.abc import Sequence
 from dataclasses import dataclass
+from functools import cached_property
 
 import numpy as np
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.facial_recognition.matcher import MatchRequirement, acceptance, normalize_rows
+from app.core.observability import observed
+from app.facial_recognition.matcher import FUSION_DIMENSION, MatchRequirement, acceptance, normalize_rows
 from app.repositories.face_repository import FaceEmbeddingRepository, GalleryRow
 from app.services.face_service import readable_embedding
 
 #: Huella de la galería en la BD: (muestras, id mayor, última actualización de un empleado).
 Fingerprint = tuple[int, int, str]
+#: Memoria de una fila de la galería, a lo más (el vector más grande, el de la fusión, más su id y su empleado).
+ROW_BYTES = FUSION_DIMENSION * 4 + 16
 
 
 @dataclass(frozen=True)
@@ -49,6 +54,15 @@ class Gallery:
         """Solo las filas indicadas (máscara o índices), con la misma huella."""
         return Gallery(self.fingerprint, self.ids[mask], self.labels[mask], self.matrix[mask])
 
+    @cached_property
+    def by_person(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Las filas agrupadas por empleado (orden, dónde empieza cada grupo y de quién es), una vez por galería: el 1:N
+        de cada verificación reduce por persona de un golpe (`reduceat`) en lugar de fila por fila."""
+        order = np.argsort(self.labels, kind="stable")
+        labels = self.labels[order]
+        starts = np.flatnonzero(np.r_[True, labels[1:] != labels[:-1]])
+        return order, starts, labels[starts]
+
 
 @dataclass(frozen=True)
 class Identification:
@@ -70,6 +84,7 @@ def _empty(fingerprint: Fingerprint) -> Gallery:
     )
 
 
+@observed("face.identify")
 def identify(
     gallery: Gallery, probes: Sequence[np.ndarray], *, required: MatchRequirement, margin: float
 ) -> Identification:
@@ -105,6 +120,7 @@ def identify(
     return Identification(winners[0], similarities, sample_id=int(gallery.ids[closest]), gap=round(min(gaps), 4))
 
 
+@observed("face.duplicate_search")
 def duplicate_of(
     gallery: Gallery, probes: Sequence[np.ndarray], *, exclude: int, required: MatchRequirement
 ) -> int | None:
@@ -114,6 +130,41 @@ def duplicate_of(
     if not others.any():
         return None
     return identify(gallery.rows(others), probes, required=required, margin=0.0).employee_id
+
+
+def similar_people(
+    gallery: Gallery, probes: Sequence[np.ndarray], *, exclude: int, required: float, top: int
+) -> list[tuple[int, float]]:
+    """Los `top` empleados (sin `exclude`) a los que se parecen TODAS las capturas con al menos `required` de
+    similitud, del más parecido al menos: (empleado, similitud de su captura menos parecida). Es la búsqueda de
+    SOSPECHA del registro facial (más sensible que la de aceptación): solo marca para la revisión."""
+    others = gallery.rows(gallery.labels != exclude)
+    if others.size == 0:
+        return []
+    people, columns = np.unique(others.labels, return_inverse=True)
+    scores = normalize_rows(np.stack(probes).astype(np.float32)) @ others.matrix.T
+    best = np.full((scores.shape[0], people.shape[0]), -1.0, dtype=np.float32)
+    np.maximum.at(best, (np.arange(scores.shape[0])[:, None], columns[None, :]), scores)
+    floor = best.min(axis=0)
+    order = [i for i in np.argsort(floor)[::-1] if floor[i] >= required][:top]
+    return [(int(people[i]), round(float(floor[i]), 4)) for i in order]
+
+
+@observed("face.identity_rival")
+def rival_of(gallery: Gallery | None, probes: Sequence[np.ndarray], *, exclude: int) -> tuple[int, float] | None:
+    """1:N en cada 1:1 (antifraude 1b, señal IDENTITY_MISMATCH): el OTRO empleado al que más se parecen TODAS las
+    capturas y la similitud de la menos parecida (la misma medida que `similar_people`). Solo CPU: quien llama lo
+    hace sin transacción abierta. None sin galería o sin nadie más."""
+    if gallery is None or gallery.size == 0:
+        return None
+    order, starts, people = gallery.by_person
+    scores = normalize_rows(np.stack(probes).astype(np.float32)) @ gallery.matrix.T
+    floor = np.maximum.reduceat(scores[:, order], starts, axis=1).min(axis=0)
+    floor[people == exclude] = -np.inf
+    best = int(np.argmax(floor))
+    if not np.isfinite(floor[best]):
+        return None
+    return int(people[best]), round(float(floor[best]), 4)
 
 
 def _decode(rows: list[GalleryRow], fingerprint: Fingerprint) -> Gallery:
@@ -155,17 +206,43 @@ class FaceGalleryCache:
         self.max_companies = max_companies
         self.max_bytes = max_bytes
         self._items: OrderedDict[tuple[int, str], Gallery] = OrderedDict()
+        #: Cuándo se validó cada galería contra la BD por última vez (reloj monotónico del proceso).
+        self._checked: dict[tuple[int, str], float] = {}
         self._lock = threading.Lock()
 
+    @observed("face.gallery_load")
     def get(self, db: Session, company_id: int, model_name: str) -> Gallery:
         repo = FaceEmbeddingRepository(db)
         key = (company_id, model_name)
+        return self._validated(repo, key, repo.gallery_fingerprint(company_id, model_name))
+
+    @observed("face.gallery_recent")
+    def recent(self, db: Session, company_id: int, model_name: str, *, max_age: float) -> Gallery | None:
+        """La galería para una SEÑAL (1:N en cada 1:1 del empleado): la de memoria tal cual si se validó hace menos de
+        `max_age` segundos (cero consultas: un retraso de minutos no cambia quién checa, la persona se compara contra
+        sus propias muestras recién leídas); si no, se valida como en `get`. Nunca carga una galería que no cabe en la
+        caché (una empresa enorme no se descifra entera dentro de un registro): None, y la señal no se mide."""
+        key = (company_id, model_name)
+        with self._lock:
+            checked = self._checked.get(key)  # se anota y se olvida junto con su galería
+            if checked is not None and time.monotonic() - checked < max_age:
+                self._items.move_to_end(key)
+                return self._items[key]
+        repo = FaceEmbeddingRepository(db)
         fingerprint = repo.gallery_fingerprint(company_id, model_name)
+        if checked is None and fingerprint[0] * ROW_BYTES > self.max_bytes:
+            return None
+        return self._validated(repo, key, fingerprint)
+
+    def _validated(self, repo: FaceEmbeddingRepository, key: tuple[int, str], fingerprint: Fingerprint) -> Gallery:
+        """La galería que corresponde a la huella de la BD (la de memoria si no cambió; si no, la pone al día)."""
         with self._lock:
             cached = self._items.get(key)
             if cached is not None and cached.fingerprint == fingerprint:
                 self._items.move_to_end(key)
+                self._checked[key] = time.monotonic()
                 return cached
+        company_id, model_name = key
         if cached is None:
             gallery = _decode(repo.gallery_rows(company_id, model_name), fingerprint)
         else:
@@ -179,14 +256,17 @@ class FaceGalleryCache:
         with self._lock:
             self._items[key] = gallery
             self._items.move_to_end(key)
+            self._checked[key] = time.monotonic()
             used = sum(g.nbytes for g in self._items.values())
             while len(self._items) > 1 and (len(self._items) > self.max_companies or used > self.max_bytes):
-                _, evicted = self._items.popitem(last=False)
+                evicted_key, evicted = self._items.popitem(last=False)
+                self._checked.pop(evicted_key, None)
                 used -= evicted.nbytes
 
     def clear(self) -> None:
         with self._lock:
             self._items.clear()
+            self._checked.clear()
 
     @staticmethod
     def _refresh(

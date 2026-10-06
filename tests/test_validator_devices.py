@@ -121,7 +121,7 @@ def test_devices_belong_to_their_company(client, company_headers, admin_headers)
     _login(client, device_proof(_nonce(client)))
     devices_url = f"{URL}/{validator['id']}/devices"
     device = client.get(devices_url, headers=company_headers).json()["data"]["items"][0]
-    create_company(client, admin_headers)
+    create_company(client, admin_headers, max_validators=1)  # con el módulo: el 404 es por ser de otra empresa
     other = login(client, "admin@panificadora.com", "Empresa1234")
     assert client.get(devices_url, headers=other).status_code == 404
     assert (

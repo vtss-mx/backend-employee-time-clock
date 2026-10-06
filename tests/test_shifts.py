@@ -1,5 +1,5 @@
-"""Turnos de trabajo: sitios con geocerca, turnos, su asignación (con un día de anticipación) y las
-solicitudes de cambio de turno del empleado."""
+"""Turnos de trabajo: sitios con geocerca, turnos (dónde y cuándo se checa), su asignación (solo el turno
+y desde cuándo, con un día de anticipación) y las solicitudes de cambio de turno del empleado."""
 
 from datetime import date, timedelta
 
@@ -25,6 +25,7 @@ def address(latitude: float | None = POINT[0], longitude: float | None = POINT[1
         "state": "Sonora",
         "municipality": "Hermosillo",
         "city": "Hermosillo",
+        "neighborhood": "Centro",
         "latitude": latitude,
         "longitude": longitude,
     }
@@ -36,8 +37,10 @@ def create_site(client, headers, name="Planta Norte", radius=100, point=POINT) -
     return response.json()["data"]
 
 
-def shift_body(name="Matutino", **changes) -> dict:
-    return {
+def shift_body(name="Matutino", *, sites=(), remote=None, **changes) -> dict:
+    """Un turno de prueba. Dónde se checa: sin sitios, todos sus días son remotos (no necesita sitio); con
+    sitios, se checa en ellos (salvo los días `remote`)."""
+    body = {
         "name": name,
         "start_time": "08:00",
         "end_time": "16:00",
@@ -50,6 +53,9 @@ def shift_body(name="Matutino", **changes) -> dict:
         "late_check_out_minutes": 60,
         **changes,
     }
+    body["site_ids"] = list(sites)
+    body["remote_weekdays"] = list(remote if remote is not None else [] if sites else body["weekdays"])
+    return body
 
 
 def create_shift(client, headers, **changes) -> dict:
@@ -58,13 +64,9 @@ def create_shift(client, headers, **changes) -> dict:
     return response.json()["data"]
 
 
-def assign(client, headers, employee_id: int, shift_id: int, valid_from: date, *, remote=(), sites=()):
-    body = {
-        "shift_id": shift_id,
-        "valid_from": valid_from.isoformat(),
-        "remote_weekdays": list(remote),
-        "site_ids": list(sites),
-    }
+def assign(client, headers, employee_id: int, shift_id: int, valid_from: date):
+    """Asignar es solo elegir el turno y desde cuándo (dónde checa lo dice el turno)."""
+    body = {"shift_id": shift_id, "valid_from": valid_from.isoformat()}
     return client.post(f"/api/employees/{employee_id}/shift-assignments", json=body, headers=headers)
 
 
@@ -117,7 +119,9 @@ def test_sites_with_their_geofence(client, company_headers, admin_headers):
     other = login(client, "admin@panificadora.com", "Empresa1234")
     assert client.get(url, headers=other).status_code == 404
     assert client.delete(url, headers=company_headers).status_code == 200
-    assert client.get(url, headers=company_headers).json()["code"] == "SITE_NOT_FOUND"
+    assert client.get(url, headers=company_headers).json()["data"]["deleted_at"]  # en «Eliminados»
+    edited = client.patch(f"{url}/status", json={"active": True}, headers=company_headers)
+    assert edited.json()["code"] == "SITE_NOT_FOUND"
 
 
 # ---------------------------------------------------------------- turnos
@@ -135,7 +139,7 @@ def test_shifts_validate_their_schedule(client, company_headers):
     )
     for invalid, message in (
         ({"end_time": "08:00"}, "La hora de salida debe ser distinta de la de entrada"),
-        ({"breaks_count": 1, "break_minutes": 3}, "Cada descanso dura al menos 5 minutos"),
+        ({"breaks_count": 1, "break_minutes": 3}, "Cada descanso debe durar al menos 5 minutos"),
         ({"breaks_count": 6, "break_minutes": 90}, "Los descansos no pueden sumar todo el turno"),
         (
             {"start_time": "06:00", "end_time": "05:00", "late_check_out_minutes": 120},
@@ -165,7 +169,86 @@ def test_shifts_validate_their_schedule(client, company_headers):
     assert [s["name"] for s in found["items"]] == ["Matutino 7-15"] and found["items"][0]["active"] is False
     assert client.get(url, headers=company_headers).json()["data"]["start_time"] == "07:00:00"
     assert client.delete(url, headers=company_headers).status_code == 200
-    assert client.get(url, headers=company_headers).status_code == 404
+    assert client.get(url, headers=company_headers).json()["data"]["deleted_at"]  # en «Eliminados»
+
+
+def test_the_shift_says_where_to_check_in(client, company_headers):
+    """El turno dice dónde se checa: sus sitios (los nuevos, activos) y sus días remotos (días del turno);
+    si algún día no es remoto, necesita al menos un sitio."""
+    north = create_site(client, company_headers)
+    south = create_site(client, company_headers, name="Planta Sur")
+    closed = create_site(client, company_headers, name="Bodega")
+    client.patch(f"{SITES}/{closed['id']}/status", json={"active": False}, headers=company_headers)
+    workweek = {"weekdays": [0, 1, 2, 3, 4]}
+    for changes, code in (
+        ({"remote": []}, "SITE_REQUIRED"),  # ningún día remoto y ningún sitio
+        ({"remote": [0, 1]}, "SITE_REQUIRED"),  # algunos días en sitio
+        ({"sites": [north["id"]], "remote": [5]}, "REMOTE_DAY_OUTSIDE_SHIFT"),
+        ({"sites": [999]}, "SITE_NOT_AVAILABLE"),
+        ({"sites": [closed["id"]]}, "SITE_NOT_AVAILABLE"),
+    ):
+        response = client.post(SHIFTS, json=shift_body("Oficina", **workweek, **changes), headers=company_headers)
+        assert response.status_code == 422 and response.json()["code"] == code, changes
+    outside = client.post(SHIFTS, json=shift_body("Oficina", **workweek, remote=[5, 6]), headers=company_headers)
+    assert outside.json()["message"] == "El turno no trabaja el sábado y domingo: no puede ser día remoto"
+    assert outside.json()["errors"][0]["field"] == "remote_weekdays"
+    for invalid in ({"site_ids": [0]}, {"site_ids": list(range(1, 52))}):
+        bad = client.post(SHIFTS, json={**shift_body("Oficina"), **invalid}, headers=company_headers)
+        assert bad.status_code == 422 and bad.json()["code"] == "VALIDATION_ERROR", invalid
+
+    shift = create_shift(
+        client, company_headers, name="Oficina", sites=[south["id"], north["id"], south["id"]], remote=[0], **workweek
+    )
+    assert [site["name"] for site in shift["sites"]] == ["Planta Norte", "Planta Sur"] and shift["remote_weekdays"] == [
+        0
+    ]
+    first = shift["sites"][0]
+    assert first["address"]["city"] == "Hermosillo" and first["radius_m"] == 100 and first["active"] is True
+    listed = client.get(SHIFTS, headers=company_headers).json()["data"]["items"][0]
+    assert listed["sites"] == shift["sites"] and listed["remote_weekdays"] == [0]
+
+    # Un sitio que el turno ya tenía puede quedarse aunque se desactive (no acepta registros); uno nuevo no.
+    client.patch(f"{SITES}/{north['id']}/status", json={"active": False}, headers=company_headers)
+    url = f"{SHIFTS}/{shift['id']}"
+    kept = client.put(
+        url, json=shift_body("Oficina", sites=[north["id"], south["id"]], **workweek), headers=company_headers
+    )
+    assert kept.status_code == 200 and [s["active"] for s in kept.json()["data"]["sites"]] == [False, True]
+    added = client.put(
+        url, json=shift_body("Oficina", sites=[closed["id"], south["id"]], **workweek), headers=company_headers
+    )
+    assert added.json()["code"] == "SITE_NOT_AVAILABLE"
+    moved = client.put(url, json=shift_body("Oficina", sites=[south["id"]], **workweek), headers=company_headers)
+    assert [s["name"] for s in moved.json()["data"]["sites"]] == ["Planta Sur"]
+    remote = client.put(url, json=shift_body("Oficina", **workweek), headers=company_headers).json()["data"]
+    assert remote["sites"] == [] and remote["remote_weekdays"] == [0, 1, 2, 3, 4]
+    assert client.get(url, headers=company_headers).json()["data"]["sites"] == []
+
+
+def test_a_site_used_by_shifts_is_not_deleted(client, company_headers):
+    """Borrar un sitio que algún turno usa responde 409 con los turnos que lo usan."""
+    site = create_site(client, company_headers)
+    url = f"{SITES}/{site['id']}"
+    create_shift(client, company_headers, sites=[site["id"]])
+    one = client.delete(url, headers=company_headers)
+    assert one.status_code == 409 and one.json()["code"] == "SITE_IN_USE"
+    assert one.json()["message"] == (
+        "El sitio está en el turno Matutino: quítalo de ese turno o desactívalo en lugar de eliminarlo"
+    )
+    assert one.json()["errors"][0]["details"] == {"shifts": ["Matutino"]}
+    night = create_shift(client, company_headers, name="Nocturno", sites=[site["id"]])
+    two = client.delete(url, headers=company_headers).json()
+    assert two["message"].startswith("El sitio está en los turnos Matutino y Nocturno: quítalo de esos turnos")
+    for name in ("A", "B", "C", "D"):
+        create_shift(client, company_headers, name=f"Turno {name}", sites=[site["id"]])
+    many = client.delete(url, headers=company_headers).json()
+    assert "Matutino, Nocturno, Turno A, Turno B, Turno C y otros:" in many["message"]
+    assert len(many["errors"][0]["details"]["shifts"]) == 5
+    # Sin turnos que lo usen (y sin registros) ya se puede eliminar.
+    for shift in client.get(SHIFTS, headers=company_headers).json()["data"]["items"]:
+        client.delete(f"{SHIFTS}/{shift['id']}", headers=company_headers)
+    assert client.get(f"{SHIFTS}/{night['id']}", headers=company_headers).json()["data"]["deleted"] is True
+    assert client.delete(url, headers=company_headers).status_code == 200
 
 
 # ---------------------------------------------------------------- asignaciones
@@ -175,42 +258,50 @@ def test_assignment_rules_and_changes_with_one_day_notice(client, company_header
     employee_id, _ = employee_with_face(client, company_headers)
     site = create_site(client, company_headers)
     morning = create_shift(client, company_headers)
-    night = create_shift(client, company_headers, name="Nocturno", start_time="22:00", end_time="06:00")
+    night = create_shift(
+        client, company_headers, name="Nocturno", start_time="22:00", end_time="06:00", sites=[site["id"]]
+    )
     today = business_today()
 
-    for remote, sites, code in (
-        ([7], [site["id"]], None),  # día inválido: lo rechaza el esquema
-        ([], [], "SITE_REQUIRED"),  # sin sitio y ningún día remoto
-        ([], [999], "SITE_NOT_AVAILABLE"),
-    ):
-        bad = assign(client, company_headers, employee_id, morning["id"], today, remote=remote, sites=sites)
-        assert bad.status_code == 422 and (code is None or bad.json()["code"] == code)
-    assert (
-        assign(
-            client, company_headers, employee_id, morning["id"], today - timedelta(days=1), sites=[site["id"]]
-        ).json()["code"]
-        == "ASSIGNMENT_IN_PAST"
+    past = assign(client, company_headers, employee_id, morning["id"], today - timedelta(days=1))
+    assert past.json()["code"] == "ASSIGNMENT_IN_PAST"
+    # Asignar es solo el turno y la fecha: lo demás que llegue no cuenta (el lugar es el del turno).
+    legacy = client.post(
+        f"/api/employees/{employee_id}/shift-assignments",
+        json={
+            "shift_id": morning["id"],
+            "valid_from": today.isoformat(),
+            "site_ids": [site["id"]],
+            "remote_weekdays": [],
+        },
+        headers=company_headers,
     )
-
-    # La primera asignación puede empezar hoy (todos los días remotos: no necesita sitio).
-    first = assign(client, company_headers, employee_id, morning["id"], today, remote=range(7))
-    assert first.status_code == 201 and first.json()["data"]["state"] == "CURRENT"
+    # La primera asignación puede empezar hoy y dice dónde checa: lo de su turno (todos los días remotos).
+    assert legacy.status_code == 201 and legacy.json()["data"]["state"] == "CURRENT"
+    assert (
+        legacy.json()["data"]["shift"]["remote_weekdays"] == list(range(7))
+        and legacy.json()["data"]["shift"]["sites"] == []
+    )
+    assert "remote_weekdays" not in legacy.json()["data"] and "sites" not in legacy.json()["data"]
+    first = assign(client, company_headers, employee_id, morning["id"], today)  # un reintento: la misma
+    assert first.status_code == 201 and first.json()["data"]["id"] == legacy.json()["data"]["id"]
     # Con turno vigente, el cambio es desde mañana o después.
-    same_day = assign(client, company_headers, employee_id, night["id"], today, sites=[site["id"]])
+    same_day = assign(client, company_headers, employee_id, night["id"], today)
     assert same_day.status_code == 422 and same_day.json()["code"] == "ASSIGNMENT_NOTICE_REQUIRED"
-    change = assign(client, company_headers, employee_id, night["id"], today + timedelta(days=2), sites=[site["id"]])
+    change = assign(client, company_headers, employee_id, night["id"], today + timedelta(days=2))
     assert change.status_code == 201 and change.json()["data"]["state"] == "SCHEDULED"
-    assert change.json()["data"]["sites"][0]["name"] == "Planta Norte"
-    clash = assign(client, company_headers, employee_id, morning["id"], today + timedelta(days=1), remote=range(7))
+    assert change.json()["data"]["shift"]["sites"][0]["name"] == "Planta Norte"
+    clash = assign(client, company_headers, employee_id, morning["id"], today + timedelta(days=1))
     assert clash.status_code == 409 and clash.json()["code"] == "ASSIGNMENT_ALREADY_SCHEDULED"
 
     history = client.get(f"/api/employees/{employee_id}/shift-assignments", headers=company_headers).json()["data"]
     assert [a["shift"]["name"] for a in history["items"]] == ["Nocturno", "Matutino"]
     assert history["items"][1]["valid_to"] == (today + timedelta(days=1)).isoformat()  # termina un día antes
-    # El sitio en uso no se borra; el turno en uso tampoco.
+    # El sitio en uso no se borra; el turno en uso tampoco. El sitio cuenta a quien hoy checa ahí.
     assert client.delete(f"{SITES}/{site['id']}", headers=company_headers).json()["code"] == "SITE_IN_USE"
     assert client.delete(f"{SHIFTS}/{night['id']}", headers=company_headers).json()["code"] == "SHIFT_IN_USE"
     assert client.get(f"{SHIFTS}/{morning['id']}", headers=company_headers).json()["data"]["employees"] == 1
+    assert client.get(f"{SITES}/{site['id']}", headers=company_headers).json()["data"]["employees"] == 0
 
     # Cancelar el cambio programado devuelve la vigencia a la asignación anterior.
     url = f"/api/shift-assignments/{change.json()['data']['id']}"
@@ -222,29 +313,18 @@ def test_assignment_rules_and_changes_with_one_day_notice(client, company_header
     assert client.delete("/api/shift-assignments/999", headers=company_headers).status_code == 404
 
 
-def test_only_active_shifts_sites_and_employees(client, company_headers):
+def test_only_active_shifts_and_employees(client, company_headers):
     employee_id, _ = employee_with_face(client, company_headers)
     site = create_site(client, company_headers)
-    shift = create_shift(client, company_headers)
+    shift = create_shift(client, company_headers, sites=[site["id"]])
     today = business_today()
-    client.patch(f"{SITES}/{site['id']}/status", json={"active": False}, headers=company_headers)
-    inactive_site = assign(client, company_headers, employee_id, shift["id"], today, sites=[site["id"]])
-    assert inactive_site.json()["code"] == "SITE_NOT_AVAILABLE"
     weekend = create_shift(client, company_headers, name="Fin de semana", weekdays=[5, 6])
-    outside = assign(client, company_headers, employee_id, weekend["id"], today, remote=[0])
-    assert outside.json()["code"] == "REMOTE_DAY_OUTSIDE_SHIFT" and "lunes" in outside.json()["message"]
     client.patch(f"{SHIFTS}/{shift['id']}/status", json={"active": False}, headers=company_headers)
-    assert (
-        assign(client, company_headers, employee_id, shift["id"], today, remote=range(7)).json()["code"]
-        == "SHIFT_INACTIVE"
-    )
+    assert assign(client, company_headers, employee_id, shift["id"], today).json()["code"] == "SHIFT_INACTIVE"
     with SessionLocal() as db:
         db.get(Employee, employee_id).active = False  # type: ignore[union-attr]
         db.commit()
-    assert (
-        assign(client, company_headers, employee_id, weekend["id"], today, remote=[5]).json()["code"]
-        == "EMPLOYEE_INACTIVE"
-    )
+    assert assign(client, company_headers, employee_id, weekend["id"], today).json()["code"] == "EMPLOYEE_INACTIVE"
     assert assign(client, company_headers, 999, weekend["id"], today).status_code == 404
 
 
@@ -253,17 +333,16 @@ def test_only_active_shifts_sites_and_employees(client, company_headers):
 
 @pytest.fixture
 def requester(client, company_headers) -> dict:
-    """Empleado con turno matutino remoto todos los días (para pedir el nocturno)."""
+    """Empleado con el turno matutino (en la Planta Norte; lunes y martes remoto) que pide el nocturno
+    (en la Planta Sur)."""
     employee_id, headers = employee_with_face(client, company_headers)
     site = create_site(client, company_headers)
-    morning = create_shift(client, company_headers)
-    night = create_shift(client, company_headers, name="Nocturno", start_time="22:00", end_time="06:00")
-    assert (
-        assign(
-            client, company_headers, employee_id, morning["id"], business_today(), remote=[0, 1], sites=[site["id"]]
-        ).status_code
-        == 201
+    south = create_site(client, company_headers, name="Planta Sur")
+    morning = create_shift(client, company_headers, sites=[site["id"]], remote=[0, 1])
+    night = create_shift(
+        client, company_headers, name="Nocturno", start_time="22:00", end_time="06:00", sites=[south["id"]]
     )
+    assert assign(client, company_headers, employee_id, morning["id"], business_today()).status_code == 201
     return {"id": employee_id, "headers": headers, "night": night, "morning": morning, "site": site}
 
 
@@ -287,6 +366,9 @@ def test_employee_requests_a_shift_change_and_the_company_approves(client, compa
 
     inbox = client.get("/api/shift-requests", params={"status": "PENDING"}, headers=company_headers).json()["data"]
     request_id = inbox["items"][0]["id"]
+    # La empresa ve dónde checaría con el turno pedido; el turno actual va resumido.
+    assert [s["name"] for s in inbox["items"][0]["shift"]["sites"]] == ["Planta Sur"]
+    assert inbox["items"][0]["current_shift"]["remote_weekdays"] == [0, 1]
     assert (
         inbox["items"][0]["employee"]["employee_number"] == "EMP-001"
         and inbox["items"][0]["reason"] == "Estudio en la mañana"
@@ -297,9 +379,11 @@ def test_employee_requests_a_shift_change_and_the_company_approves(client, compa
         "data"
     ]
     scheduled = assignments["items"][0]
-    # Conserva los días remotos que el nuevo turno trabaja y los sitios de la asignación anterior.
+    # Dónde checa lo dice el turno pedido (no se conserva el lugar del anterior).
     assert scheduled["shift"]["name"] == "Nocturno" and scheduled["state"] == "SCHEDULED"
-    assert scheduled["remote_weekdays"] == [0, 1] and [s["name"] for s in scheduled["sites"]] == ["Planta Norte"]
+    assert scheduled["shift"]["remote_weekdays"] == [] and [s["name"] for s in scheduled["shift"]["sites"]] == [
+        "Planta Sur"
+    ]
     closed = client.post(
         f"/api/shift-requests/{request_id}/reject", json={"note": "Ya se aprobó"}, headers=company_headers
     )
@@ -352,11 +436,9 @@ def test_requests_can_be_cancelled_rejected_and_rescheduled(client, company_head
     assert late.status_code == 422 and late.json()["code"] == "SHIFT_REQUEST_NOTICE_REQUIRED"
     other_day = (business_today() + timedelta(days=5)).isoformat()
     approved_request = client.post(
-        f"/api/shift-requests/{third['id']}/approve",
-        json={"valid_from": other_day, "remote_weekdays": list(range(7)), "site_ids": []},
-        headers=company_headers,
+        f"/api/shift-requests/{third['id']}/approve", json={"valid_from": other_day}, headers=company_headers
     )
-    assert approved_request.status_code == 200
+    assert approved_request.status_code == 200 and approved_request.json()["data"]["valid_from"] == future
     # Otro empleado no cancela solicitudes ajenas.
     _, stranger = employee_with_face(client, company_headers, person="beto", number="EMP-002")
     assert client.post(f"/api/me/shift-requests/{third['id']}/cancel", headers=stranger).status_code == 404

@@ -9,6 +9,7 @@ from argon2.exceptions import InvalidHashError, VerificationError
 
 from app.core.config import settings
 from app.core.exceptions import ServiceUnavailableError
+from app.core.observability import observed
 from app.core.system import available_cpus
 
 _password_hasher = PasswordHasher()
@@ -26,7 +27,6 @@ _hash_slots = threading.BoundedSemaphore(
 def _hash_slot() -> Iterator[None]:
     if not _hash_slots.acquire(timeout=settings.PASSWORD_HASH_WAIT_SECONDS):
         raise ServiceUnavailableError(
-            "Hay muchos inicios de sesión en este momento. Intenta nuevamente en unos segundos.",
             code="AUTH_BUSY",
             retry_after=2,
         )
@@ -41,11 +41,13 @@ def _hash_slot() -> Iterator[None]:
 _DUMMY_HASH = _password_hasher.hash("timing-attack-dummy-password")
 
 
+@observed("auth.password_hash")
 def hash_password(password: str) -> str:
     with _hash_slot():
         return _password_hasher.hash(password)
 
 
+@observed("auth.password_verify")
 def verify_password(password: str, password_hash: str | None) -> bool:
     with _hash_slot():
         try:

@@ -40,12 +40,16 @@ class IntegrationService:
     def company(self) -> IntegrationCompanyRead:
         company = self.db.get(Company, self.client.company_id)
         if company is None:  # la llave se valida antes: solo si la empresa se borró a la mitad
-            raise NotFoundError("Empresa no encontrada", code="COMPANY_NOT_FOUND")
+            raise NotFoundError(code="COMPANY_NOT_FOUND")
+        tax = company.tax
         return IntegrationCompanyRead(
             id=company.id,
             name=company.name,
             legal_name=company.legal_name,
-            rfc=company.rfc,
+            tax_country=tax.country if tax else None,
+            tax_id_type=tax.type if tax else None,
+            tax_id=tax.number if tax else None,
+            rfc=company.legacy_rfc,
             timezone=settings.APP_TIMEZONE,
             key=IntegrationKeyInfo(
                 name=self.client.name,
@@ -66,11 +70,11 @@ class IntegrationService:
     ) -> AttendanceList:
         """Bitácora de identificaciones de la empresa, con filtros por periodo, empleado y resultado."""
         if since and until and since >= until:
-            raise UnprocessableError("«since» debe ser anterior a «until»", code="INVALID_RANGE", field="since")
+            raise UnprocessableError(code="INVALID_RANGE", key="INVALID_SINCE_UNTIL", field="since")
         company_id = self.client.company_id
         employees = EmployeeRepository(self.db, company_id)
         if employee_id is not None and employees.get_by_id(employee_id) is None:
-            raise NotFoundError("Empleado no encontrado", code="EMPLOYEE_NOT_FOUND")
+            raise NotFoundError(code="EMPLOYEE_NOT_FOUND")
         logs, total = VerificationLogRepository(self.db).page_for_company(
             company_id,
             since=since,
@@ -96,7 +100,7 @@ class IntegrationService:
         company_id = self.client.company_id
         employees = EmployeeRepository(self.db, company_id)
         if employee_id is not None and employees.get_by_id(employee_id) is None:
-            raise NotFoundError("Empleado no encontrado", code="EMPLOYEE_NOT_FOUND")
+            raise NotFoundError(code="EMPLOYEE_NOT_FOUND")
         logs = VerificationLogRepository(self.db).feed_for_company(
             company_id,
             after_id=decode_cursor(after) if after else None,
@@ -154,4 +158,4 @@ def decode_cursor(cursor: str) -> int:
             raise ValueError(version)
         return int(log_id)
     except (ValueError, UnicodeDecodeError) as exc:
-        raise UnprocessableError("El cursor no es válido", code="INVALID_CURSOR", field="after") from exc
+        raise UnprocessableError(code="INVALID_CURSOR", field="after") from exc

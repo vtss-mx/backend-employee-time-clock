@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from app.core.config import settings
+from app.i18n import t, use_locale
 from app.services.attendance_rules import RecordTimes, record_problem
 from app.services.calendar_rules import (
     HOLIDAY,
@@ -33,15 +34,19 @@ def test_nth_weekday_of_a_month():
 
 
 def test_official_holidays_of_a_normal_year():
+    """Con la llave de su nombre (se guarda en el idioma de quien los agrega)."""
     assert official_holidays(2026) == [
-        (date(2026, 1, 1), "Año Nuevo"),
-        (date(2026, 2, 2), "Día de la Constitución"),
-        (date(2026, 3, 16), "Natalicio de Benito Juárez"),
-        (date(2026, 5, 1), "Día del Trabajo"),
-        (date(2026, 9, 16), "Día de la Independencia"),
-        (date(2026, 11, 16), "Día de la Revolución"),
-        (date(2026, 12, 25), "Navidad"),
+        (date(2026, 1, 1), "HOLIDAY_NEW_YEAR"),
+        (date(2026, 2, 2), "HOLIDAY_CONSTITUTION"),
+        (date(2026, 3, 16), "HOLIDAY_BENITO_JUAREZ"),
+        (date(2026, 5, 1), "HOLIDAY_LABOR_DAY"),
+        (date(2026, 9, 16), "HOLIDAY_INDEPENDENCE"),
+        (date(2026, 11, 16), "HOLIDAY_REVOLUTION"),
+        (date(2026, 12, 25), "HOLIDAY_CHRISTMAS"),
     ]
+    assert t(official_holidays(2026)[0][1]) == "Año Nuevo"
+    with use_locale("en-US"):
+        assert t(official_holidays(2026)[-1][1]) == "Christmas"
 
 
 @pytest.mark.parametrize(
@@ -50,12 +55,12 @@ def test_official_holidays_of_a_normal_year():
 )
 def test_the_transmission_of_the_executive_power_every_six_years(year, handover):
     days = dict(official_holidays(year))
-    assert days[handover] == "Transmisión del Poder Ejecutivo Federal" and len(days) == 8
+    assert days[handover] == "HOLIDAY_TRANSMISSION" and len(days) == 8
     assert [day for day, _ in official_holidays(year)] == sorted(days)
 
 
 def test_no_transmission_in_other_years():
-    assert all(name != "Transmisión del Poder Ejecutivo Federal" for _, name in official_holidays(2027))
+    assert all(name != "HOLIDAY_TRANSMISSION" for _, name in official_holidays(2027))
 
 
 # ---------------------------------------------------------------- rangos y días libres
@@ -73,12 +78,16 @@ def test_ranges_and_overlaps():
 
 def test_the_reason_told_to_the_employee():
     christmas = DayOff(HOLIDAY, "Navidad", date(2026, 12, 25), date(2026, 12, 25))
-    assert christmas.explain(date(2026, 12, 25), date(2026, 12, 25)) == "Hoy es día festivo: Navidad"
-    assert christmas.explain(date(2026, 12, 25), date(2026, 12, 24)) == "El 25/12/2026 es día festivo: Navidad"
+    assert str(christmas.explain(date(2026, 12, 25), date(2026, 12, 25))) == "Hoy es día festivo: Navidad"
+    assert str(christmas.explain(date(2026, 12, 25), date(2026, 12, 24))) == "El 25/12/2026 es día festivo: Navidad"
+    with use_locale("en-US"):
+        assert str(christmas.explain(date(2026, 12, 25), date(2026, 12, 24))) == "12/25/2026 is a holiday: Navidad"
     vacation = DayOff("VACATION", "Vacaciones", date(2026, 12, 1), date(2026, 12, 15), "Estás de vacaciones")
-    assert vacation.explain(date(2026, 12, 3), date(2026, 12, 3)) == "Estás de vacaciones del 01/12/2026 al 15/12/2026"
+    assert str(vacation.explain(date(2026, 12, 3), date(2026, 12, 3))) == (
+        "Estás de vacaciones del 01/12/2026 al 15/12/2026"
+    )
     permission = DayOff("PERMISSION", "Permiso", date(2026, 12, 3), date(2026, 12, 3), "Tienes permiso")
-    assert permission.explain(date(2026, 12, 3), date(2026, 12, 3)) == "Tienes permiso el 03/12/2026"
+    assert str(permission.explain(date(2026, 12, 3), date(2026, 12, 3))) == "Tienes permiso el 03/12/2026"
 
 
 def test_a_day_is_off_by_holiday_or_approved_absence_unless_it_is_a_workday():
@@ -181,5 +190,5 @@ def test_breaks_cannot_overlap_and_the_check_in_cannot_be_in_the_future():
     assert record_problem(fine, occurrence, _at("18:00"), breaks_allowed=2, zone=ZONE) is None
     future = record_problem(RecordTimes(_at("09:00")), occurrence, _at("08:30"), breaks_allowed=1, zone=ZONE)
     assert future is not None and (future.code, future.field) == ("TIME_IN_FUTURE", "check_in")
-    assert future.message == "Las horas no pueden ser posteriores a este momento"
+    assert future.message == "Las horas no pueden ser futuras"
     assert isinstance(occurrence, Occurrence)

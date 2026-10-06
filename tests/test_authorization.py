@@ -21,11 +21,17 @@ from tests.test_validators import validator_headers
 
 PREFIX = "/api"
 
-#: Sin sesión: salud, iniciar y renovar sesión, cuenta recordada, llaves públicas de los JWT y el
+#: Sin sesión: salud, iniciar y renovar sesión, cuenta recordada, llaves públicas de los JWT, el
 #: reporte de fallas de la app web (una pantalla puede romperse en el login: no puede exigir sesión;
-#: va limitado por IP, con tope de tamaño, y si trae un token válido anota quién).
+#: va limitado por IP, con tope de tamaño, y si trae un token válido anota quién) y el rendimiento que
+#: mide el navegador (también en el login; sin sesión solo cuenta esa pantalla, límite estricto por IP). La tableta del
+#: kiosco de un sitio (antifraude 2b): no tiene sesión; la autentica la llave de su dispositivo (firma por petición) o,
+#: al vincularse, el código de un solo uso que dio la empresa (limitada por IP; una sesión no le da nada).
 PUBLIC = {
+    ("POST", "/kiosk/pair"),
+    ("POST", "/kiosk/code"),
     ("POST", "/client-errors"),
+    ("POST", "/telemetry/web"),
     ("GET", "/health"),
     ("GET", "/health/live"),
     ("GET", "/health/ready"),

@@ -34,6 +34,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.database import SessionLocal
 from app.core.error_events import ErrorEvent, is_recorded
+from app.core.observability import observed
 from app.core.request_context import request_id_var, request_info_var
 from app.repositories.error_report_repository import ErrorReportRepository
 
@@ -199,6 +200,7 @@ class ErrorReportFlusher:
     def _loop(self) -> None:
         while not self._stop.wait(self.interval):
             try:
-                self.reporter.flush()
+                with observed("errors.flush"):
+                    self.reporter.flush()
             except Exception:
                 logger.exception("Falló el guardado periódico de reportes de error")

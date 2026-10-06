@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import NotFoundError, UnprocessableError
+from app.i18n import t
 from app.models import ErrorReport, ErrorStatus, User, UserRole
 from app.repositories.company_repository import CompanyRepository
 from app.repositories.error_report_repository import ErrorReportRepository
@@ -96,11 +97,9 @@ class ErrorReportService:
         o una gravedad específicos (nunca toda la bandeja) y respeta lo que el ADMIN vio: lo que volvió
         a ocurrir después de `seen_until` sigue abierto. Devuelve cuántos cambiaron."""
         if data.status is None and data.severity is None:
-            raise UnprocessableError(
-                "Elige un estado o una gravedad en el filtro para marcar sus errores", code="ERROR_FILTER_REQUIRED"
-            )
+            raise UnprocessableError(code="ERROR_FILTER_REQUIRED")
         if data.status == ErrorStatus.RESOLVED:
-            raise UnprocessableError("Esos errores ya están solucionados", code="ERROR_FILTER_RESOLVED", field="status")
+            raise UnprocessableError(code="ERROR_FILTER_RESOLVED", field="status")
         now = datetime.now(UTC)
         resolved = self.repo.resolve_matching(
             status=data.status,
@@ -118,7 +117,7 @@ class ErrorReportService:
     def _get(self, report_id: int, *, for_update: bool = False) -> ErrorReport:
         report = self.repo.get(report_id, for_update=for_update)
         if report is None:
-            raise NotFoundError("Error no encontrado", code="ERROR_REPORT_NOT_FOUND")
+            raise NotFoundError(code="ERROR_REPORT_NOT_FOUND")
         return report
 
     @staticmethod
@@ -128,9 +127,9 @@ class ErrorReportService:
             return None
         account = accounts.get(user_id)
         if account is None:
-            return f"Cuenta #{user_id} (ya no existe)"
+            return t("ACCOUNT_DELETED_LABEL", {"id": user_id})
         email, role = account
-        return f"{email} ({get_catalogs().name('roles', role)})"
+        return t("ACCOUNT_LABEL", {"email": email, "role": get_catalogs().name("roles", role)})
 
     @staticmethod
     def _read(report: ErrorReport, emails: dict[int, str]) -> ErrorReportRead:

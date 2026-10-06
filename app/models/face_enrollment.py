@@ -1,7 +1,8 @@
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     CheckConstraint,
     DateTime,
@@ -10,17 +11,19 @@ from sqlalchemy import (
     ForeignKey,
     ForeignKeyConstraint,
     Index,
-    LargeBinary,
+    Integer,
     String,
     UniqueConstraint,
     func,
     text,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
 from app.core.db_schemas import AUTH, BIOMETRICS, CATALOG, TENANCY, WORKFORCE
 from app.models.enums import EnrollmentStatus
+from app.models.mixins import company_fk
 
 if TYPE_CHECKING:
     from app.models.employee import Employee
@@ -29,8 +32,8 @@ if TYPE_CHECKING:
 class FaceEnrollment(Base):
     """Solicitud de registro facial hecha por el empleado y revisada por COMPANY.
 
-    `photo_encrypted` es una fotografía de referencia (cifrada con Fernet) para que el
-    administrador valide la identidad. Se elimina si el registro es rechazado.
+    La fotografía de referencia (para que el administrador valide la identidad) vive cifrada en el
+    bucket; la fila guarda su referencia (`photo_object`...). Se elimina si el registro es rechazado.
     """
 
     __tablename__ = "face_enrollments"
@@ -57,6 +60,8 @@ class FaceEnrollment(Base):
         ),
         # Destino de la FK compuesta de los embeddings: registro y empleado van juntos.
         UniqueConstraint("id", "employee_id", name="uq_face_enrollments_id_employee"),
+        # Destino de la FK compuesta de sus marcas: registro y empresa van juntos.
+        UniqueConstraint("id", "company_id", name="uq_face_enrollments_id_company"),
         CheckConstraint("samples > 0", name="samples_positive"),
         # FK con ON DELETE SET NULL (quién capturó en persona): evita recorrer la tabla al borrar un usuario.
         Index(
@@ -69,9 +74,8 @@ class FaceEnrollment(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    employee_id: Mapped[int] = mapped_column(
-        ForeignKey(f"{WORKFORCE}.employees.id", ondelete="CASCADE"), nullable=False
-    )
+    #: Su empleado, de la MISMA empresa (FK compuesta `fk_face_enrollments_employee_company`).
+    employee_id: Mapped[int] = mapped_column(nullable=False)
     # Copia de la empresa del empleado: la bandeja se filtra por empresa sin unir tablas.
     company_id: Mapped[int] = mapped_column(ForeignKey(f"{TENANCY}.companies.id", ondelete="RESTRICT"), nullable=False)
     status: Mapped[EnrollmentStatus] = mapped_column(
@@ -79,9 +83,13 @@ class FaceEnrollment(Base):
         ForeignKey(f"{CATALOG}.enrollment_statuses.code"),
         nullable=False,
     )
-    # Diferida: los listados no la cargan (~200 KB por fila); solo el detalle y la aprobación.
-    photo_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary, deferred=True)
     photo_content_type: Mapped[str | None] = mapped_column(String(30))
+    #: La foto vive CIFRADA en el bucket (`image_storage`); aquí solo su referencia: nombre del objeto,
+    #: tamaño de la imagen, SHA-256 del objeto cifrado y cuándo se subió (verificada).
+    photo_object: Mapped[str | None] = mapped_column(String(300))
+    photo_size: Mapped[int | None] = mapped_column(Integer)
+    photo_sha256: Mapped[str | None] = mapped_column(String(64))
+    photo_uploaded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     quality_score: Mapped[float] = mapped_column(Float, nullable=False)
     samples: Mapped[int] = mapped_column(nullable=False)
     liveness_passed: Mapped[bool] = mapped_column(Boolean, nullable=False)
@@ -93,7 +101,9 @@ class FaceEnrollment(Base):
     captured_by_id: Mapped[int | None] = mapped_column(ForeignKey(f"{AUTH}.users.id", ondelete="SET NULL"))
     rejection_reason: Mapped[str | None] = mapped_column(String(500))
 
-    employee: Mapped[Employee] = relationship(foreign_keys=[employee_id], lazy="joined")
+    employee: Mapped[Employee] = relationship(
+        primaryjoin="FaceEnrollment.employee_id == Employee.id", foreign_keys=[employee_id], lazy="joined"
+    )
     #: Marcas para el revisor: accesorios que el sistema detectó y el empleado indicó no usar, o
     #: posible suplantación. El administrador lo confirma al revisar la fotografía.
     flags: Mapped[list[FaceEnrollmentFlag]] = relationship(
@@ -106,12 +116,18 @@ class FaceEnrollment(Base):
 
 
 class FaceEnrollmentFlag(Base):
-    """Marca de un registro facial para su revisión (catalog.enrollment_flags)."""
+    """Marca de un registro facial para su revisión (catalog.enrollment_flags). Su empresa la copia el ORM del
+    registro (FK compuesta): la base no acepta una marca de otra empresa."""
 
     __tablename__ = "face_enrollment_flags"
-    __table_args__ = ({"schema": BIOMETRICS},)
-
-    enrollment_id: Mapped[int] = mapped_column(
-        ForeignKey(f"{BIOMETRICS}.face_enrollments.id", ondelete="CASCADE"), primary_key=True
+    __table_args__ = (
+        company_fk("face_enrollment_flags", "enrollment_id", f"{BIOMETRICS}.face_enrollments"),
+        {"schema": BIOMETRICS},
     )
+
+    enrollment_id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(nullable=False)
     flag_code: Mapped[str] = mapped_column(String(30), ForeignKey(f"{CATALOG}.enrollment_flags.code"), primary_key=True)
+    #: Lo que el revisor necesita de la marca (migración 0062): en POSSIBLE_DUPLICATE, los empleados aprobados más
+    #: parecidos `{"similar": [{"employee_id", "similarity"}]}` (solo ids y números, de la misma empresa).
+    details: Mapped[dict[str, Any] | None] = mapped_column(JSON().with_variant(JSONB(), "postgresql"))

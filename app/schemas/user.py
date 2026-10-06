@@ -1,9 +1,12 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, computed_field
 
 from app.core.config import settings
+from app.i18n import StoredText
 from app.models.enums import FaceStatus, UserRole
+from app.schemas.avatar import avatar_path
 
 
 class UserEmployeeInfo(BaseModel):
@@ -21,7 +24,8 @@ class UserEmployeeInfo(BaseModel):
     active: bool
     headwear_exempt: bool
     face_status: FaceStatus
-    face_rejection_reason: str | None = None
+    #: El que escribió la empresa o, si lo puso el sistema, en el idioma de quien lo lee (`app/i18n/stored.py`).
+    face_rejection_reason: StoredText = None
 
 
 class UserCompanyInfo(BaseModel):
@@ -44,6 +48,10 @@ class UserMembership(BaseModel):
     face_status: FaceStatus
 
 
+#: Idiomas de la aplicación (regla 16 de AGENTS.md): español de México e inglés de Estados Unidos.
+Locale = Literal["es-MX", "en-US"]
+
+
 class UserPreferences(BaseModel):
     """Preferencias de la interfaz guardadas en la BD (siguen al usuario en cualquier dispositivo)."""
 
@@ -52,6 +60,8 @@ class UserPreferences(BaseModel):
 
     #: Menú lateral contraído en escritorio.
     sidebar_collapsed: bool = False
+    #: Idioma de la persona (la sigue en cualquier dispositivo); None = el del dispositivo o del navegador.
+    locale: Locale | None = None
 
 
 class UserPreferencesUpdate(BaseModel):
@@ -60,6 +70,7 @@ class UserPreferencesUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     sidebar_collapsed: bool | None = None
+    locale: Locale | None = None
 
 
 class ScreenRead(BaseModel):
@@ -115,6 +126,14 @@ class UserRead(BaseModel):
     #: Zona horaria del negocio (hora del Centro): la webapp muestra fechas y horas en ella, no en
     #: la del dispositivo (un teléfono en otra zona ve la misma hora que la empresa).
     timezone: str = Field(default_factory=lambda: settings.APP_TIMEZONE)
+    #: Versión de su foto de perfil (solo para armar `avatar`; no se envía).
+    avatar_version: str | None = Field(default=None, exclude=True)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def avatar(self) -> str | None:
+        """Ruta versionada de su foto de perfil (`/users/{id}/avatar?v=...`; se agrega `&size=96|512`) o None."""
+        return avatar_path(self.id, self.avatar_version)
 
     @computed_field  # type: ignore[prop-decorator]
     @property

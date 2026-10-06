@@ -13,7 +13,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, Query, status
 
 from app.core.responses import ApiResponse, ok
-from app.dependencies import CompanyScope, CompanyUser, DbSession, EmployeeUser, Pagination, require_screen
+from app.dependencies import CompanyScope, CompanyUser, DbSession, EmployeeUser, Pagination, Trash, require_screen
 from app.models import Screen, ShiftRequestStatus
 from app.schemas.bulk import BulkResult
 from app.schemas.calendar import (
@@ -39,6 +39,12 @@ from app.services.employee_access import approved_employee
 RESPONSES: dict[int | str, dict[str, Any]] = {401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}}
 NOT_FOUND: dict[int | str, dict[str, Any]] = {404: {"model": ErrorResponse}}
 CLOSED: dict[int | str, dict[str, Any]] = {**NOT_FOUND, 409: {"model": ErrorResponse, "description": "Ya atendida"}}
+#: Eliminar (a «Eliminados») y restaurar: 409 si ya está (o no está) en la papelera o si ya hay otro ese día.
+TRASH: dict[int | str, dict[str, Any]] = {
+    **NOT_FOUND,
+    409: {"model": ErrorResponse, "description": "`ALREADY_DELETED`, `NOT_DELETED` o `RESTORE_CONFLICT`"},
+    422: {"model": ErrorResponse, "description": "Al restaurar: una regla que ya no se cumple"},
+}
 
 company_router = APIRouter(
     prefix="/calendar",
@@ -59,12 +65,17 @@ Year = Annotated[int, Query(ge=2000, le=2100, description="Año del calendario")
 # ---------------------------------------------------------------- festivos
 
 
-@company_router.get("/holidays", response_model=ApiResponse[HolidayList], summary="Días festivos de un año")
+@company_router.get(
+    "/holidays",
+    response_model=ApiResponse[HolidayList],
+    summary="Días festivos de un año",
+    description="`deleted=true`: los del año que están en «Eliminados», con quién y cuándo los eliminó.",
+)
 def list_holidays(
-    _: CompanyUser, company_id: CompanyScope, db: DbSession, page: Pagination, year: Year
+    _: CompanyUser, company_id: CompanyScope, db: DbSession, page: Pagination, year: Year, deleted: Trash = False
 ) -> ApiResponse[HolidayList]:
-    result = CalendarService(db, company_id).holidays(year, page)
-    return ok(result, f"{result.total} día(s) festivo(s)", code="HOLIDAYS")
+    result = CalendarService(db, company_id).holidays(year, page, deleted=deleted)
+    return ok(result, code="HOLIDAYS", params={"count": result.total})
 
 
 @company_router.post(
@@ -78,7 +89,7 @@ def create_holiday(
     body: HolidayCreate, user: CompanyUser, company_id: CompanyScope, db: DbSession
 ) -> ApiResponse[HolidayRead]:
     result = CalendarService(db, company_id).add_holiday(body, user)
-    return ok(result, "Día festivo agregado", code="HOLIDAY_CREATED", status_code=201)
+    return ok(result, code="HOLIDAY_CREATED", status_code=201)
 
 
 @company_router.post(
@@ -91,13 +102,30 @@ def add_official_holidays(
     user: CompanyUser, company_id: CompanyScope, db: DbSession, year: Year
 ) -> ApiResponse[OfficialHolidaysResult]:
     result = CalendarService(db, company_id).add_official(year, user)
-    return ok(result, f"{len(result.added)} festivo(s) oficial(es) agregado(s)", code="OFFICIAL_HOLIDAYS_ADDED")
+    return ok(result, code="OFFICIAL_HOLIDAYS_ADDED", params={"count": len(result.added)})
 
 
-@company_router.delete("/holidays/{holiday_id}", response_model=ApiResponse[None], responses=NOT_FOUND)
-def delete_holiday(holiday_id: int, _: CompanyUser, company_id: CompanyScope, db: DbSession) -> ApiResponse[None]:
-    CalendarService(db, company_id).delete_holiday(holiday_id)
-    return ok(None, "Día festivo eliminado", code="HOLIDAY_DELETED")
+@company_router.delete(
+    "/holidays/{holiday_id}",
+    response_model=ApiResponse[None],
+    summary="Eliminar un día festivo (a «Eliminados»: deja de ser día libre y su fecha queda libre)",
+    responses=TRASH,
+)
+def delete_holiday(holiday_id: int, user: CompanyUser, company_id: CompanyScope, db: DbSession) -> ApiResponse[None]:
+    CalendarService(db, company_id).delete_holiday(holiday_id, user)
+    return ok(None, code="HOLIDAY_DELETED")
+
+
+@company_router.post(
+    "/holidays/{holiday_id}/restore",
+    response_model=ApiResponse[HolidayRead],
+    summary="Restaurar un día festivo (si nadie más ocupó su fecha)",
+    responses=TRASH,
+)
+def restore_holiday(
+    holiday_id: int, _: CompanyUser, company_id: CompanyScope, db: DbSession
+) -> ApiResponse[HolidayRead]:
+    return ok(CalendarService(db, company_id).restore_holiday(holiday_id), code="HOLIDAY_RESTORED")
 
 
 # ---------------------------------------------------------------- ausencias
@@ -118,7 +146,7 @@ def list_absences(
     result = AbsenceService(db, company_id).search(
         employee_id=employee_id, type_code=absence_type, status=absence_status, start=start, end=end, page=page
     )
-    return ok(result, f"{result.total} ausencia(s)", code="ABSENCES")
+    return ok(result, code="ABSENCES", params={"count": result.total})
 
 
 @company_router.post(
@@ -136,7 +164,7 @@ def create_absences(
     body: AbsenceCreate, user: CompanyUser, company_id: CompanyScope, db: DbSession
 ) -> ApiResponse[BulkResult]:
     result = AbsenceService(db, company_id).create_many(body, user)
-    return ok(result, f"Ausencia registrada a {result.done} empleado(s)", code="ABSENCES_CREATED")
+    return ok(result, code="ABSENCES_CREATED", params={"count": result.done})
 
 
 @company_router.get(
@@ -146,7 +174,7 @@ def create_absences(
 )
 def absences_summary(_: CompanyUser, company_id: CompanyScope, db: DbSession) -> ApiResponse[AbsenceSummary]:
     pending = AbsenceService(db, company_id).pending()
-    return ok(AbsenceSummary(pending=pending), f"{pending} pendiente(s)", code="ABSENCES_SUMMARY")
+    return ok(AbsenceSummary(pending=pending), code="ABSENCES_SUMMARY", params={"count": pending})
 
 
 @company_router.post(
@@ -159,7 +187,7 @@ def approve_absence(
     absence_id: int, user: CompanyUser, company_id: CompanyScope, db: DbSession
 ) -> ApiResponse[AbsenceRead]:
     result = AbsenceService(db, company_id).approve(absence_id, user)
-    return ok(result, "Solicitud aprobada", code="ABSENCE_APPROVED")
+    return ok(result, code="ABSENCE_APPROVED")
 
 
 @company_router.post(
@@ -172,7 +200,7 @@ def reject_absence(
     absence_id: int, body: AbsenceReject, user: CompanyUser, company_id: CompanyScope, db: DbSession
 ) -> ApiResponse[AbsenceRead]:
     result = AbsenceService(db, company_id).reject(absence_id, body, user)
-    return ok(result, "Solicitud rechazada", code="ABSENCE_REJECTED")
+    return ok(result, code="ABSENCE_REJECTED")
 
 
 @company_router.post(
@@ -185,14 +213,17 @@ def cancel_absence(
     absence_id: int, user: CompanyUser, company_id: CompanyScope, db: DbSession
 ) -> ApiResponse[AbsenceRead]:
     result = AbsenceService(db, company_id).cancel(absence_id, user)
-    return ok(result, "Ausencia cancelada", code="ABSENCE_CANCELLED")
+    return ok(result, code="ABSENCE_CANCELLED")
 
 
 # ---------------------------------------------------------------- días laborables especiales
 
 
 @company_router.get(
-    "/workdays", response_model=ApiResponse[WorkdayList], summary="Días laborables especiales (con filtros)"
+    "/workdays",
+    response_model=ApiResponse[WorkdayList],
+    summary="Días laborables especiales (con filtros)",
+    description="`deleted=true`: los que están en «Eliminados», con quién y cuándo los eliminó.",
 )
 def list_workdays(
     _: CompanyUser,
@@ -202,9 +233,12 @@ def list_workdays(
     employee_id: Annotated[int | None, Query(gt=0)] = None,
     start: date | None = None,
     end: date | None = None,
+    deleted: Trash = False,
 ) -> ApiResponse[WorkdayList]:
-    result = CalendarService(db, company_id).workdays(employee_id=employee_id, start=start, end=end, page=page)
-    return ok(result, f"{result.total} día(s) laborable(s)", code="WORKDAYS")
+    result = CalendarService(db, company_id).workdays(
+        employee_id=employee_id, start=start, end=end, page=page, deleted=deleted
+    )
+    return ok(result, code="WORKDAYS", params={"count": result.total})
 
 
 @company_router.post(
@@ -218,13 +252,30 @@ def create_workday(
     body: WorkdayCreate, user: CompanyUser, company_id: CompanyScope, db: DbSession
 ) -> ApiResponse[WorkdayRead]:
     result = CalendarService(db, company_id).add_workday(body, user)
-    return ok(result, "Día laborable registrado", code="WORKDAY_CREATED", status_code=201)
+    return ok(result, code="WORKDAY_CREATED", status_code=201)
 
 
-@company_router.delete("/workdays/{workday_id}", response_model=ApiResponse[None], responses=NOT_FOUND)
-def delete_workday(workday_id: int, _: CompanyUser, company_id: CompanyScope, db: DbSession) -> ApiResponse[None]:
-    CalendarService(db, company_id).delete_workday(workday_id)
-    return ok(None, "Día laborable eliminado", code="WORKDAY_DELETED")
+@company_router.delete(
+    "/workdays/{workday_id}",
+    response_model=ApiResponse[None],
+    summary="Eliminar un día laborable especial (a «Eliminados»: ese día vuelve a ser libre para el empleado)",
+    responses=TRASH,
+)
+def delete_workday(workday_id: int, user: CompanyUser, company_id: CompanyScope, db: DbSession) -> ApiResponse[None]:
+    CalendarService(db, company_id).delete_workday(workday_id, user)
+    return ok(None, code="WORKDAY_DELETED")
+
+
+@company_router.post(
+    "/workdays/{workday_id}/restore",
+    response_model=ApiResponse[WorkdayRead],
+    summary="Restaurar un día laborable especial (con las mismas reglas que marcarlo)",
+    responses=TRASH,
+)
+def restore_workday(
+    workday_id: int, _: CompanyUser, company_id: CompanyScope, db: DbSession
+) -> ApiResponse[WorkdayRead]:
+    return ok(CalendarService(db, company_id).restore_workday(workday_id), code="WORKDAY_RESTORED")
 
 
 # ---------------------------------------------------------------- empleado
@@ -234,7 +285,7 @@ def delete_workday(workday_id: int, _: CompanyUser, company_id: CompanyScope, db
 def my_absences(user: EmployeeUser, db: DbSession, page: Pagination) -> ApiResponse[AbsenceList]:
     employee = approved_employee(user)
     result = AbsenceService(db, employee.company_id).mine(employee, page)
-    return ok(result, f"{result.total} ausencia(s)", code="MY_ABSENCES")
+    return ok(result, code="MY_ABSENCES", params={"count": result.total})
 
 
 @employee_router.post(
@@ -247,7 +298,7 @@ def my_absences(user: EmployeeUser, db: DbSession, page: Pagination) -> ApiRespo
 def request_absence(body: AbsenceRequest, user: EmployeeUser, db: DbSession) -> ApiResponse[AbsenceRead]:
     employee = approved_employee(user)
     result = AbsenceService(db, employee.company_id).request(employee, body, user)
-    return ok(result, "Solicitud enviada a tu empresa", code="ABSENCE_REQUESTED", status_code=201)
+    return ok(result, code="ABSENCE_REQUESTED", status_code=201)
 
 
 @employee_router.post(
@@ -259,7 +310,7 @@ def request_absence(body: AbsenceRequest, user: EmployeeUser, db: DbSession) -> 
 def cancel_my_absence(absence_id: int, user: EmployeeUser, db: DbSession) -> ApiResponse[AbsenceRead]:
     employee = approved_employee(user)
     result = AbsenceService(db, employee.company_id).cancel_mine(employee, absence_id)
-    return ok(result, "Solicitud cancelada", code="ABSENCE_CANCELLED")
+    return ok(result, code="ABSENCE_CANCELLED", key="ABSENCE_REQUEST_CANCELLED")
 
 
 @employee_router.get(
@@ -268,4 +319,4 @@ def cancel_my_absence(absence_id: int, user: EmployeeUser, db: DbSession) -> Api
 def my_holidays(user: EmployeeUser, db: DbSession, page: Pagination) -> ApiResponse[HolidayList]:
     employee = approved_employee(user)
     result = CalendarService(db, employee.company_id).upcoming_holidays(page)
-    return ok(result, f"{result.total} día(s) festivo(s)", code="MY_HOLIDAYS")
+    return ok(result, code="MY_HOLIDAYS", params={"count": result.total})

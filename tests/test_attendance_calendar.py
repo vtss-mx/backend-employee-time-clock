@@ -26,9 +26,7 @@ def remote_worker(client, company_headers) -> dict:
     """Ana con el turno matutino (8:00-16:00, un descanso de 30 min) desde hoy, remoto todos los días."""
     employee_id, headers = employee_with_face(client, company_headers)
     shift = create_shift(client, company_headers)
-    assert (
-        assign(client, company_headers, employee_id, shift["id"], business_today(), remote=range(7)).status_code == 201
-    )
+    assert assign(client, company_headers, employee_id, shift["id"], business_today()).status_code == 201
     return {"id": employee_id, "headers": headers, "shift": shift, "day": business_today() + timedelta(days=7)}
 
 
@@ -130,7 +128,7 @@ def test_the_next_shift_skips_days_off(client, company_headers, worker, clock):
 def test_an_overnight_shift_belongs_to_the_day_it_starts(client, company_headers, clock):
     employee_id, headers = employee_with_face(client, company_headers)
     night = create_shift(client, company_headers, name="Nocturno", start_time="22:00", end_time="06:00", breaks_count=0)
-    assign(client, company_headers, employee_id, night["id"], business_today(), remote=range(7))
+    assign(client, company_headers, employee_id, night["id"], business_today())
     day = business_today() + timedelta(days=3)
     holiday(client, company_headers, day + timedelta(days=1), "Al día siguiente")
     clock(day, "21:50")  # entra la víspera del festivo: su jornada es de hoy
@@ -145,7 +143,7 @@ def test_an_overnight_shift_belongs_to_the_day_it_starts(client, company_headers
 
 def test_the_board_shows_days_off_instead_of_absences(client, company_headers, worker, clock):
     beto, _ = employee_with_face(client, company_headers, person="beto", number="EMP-002")
-    assign(client, company_headers, beto, worker["shift"]["id"], business_today(), remote=range(7))
+    assign(client, company_headers, beto, worker["shift"]["id"], business_today())
     day = worker["day"]
     vacation(client, company_headers, [worker["id"]], day, days=1)
     clock(day, "18:00")
@@ -184,7 +182,7 @@ def test_the_break_is_free_but_within_working_hours(client, worker, clock):
     assert parse(window["starts_at"]) == local(day, "08:00") and parse(window["ends_at"]) == local(day, "16:00")
     too_soon = act(client, headers, "break-start")
     assert too_soon.status_code == 409 and too_soon.json()["code"] == "ATTENDANCE_ACTION_NOT_ALLOWED"
-    assert too_soon.json()["message"] == "Puedes tomar tu descanso cuando quieras entre las 08:00 y las 16:00"
+    assert too_soon.json()["message"] == "Puedes tomar tu descanso entre las 08:00 y las 16:00"
     clock(day, "08:00")
     assert today(client, headers)["actions"] == ["BREAK_START", "CHECK_OUT"]
     clock(day, "15:59")
@@ -202,7 +200,7 @@ def test_the_break_is_free_but_within_working_hours(client, worker, clock):
 def test_no_break_after_the_scheduled_end(client, company_headers, clock):
     employee_id, headers = employee_with_face(client, company_headers)
     shift = create_shift(client, company_headers, breaks_count=2, break_minutes=15)
-    assign(client, company_headers, employee_id, shift["id"], business_today(), remote=range(7))
+    assign(client, company_headers, employee_id, shift["id"], business_today())
     day = business_today() + timedelta(days=2)
     clock(day, "08:00")
     recorded(act(client, headers, "check-in"))

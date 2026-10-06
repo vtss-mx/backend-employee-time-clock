@@ -134,7 +134,9 @@ def test_the_attempt_signals_keep_numbers_only():
 def test_a_challenge_brings_up_to_three_steps_the_flash_and_the_live_thresholds(client, company_headers):
     headers = approved_employee(client, company_headers)
     challenge = client.post("/api/face/challenge", headers=headers).json()["data"]
-    assert len(challenge["actions"]) == 2 and len(challenge["flash"]) == settings.FACE_FLASH_COLORS
+    # Antifraude 2a: los colores no viajan con el reto; los dicta el servidor por el canal en vivo (su token).
+    assert len(challenge["actions"]) == 2 and challenge["flash"] == []
+    assert challenge["flash_pace"]["total"] == settings.FACE_FLASH_COLORS and challenge["flash_pace"]["token"]
     assert challenge["flash_required"] is False and challenge["expires_in"] == 60
     assert challenge["min_yaw_ratio"] == settings.FACE_LIVENESS_MIN_YAW_RATIO
     assert challenge["min_pitch_delta"] == settings.FACE_LIVENESS_MIN_PITCH_DELTA
@@ -142,6 +144,7 @@ def test_a_challenge_brings_up_to_three_steps_the_flash_and_the_live_thresholds(
     set_policy(client, company_headers, liveness_steps=3, liveness_timeout_seconds=30, flash_liveness="OFF")
     challenge = client.post("/api/face/challenge", headers=headers).json()["data"]
     assert len(challenge["actions"]) == 3 and challenge["flash"] == [] and challenge["expires_in"] == 30
+    assert challenge["flash_pace"] is None  # sin destello no hay nada que dictar
     assert len(challenge["instructions"]) == 3
     # Cada movimiento se cumple (también mirar arriba/abajo y acercarse) y el intento se mide.
     for _ in range(4):
@@ -257,7 +260,7 @@ def test_autocalibration_only_tightens_within_floor_and_cap(client, company_head
     monkeypatch.setattr(settings, "FACE_AUTOCALIBRATION_MIN_SAMPLES", 20)
     now = datetime.now(UTC)
     with SessionLocal() as db:
-        assert face_security.recalibrate(db, now) == 5  # primera vez: los cinco quedan en su piso
+        assert face_security.recalibrate(db, now) == 10  # primera vez: los diez quedan en su valor de partida
         assert face_security.thresholds(db).min_yaw_ratio == settings.FACE_LIVENESS_MIN_YAW_RATIO
     add_metrics(
         30,
@@ -288,7 +291,7 @@ def test_recalibration_runs_from_maintenance_only_when_due(client, company_heade
     approved_employee(client, company_headers)
     now = datetime.now(UTC)
     with SessionLocal() as db:
-        assert face_security.recalibrate_if_due(db, now) == 5
+        assert face_security.recalibrate_if_due(db, now) == 10
         assert face_security.recalibrate_if_due(db, now + timedelta(hours=1)) == 0  # aún vigente
         assert maintenance_service.purge_expired(db, now=now + timedelta(days=1))["umbrales recalibrados"] == 0
         monkeypatch.setattr(settings, "FACE_AUTOCALIBRATION_ENABLED", False)
@@ -341,9 +344,12 @@ def test_the_admin_sees_and_recalibrates_the_platform_security(client, company_h
         "score_median": 0.8,
         "score_p10": 0.8,
         "magnitude_median": 0.02,
+        "ratio_median": None,  # sin el fondo medido (métricas de antes del cociente rostro/fondo)
+        "ratio_p10": None,
     }
     first = client.post(f"{ADMIN_URL}/recalibrate", headers=admin_headers).json()
-    assert first["code"] == "THRESHOLDS_RECALIBRATED" and "5 cambiaron" in first["message"]
+    # La primera vez todos cambian (no había ninguno guardado).
+    assert first["code"] == "THRESHOLDS_RECALIBRATED" and f"{len(face_security.SIGNALS)} cambiaron" in first["message"]
     again = client.post(f"{ADMIN_URL}/recalibrate", headers=admin_headers).json()
     assert again["message"] == "Umbrales recalculados: sin cambios"
     assert all(t["computed_at"] for t in again["data"]["thresholds"])

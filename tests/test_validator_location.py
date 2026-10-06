@@ -12,8 +12,8 @@ from tests.test_validators import ADDRESS, PASSWORD, URL, create_validator
 
 EMAIL = "recepcion@empresa.com"
 #: ~55 m al norte del punto del domicilio (29.0729, -110.9559) y ~1.1 km al norte.
-NEAR = {"latitude": 29.0734, "longitude": -110.9559}
-FAR = {"latitude": 29.0829, "longitude": -110.9559}
+NEAR = {"latitude": 29.0734, "longitude": -110.9559, "accuracy": 10}
+FAR = {"latitude": 29.0829, "longitude": -110.9559, "accuracy": 10}
 
 
 @pytest.fixture(autouse=True)
@@ -122,6 +122,11 @@ def test_login_only_inside_the_allowed_radius(client, company_headers):
     inaccurate = _login(client, {**NEAR, "accuracy": 900})
     assert inaccurate.status_code == 403 and inaccurate.json()["code"] == "LOCATION_INACCURATE"
 
+    # Sin precisión no se supone perfecta (una llamada armada a mano no salta el candado).
+    unknown = _login(client, {"latitude": NEAR["latitude"], "longitude": NEAR["longitude"]})
+    assert unknown.status_code == 403 and unknown.json()["code"] == "LOCATION_INACCURATE"
+    assert unknown.json()["errors"][0]["details"] == {"accuracy_m": None}
+
     assert _login(client, {**NEAR, "accuracy": 12}).status_code == 200
 
 
@@ -166,8 +171,8 @@ def test_requiring_or_moving_the_location_closes_open_sessions(client, company_h
     assert _login(client, NEAR).json()["code"] == "LOCATION_OUT_OF_RANGE"
     assert _login(client, FAR).status_code == 200
 
-    # Otra empresa no ve ni edita el validador.
-    create_company(client, admin_headers)
+    # Otra empresa (con el módulo de validadores) no ve ni edita el validador.
+    create_company(client, admin_headers, max_validators=1)
     other = login(client, "admin@panificadora.com", "Empresa1234")
     assert client.get(url, headers=other).status_code == 404
     assert client.put(url, json={"location_required": False}, headers=other).status_code == 404

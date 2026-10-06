@@ -48,6 +48,22 @@ class CountryItem(CatalogItem):
     featured: bool
 
 
+class TaxIdTypeItem(CatalogItem):
+    """Tipo de identificador fiscal de una empresa (`description` = su formato en palabras, para la ayuda del campo)."""
+
+    #: País al que pertenece; null = sirve para cualquier país («Otro identificador fiscal»).
+    country_code: str | None = None
+    #: Sigla con que se muestra («RFC», «EIN»).
+    short_name: str
+    #: Regla del número ya normalizado (mayúsculas, sin espacios, guiones, puntos ni diagonales): expresión regular que
+    #: se compara completa y su largo. El backend la vuelve a aplicar al guardar, con el dígito verificador si lo tiene.
+    pattern: str
+    min_length: int
+    max_length: int
+    #: Un número de ejemplo, como se guarda.
+    example: str
+
+
 class ConfidenceLevelItem(CatalogItem):
     value: float
     similarity: float
@@ -61,6 +77,15 @@ class AntispoofLevelItem(CatalogItem):
     threshold: float
     #: Basta una sola captura sospechosa para rechazar (si no, decide la mayoría).
     any_frame: bool
+
+
+class CurrencyItem(CatalogItem):
+    """Moneda del cobro (`code` = código ISO 4217)."""
+
+    #: Símbolo corto con que se escribe ("$", "€"); el código ISO distingue las monedas con el mismo símbolo.
+    symbol: str
+    #: Decimales de la moneda: cada importe se redondea a ellos.
+    decimals: int
 
 
 class DayOffTypeItem(StatusItem):
@@ -80,10 +105,14 @@ class CatalogsRead(BaseModel):
     verification_reasons: list[ReasonItem]
     accessories: list[AccessoryItem]
     countries: list[CountryItem]
+    #: Tipos de identificador fiscal de las empresas, por país (ADMIN, alta y edición de empresas).
+    tax_id_types: list[TaxIdTypeItem]
     enrollment_rejection_reasons: list[CatalogItem]
     reverification_reasons: list[CatalogItem]
     confidence_levels: list[ConfidenceLevelItem]
     antispoof_levels: list[AntispoofLevelItem]
+    #: Modos del destello de colores de la prueba de vida (política `flash_liveness`).
+    flash_modes: list[CatalogItem]
     face_errors: list[FaceErrorItem]
     enrollment_flags: list[CatalogItem]
     api_scopes: list[CatalogItem]
@@ -98,3 +127,37 @@ class CatalogsRead(BaseModel):
     assignment_states: list[StatusItem]
     day_off_types: list[DayOffTypeItem]
     attendance_edit_reasons: list[CatalogItem]
+    #: Cobranza (ADMIN): cómo se cobra, a qué tiempo corresponde el precio, descuentos, estados y medios de pago.
+    pricing_modes: list[CatalogItem]
+    price_periods: list[CatalogItem]
+    discount_types: list[CatalogItem]
+    discount_recurrences: list[CatalogItem]
+    billing_statuses: list[StatusItem]
+    suspension_reasons: list[CatalogItem]
+    charge_statuses: list[StatusItem]
+    payment_statuses: list[StatusItem]
+    payment_methods: list[CatalogItem]
+    #: Documentos de la empresa (migración 0075): tipos de los archivos que se guardan para facturarle.
+    company_document_types: list[CatalogItem]
+    #: Monedas en que se puede cobrar a una empresa (la de su plan).
+    currencies: list[CurrencyItem]
+    #: Consumo (ADMIN): grupos del almacenamiento de cada empresa.
+    storage_categories: list[CatalogItem]
+    #: Rendimiento (ADMIN, migración 0063): seguimiento de una alerta de peticiones lentas (regla 18).
+    slow_alert_statuses: list[StatusItem]
+    #: Antifraude (migración 0062): tipos de fraude, modos de una señal, motivos de revisión (lo que ve la empresa
+    #: de un registro "en revisión"), niveles y acciones de riesgo, estados de un registro en revisión, modos del
+    #: dispositivo del empleado, niveles predefinidos de la política, estados de un cambio de la política y de un
+    #: caso de fraude y lo que pasa en su historial. Las señales del motor (qué se mide) NO viajan aquí: solo las ve
+    #: el ADMIN en la política (no se le enseña al atacante qué se mide).
+    fraud_kinds: list[CatalogItem]
+    signal_modes: list[CatalogItem]
+    review_reasons: list[CatalogItem]
+    risk_tiers: list[StatusItem]
+    risk_actions: list[CatalogItem]
+    attendance_review_statuses: list[StatusItem]
+    employee_device_modes: list[CatalogItem]
+    policy_presets: list[CatalogItem]
+    policy_change_statuses: list[StatusItem]
+    fraud_case_statuses: list[StatusItem]
+    fraud_case_event_kinds: list[CatalogItem]

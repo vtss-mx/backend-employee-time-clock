@@ -1,10 +1,14 @@
 from collections.abc import Collection
 from datetime import datetime
 
-from sqlalchemy import ColumnElement, func, select
+from sqlalchemy import ColumnElement, Row, func, or_, select
 from sqlalchemy.orm import InstrumentedAttribute, Session
 
 from app.models import Company, FaceAttemptMetric, SecurityThreshold
+
+#: Etiqueta de los intentos que la revisión de un caso confirmó como fraude (y la de los falsos positivos).
+FRAUD_LABEL = "FRAUD"
+GENUINE_LABEL = "GENUINE"
 
 
 class FaceSecurityRepository:
@@ -28,19 +32,46 @@ class FaceSecurityRepository:
         limit: int,
         *conditions: ColumnElement[bool],
     ) -> list[float]:
-        """Los valores medidos en los intentos EXITOSOS más recientes (hasta `limit`)."""
+        """Los valores medidos en los intentos EXITOSOS más recientes (hasta `limit`). Los que la revisión de un caso
+        confirmó como fraude no cuentan: no son personas reales (no "envenenan" la calibración)."""
         stmt = (
             select(column)
             .where(
                 FaceAttemptMetric.created_at >= since,
                 FaceAttemptMetric.success.is_(True),
                 column.is_not(None),
+                or_(FaceAttemptMetric.fraud_label.is_(None), FaceAttemptMetric.fraud_label != FRAUD_LABEL),
                 *conditions,
             )
             .order_by(FaceAttemptMetric.created_at.desc(), FaceAttemptMetric.id.desc())
             .limit(limit)
         )
         return [float(v) for v in self.db.scalars(stmt) if v is not None]
+
+    def protocol_values(
+        self, since: datetime, limit: int
+    ) -> list[Row[float | None, float | None, int | None, int | None, float | None]]:
+        """Del protocolo de captura (antifraude 2a), en los intentos EXITOSOS más recientes que no son un fraude
+        confirmado (hasta `limit`): el destello medido, la respuesta más lenta del destello dictado, los movimientos del
+        reto, los recortes de la ráfaga y el pulso. UNA lectura por el índice `(created_at, id)`, como la
+        calibración."""
+        stmt = (
+            select(
+                FaceAttemptMetric.flash_score,
+                FaceAttemptMetric.flash_pace_ms,
+                FaceAttemptMetric.steps,
+                FaceAttemptMetric.burst_frames,
+                FaceAttemptMetric.pulse_snr,
+            )
+            .where(
+                FaceAttemptMetric.created_at >= since,
+                FaceAttemptMetric.success.is_(True),
+                or_(FaceAttemptMetric.fraud_label.is_(None), FaceAttemptMetric.fraud_label != FRAUD_LABEL),
+            )
+            .order_by(FaceAttemptMetric.created_at.desc(), FaceAttemptMetric.id.desc())
+            .limit(limit)
+        )
+        return list(self.db.execute(stmt).all())
 
     def attacks(self, company_id: int, since: datetime, reasons: Collection[str], cap: int) -> int:
         """Intentos sospechosos contra la empresa desde `since` (cuenta con tope: basta saber si llega)."""

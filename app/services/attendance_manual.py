@@ -57,20 +57,17 @@ class ManualAttendance:
         """Registra la jornada de un día de su turno en que no checó."""
         employee = EmployeeRepository(self.db, self.company_id).get_by_id(data.employee_id, lock=True)
         if employee is None:
-            raise NotFoundError("Empleado no encontrado", code="EMPLOYEE_NOT_FOUND")
+            raise NotFoundError(code="EMPLOYEE_NOT_FOUND")
         assignment = self.shifts.assignment_on(employee.id, data.work_date)
         shift = self.shifts.shifts_by_ids([assignment.shift_id])[assignment.shift_id] if assignment else None
         if assignment is None or shift is None or not shift.active or not works_on(shift, data.work_date):
             raise UnprocessableError(
-                f"{employee.full_name} no tiene turno el {data.work_date:%d/%m/%Y}",
-                code="NO_SHIFT_THAT_DAY",
-                field="work_date",
+                code="NO_SHIFT_THAT_DAY", params={"name": employee.full_name, "date": data.work_date}, field="work_date"
             )
         occurrence = occurrence_of(shift, data.work_date, self.zone)
         self._ensure_workday(employee, occurrence)
         if self.repo.session_at(employee.id, occurrence.start.astimezone(UTC)) is not None:
             raise ConflictError(
-                "Ese día ya tiene su jornada registrada: corrígela en lugar de registrar otra",
                 code="ATTENDANCE_SESSION_EXISTS",
             )
         now = attendance_service.now_utc()
@@ -85,7 +82,7 @@ class ManualAttendance:
         """Corrige las horas y los descansos de una jornada (lo que había queda en la bitácora)."""
         found = self.repo.session(session_id)
         if found is None:
-            raise NotFoundError("Jornada no encontrada", code="WORK_SESSION_NOT_FOUND")
+            raise NotFoundError(code="WORK_SESSION_NOT_FOUND")
         EmployeeRepository(self.db, self.company_id).get_by_id(found.employee_id, lock=True)
         self.db.refresh(found)  # lo último, ya con el empleado bloqueado (una checada pudo cambiarla)
         session = found
@@ -122,9 +119,9 @@ class ManualAttendance:
         day_off = self.sessions.calendar.days_off([employee.id], work_date, work_date).on(employee.id, work_date)
         if day_off is not None:
             raise ConflictError(
-                f"{day_off.name}: el {work_date:%d/%m/%Y} es día libre para {employee.full_name}. Si sí trabajó, "
-                "márcalo como laborable en Calendario y luego registra su asistencia.",
                 code="DAY_OFF",
+                key="DAY_OFF_MANUAL",
+                params={"reason": day_off.name, "date": work_date, "name": employee.full_name},
                 details={"kind": day_off.kind, "name": day_off.name},
             )
 
@@ -155,10 +152,7 @@ class ManualAttendance:
         if as_utc(other.check_out_deadline) < now:
             self.sessions.expire(other)
             return
-        raise ConflictError(
-            f"Tiene otra jornada abierta (del {other.work_date:%d/%m/%Y}): registra primero su salida",
-            code="ATTENDANCE_SESSION_OPEN",
-        )
+        raise ConflictError(code="ATTENDANCE_SESSION_OPEN", params={"date": other.work_date})
 
     def _apply(
         self,

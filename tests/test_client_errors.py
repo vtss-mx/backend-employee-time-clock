@@ -83,7 +83,7 @@ def test_the_same_failure_on_another_record_is_the_same_report(client):
 def test_with_a_session_it_says_who_and_from_which_company(client, admin_headers, company_headers):
     assert client.post(URL, json=CRASH, headers=company_headers).status_code == 202
     _report, occurrence = _occurrence(client, admin_headers, "CLIENT_CRASH")
-    assert occurrence["user_label"] == "admin@empresa.com (Company)" and occurrence["company_name"]
+    assert occurrence["user_label"] == "admin@empresa.com (Empresa)" and occurrence["company_name"]
     context = occurrence["context"]
     assert context["user"] == {"id": context["user"]["id"], "email": "admin@empresa.com", "role": "COMPANY"}
     assert context["company_id"]
@@ -175,7 +175,7 @@ def test_the_body_has_its_own_small_limit(client):
     huge = b'{"kind": "CRASH", "message": "' + b"x" * MAX_BODY_BYTES + b'"}'
     declared = client.post(URL, content=huge, headers={"Content-Type": "application/json"})
     body = assert_envelope(declared, 413, "PAYLOAD_TOO_LARGE")
-    assert "16 KB" in body["message"]
+    assert "0.02 MB" in body["message"]  # el tope en MB, como toda medición de datos (regla 17)
 
     def chunks():  # sin Content-Length: se cuenta mientras llega y se corta al pasarse
         for start in range(0, len(huge), 4096):

@@ -14,13 +14,11 @@ Responde 202: la falla se guarda con el siguiente lote del registro de errores (
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request, status
-from fastapi.exceptions import RequestValidationError
-from pydantic import ValidationError
 
 from app.core.config import settings
-from app.core.exceptions import PayloadTooLargeError
+from app.core.request_body import bounded_json
 from app.core.responses import ApiResponse, ok
-from app.dependencies import DbSession
+from app.dependencies import PlatformDb
 from app.middleware.rate_limit import client_ip, ip_rate_limit
 from app.schemas.client_error import MAX_BODY_BYTES, ClientErrorIn
 from app.schemas.common import ErrorResponse
@@ -28,27 +26,13 @@ from app.services.client_error_service import ClientErrorService
 
 router = APIRouter(prefix="/client-errors", tags=["Errores del sistema (aplicación web)"])
 
-_TOO_LARGE = f"El reporte excede el tamaño máximo ({MAX_BODY_BYTES // 1024} KB)"
 #: El cuerpo lo lee `_report_body` (no FastAPI): su esquema se documenta aquí para Swagger.
 _BODY_DOC = {"required": True, "content": {"application/json": {"schema": ClientErrorIn.model_json_schema()}}}
 
 
 async def _report_body(request: Request) -> ClientErrorIn:
-    """El reporte, leído aquí (no por FastAPI) para que el tope sea el de esta ruta y no el general de
-    la API (pensado para fotos): un Content-Length mayor se rechaza sin leer nada y un envío por partes
-    se corta en cuanto lo pasa."""
-    if int(request.headers.get("content-length") or 0) > MAX_BODY_BYTES:
-        raise PayloadTooLargeError(_TOO_LARGE)
-    raw = b""
-    async for chunk in request.stream():
-        raw += chunk
-        if len(raw) > MAX_BODY_BYTES:
-            raise PayloadTooLargeError(_TOO_LARGE)
-    try:
-        return ClientErrorIn.model_validate_json(raw)
-    except ValidationError as exc:  # el mismo 422 VALIDATION_ERROR (por campo) que el resto de la API
-        errors = [{**error, "loc": ("body", *error["loc"])} for error in exc.errors(include_url=False)]
-        raise RequestValidationError(errors) from exc
+    """El reporte, leído con el tope de esta ruta (no el general de la API, pensado para fotos)."""
+    return await bounded_json(request, ClientErrorIn, MAX_BODY_BYTES)
 
 
 def _bearer_token(request: Request) -> str | None:
@@ -73,7 +57,7 @@ def _bearer_token(request: Request) -> str | None:
     },
 )
 def report_client_error(
-    request: Request, report: Annotated[ClientErrorIn, Depends(_report_body)], db: DbSession
+    request: Request, report: Annotated[ClientErrorIn, Depends(_report_body)], db: PlatformDb
 ) -> ApiResponse[None]:
     ClientErrorService(db).record(report, token=_bearer_token(request), headers=request.headers, ip=client_ip(request))
-    return ok(None, "Falla registrada", code="CLIENT_ERROR_RECORDED", status_code=status.HTTP_202_ACCEPTED)
+    return ok(None, code="CLIENT_ERROR_RECORDED", status_code=status.HTTP_202_ACCEPTED)

@@ -10,7 +10,7 @@ from datetime import date
 
 from sqlalchemy import func, select
 
-from app.core.database import SessionLocal
+from app.core.database import platform_session
 from app.core.passwords import hash_password
 from app.models import Company, Department, Employee, User, UserRole
 
@@ -18,7 +18,9 @@ from app.models import Company, Department, Employee, User, UserRole
 def main(count: int) -> None:
     if os.environ.get("PERF_ENVIRONMENT") != "1":
         sys.exit("seed.py solo corre en el entorno de pruebas de carga (PERF_ENVIRONMENT=1)")
-    with SessionLocal() as db:
+    # Siembra de la plataforma (como la línea de comandos): sin declarar el alcance, la seguridad por fila rechaza
+    # cada fila de empresa (el usuario de la API no puede saltársela).
+    with platform_session() as db:
         company = db.scalars(select(Company).order_by(Company.id)).first()
         if company is None:
             sys.exit("No existe la empresa de prueba (FIRST_COMPANY_EMAIL)")

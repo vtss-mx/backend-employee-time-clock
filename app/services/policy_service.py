@@ -1,8 +1,10 @@
-"""Política de verificación de cada empresa (editable por su COMPANY desde el frontend).
+"""Política de verificación de cada empresa: la configura el ADMIN de la plataforma (`policy_governance`: historial,
+niveles predefinidos y regla de dos personas); la empresa y su personal solo la leen.
 
 Se lee en cada operación facial; para no consultar la BD en cada petición se mantiene en una
-caché por proceso y por empresa de pocos segundos (los cambios se ven en todos los procesos en
-≤ TTL). La caché es acotada (LRU): con miles de empresas no crece sin límite.
+caché por proceso y por empresa de pocos segundos (`POLICY_CACHE_SECONDS`: los cambios se ven en todos los
+procesos en ese tiempo). La caché es acotada (LRU de `POLICY_CACHE_COMPANIES`): con miles de empresas no
+crece sin límite.
 """
 
 import threading
@@ -10,37 +12,19 @@ import time
 from collections import OrderedDict
 from collections.abc import Mapping
 from dataclasses import dataclass, field, fields
+from typing import Any
 
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.devices import classify_device
-from app.core.exceptions import PermissionDeniedError, UnprocessableError
+from app.core.exceptions import PermissionDeniedError
 from app.facial_recognition import FacePolicy
 from app.models import Employee, User, UserRole, VerificationPolicy
 from app.repositories.policy_repository import PolicyRepository
-from app.repositories.user_repository import UserRepository
-from app.schemas.policy import VerificationPolicyRead, VerificationPolicyUpdate
+from app.schemas.policy import VerificationPolicyRead
 from app.services.catalog_service import get_catalogs
 from app.services.face_security import thresholds
-
-TOUCH_ONLY_MESSAGE = (
-    "Por políticas de tu empresa, la validación de identidad solo está disponible desde una tableta o "
-    "un teléfono. Ingresa desde el navegador de ese dispositivo con tu mismo correo y contraseña."
-)
-
-_CACHE_TTL_SECONDS = 5.0
-#: Campos que deben ser un código activo de su catálogo: (campo, catálogo, código y mensaje del error).
-CATALOG_FIELDS = (
-    (
-        "anti_spoofing_level",
-        "antispoof_levels",
-        "INVALID_ANTISPOOF_LEVEL",
-        "Elige uno de los niveles de anti-spoofing disponibles",
-    ),
-    ("flash_liveness", "flash_modes", "INVALID_FLASH_MODE", "Elige uno de los modos del destello disponibles"),
-)
-_CACHE_MAX_COMPANIES = 10_000
 
 
 @dataclass(frozen=True)
@@ -76,6 +60,30 @@ class PolicySnapshot:
     validator_device_approval: bool = True
     qr_lifetime_seconds: int = 30
     adaptive_learning: bool = True
+    # --- Antifraude (migración 0062) ---
+    #: Decisión D4: las empresas nuevas no registran asistencia con el QR solo.
+    qr_only_attendance: bool = False
+    duplicate_confidence: float = 0.99
+    employee_device_mode: str = "OBSERVE"
+    preset: str | None = None
+    risk_engine: bool = True
+    risk_medium_score: int = 30
+    risk_high_score: int = 60
+    risk_critical_score: int = 80
+    risk_medium_action: str = "STEP_UP"
+    risk_high_action: str = "REVIEW"
+    risk_critical_action: str = "DENY"
+    risk_fallback_action: str = "ALLOW"
+    #: Ajustes por señal sobre los de la plataforma: {código: {"mode", "points"}}.
+    risk_signals: dict[str, dict[str, Any]] = field(default_factory=dict)
+    fraud_evidence: bool = True
+    # --- Protocolo de captura (antifraude 2a, migración 0066): nacen midiendo ---
+    flash_paced: bool = True
+    capture_burst: bool = True
+    # --- Presencia (antifraude 2b, migración 0070): firma y ubicación de los validadores, código de sitio ---
+    validator_signing: str = "OBSERVE"
+    validator_location: str = "OBSERVE"
+    site_codes: str = "OBSERVE"
     #: Del nivel de anti-spoofing (catálogo): umbral y si basta una captura sospechosa.
     antispoof_threshold: float = field(default=0.05, compare=False)
     antispoof_any_frame: bool = field(default=False, compare=False)
@@ -151,53 +159,39 @@ class PolicyService:
         now = time.monotonic()
         with _lock:
             cached = _cache.get(self.company_id)
-            if cached is not None and now - cached[0] < _CACHE_TTL_SECONDS:
+            if cached is not None and now - cached[0] < settings.POLICY_CACHE_SECONDS:
                 _cache.move_to_end(self.company_id)
                 return cached[1]
         snapshot = _snapshot(self._row(), thresholds(self.db).min_real_probability)
         with _lock:
             _cache[self.company_id] = (now, snapshot)
             _cache.move_to_end(self.company_id)
-            while len(_cache) > _CACHE_MAX_COMPANIES:
+            while len(_cache) > settings.POLICY_CACHE_COMPANIES:
                 _cache.popitem(last=False)
         return snapshot
 
-    def read(self, *, author: bool = True) -> VerificationPolicyRead:
-        """La política; `author=False` (lo que leen la empresa y su personal) omite quién la cambió: es
-        una cuenta de la plataforma."""
-        row = self._row()
-        policy = VerificationPolicyRead.model_validate(row)
-        if not author:
-            return policy
-        updated_by = UserRepository(self.db).emails_by_ids((row.updated_by_id,)).get(row.updated_by_id or 0)
-        return policy.model_copy(update={"updated_by": updated_by})
+    def read(self) -> VerificationPolicyRead:
+        """La política que leen la empresa y su personal: sin quién la cambió (es una cuenta de la plataforma; la
+        versión completa del ADMIN la arma `policy_governance`)."""
+        return VerificationPolicyRead.model_validate(self._row())
 
-    def update(self, data: VerificationPolicyUpdate, user: User) -> VerificationPolicyRead:
+    def values(self, *, lock: bool = False) -> dict[str, Any]:
+        """Los valores vigentes de cada columna de la política (`lock`: bloqueada hasta el commit, para cambiarla sin
+        carreras entre dos ADMIN)."""
+        # Sin política aún, se crea con valores seguros (nueva: nadie más la está cambiando).
+        row = PolicyRepository(self.db, self.company_id).get(lock=lock) or self._row()
+        return {name: getattr(row, name) for name in POLICY_COLUMNS}
+
+    def apply(self, changes: Mapping[str, Any], user_id: int | None) -> None:
+        """Escribe los cambios ya validados y decididos (`policy_governance`); el commit y la caché, de quien llama."""
         row = self._row()
-        changes = data.model_dump(exclude_unset=True, exclude_none=True)
-        for name in ("min_confidence", "identify_confidence"):
-            if name not in changes:
-                continue
-            level = get_catalogs().confidence_level(changes[name])
-            if level is None:
-                raise UnprocessableError(
-                    "Elige uno de los niveles de confianza disponibles", code="INVALID_CONFIDENCE_LEVEL", field=name
-                )
-            changes[name] = level["value"]
-        for name, catalog, code, message in CATALOG_FIELDS:
-            if name in changes and not get_catalogs().is_active(catalog, changes[name]):
-                raise UnprocessableError(message, code=code, field=name)
         for name, value in changes.items():
             setattr(row, name, value)
-        row.updated_by_id = user.id
-        self.db.commit()
-        clear_policy_cache(self.company_id)
-        return self.read()
+        row.updated_by_id = user_id
 
     def ensure_qr_enabled(self) -> None:
         if not self.current().qr_enabled:
             raise PermissionDeniedError(
-                "La verificación por QR está deshabilitada para tu empresa. Usa el reconocimiento facial.",
                 code="QR_DISABLED",
             )
 
@@ -215,4 +209,4 @@ def ensure_device_allowed(db: Session, user: User, headers: Mapping[str, str]) -
         return
     device = classify_device(headers.get("user-agent"), headers.get("sec-ch-ua-mobile"))
     if device == "desktop":
-        raise PermissionDeniedError(TOUCH_ONLY_MESSAGE, code="TOUCH_DEVICE_REQUIRED", details={"device": device})
+        raise PermissionDeniedError(code="TOUCH_DEVICE_REQUIRED", details={"device": device})

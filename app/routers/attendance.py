@@ -19,8 +19,10 @@ from app.dependencies import (
     CompanyScope,
     CompanyUser,
     DbSession,
+    EmployeeClient,
     EmployeeUser,
     Liveness,
+    LocationSamples,
     Pagination,
     Pipeline,
     read_image_uploads,
@@ -28,11 +30,13 @@ from app.dependencies import (
     require_screen,
     verification_rate_limit,
 )
-from app.models import AttendanceAction, Screen, VerificationLog, WorkSessionStatus
+from app.models import AttendanceAction, Screen, WorkSessionStatus
 from app.schemas.attendance import (
     AttendanceActionResult,
     AttendanceBoard,
     AttendanceHistory,
+    AttendanceReviewCount,
+    AttendanceReviewDecision,
     AttendanceToday,
     CompanySessionDetail,
     CompanySessionList,
@@ -42,10 +46,9 @@ from app.schemas.attendance import (
 from app.schemas.auth import DeviceLocation
 from app.schemas.common import ErrorResponse
 from app.schemas.shift import ShiftList, ShiftRequestCreate, ShiftRequestList, ShiftRequestRead
-from app.schemas.verification import VerificationResult
 from app.services.attendance_manual import ManualAttendance
-from app.services.attendance_overview import AttendanceOverview
-from app.services.attendance_service import AttendanceService
+from app.services.attendance_overview import AttendanceOverview, AttendanceReview
+from app.services.attendance_service import AttendanceService, Verified
 from app.services.employee_access import approved_employee
 from app.services.shift_request_service import ShiftRequestService
 from app.services.shift_service import ShiftService
@@ -92,7 +95,7 @@ def board(
     search: Annotated[str | None, Query(max_length=100)] = None,
 ) -> ApiResponse[AttendanceBoard]:
     result = AttendanceOverview(db, company_id).board(work_date, search=search, page=page)
-    return ok(result, f"{result.total} empleado(s) con turno", code="ATTENDANCE_BOARD")
+    return ok(result, code="ATTENDANCE_BOARD", params={"count": result.total})
 
 
 @company_router.get(
@@ -107,11 +110,41 @@ def sessions(
     start: date | None = None,
     end: date | None = None,
     session_status: Annotated[WorkSessionStatus | None, Query(alias="status")] = None,
+    in_review: Annotated[bool, Query(description="Solo las jornadas en revisión (riesgo alto)")] = False,
 ) -> ApiResponse[CompanySessionList]:
     result = AttendanceOverview(db, company_id).history(
-        employee_id=employee_id, start=start, end=end, status=session_status, page=page
+        employee_id=employee_id, start=start, end=end, status=session_status, page=page, in_review=in_review
     )
-    return ok(result, f"{result.total} jornada(s)", code="WORK_SESSIONS")
+    return ok(result, code="WORK_SESSIONS", params={"count": result.total})
+
+
+@company_router.get(
+    "/reviews/count",
+    response_model=ApiResponse[AttendanceReviewCount],
+    summary="Registros en revisión por decidir (contador del menú)",
+)
+def pending_reviews(_: CompanyUser, company_id: CompanyScope, db: DbSession) -> ApiResponse[AttendanceReviewCount]:
+    return ok(AttendanceReviewCount(pending=AttendanceReview(db, company_id).pending()), code="ATTENDANCE_REVIEWS")
+
+
+@company_router.post(
+    "/sessions/{session_id}/review",
+    response_model=ApiResponse[CompanySessionDetail],
+    summary="Confirmar o rechazar una jornada en revisión",
+    description=(
+        'El motor de riesgo dejó el registro guardado pero "en revisión" (la persona no se quedó sin checar). '
+        "La empresa lo confirma o lo rechaza (con nota obligatoria, que ve el empleado); rechazar no lo borra: "
+        "queda marcado y se corrige con el registro manual si hace falta. 409 `ATTENDANCE_REVIEW_NOT_PENDING` si "
+        "ya se decidió."
+    ),
+    responses={404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}, 422: {"model": ErrorResponse}},
+)
+def review_session(
+    session_id: int, body: AttendanceReviewDecision, user: CompanyUser, company_id: CompanyScope, db: DbSession
+) -> ApiResponse[CompanySessionDetail]:
+    result = AttendanceReview(db, company_id).decide(session_id, body, user)
+    key = "ATTENDANCE_REVIEW_CONFIRMED" if body.decision == "CONFIRMED" else "ATTENDANCE_REVIEW_REJECTED"
+    return ok(result, code="ATTENDANCE_REVIEWED", key=key)
 
 
 @company_router.get(
@@ -123,7 +156,7 @@ def sessions(
 def session_detail(
     session_id: int, _: CompanyUser, company_id: CompanyScope, db: DbSession
 ) -> ApiResponse[CompanySessionDetail]:
-    return ok(AttendanceOverview(db, company_id).detail(session_id), "Jornada", code="WORK_SESSION")
+    return ok(AttendanceOverview(db, company_id).detail(session_id), code="WORK_SESSION")
 
 
 @company_router.post(
@@ -143,7 +176,7 @@ def create_session(
     body: ManualSessionCreate, user: CompanyUser, company_id: CompanyScope, db: DbSession
 ) -> ApiResponse[CompanySessionDetail]:
     result = ManualAttendance(db, company_id).create(body, user)
-    return ok(result, "Asistencia registrada", code="ATTENDANCE_SESSION_CREATED", status_code=201)
+    return ok(result, code="ATTENDANCE_SESSION_CREATED", status_code=201)
 
 
 @company_router.put(
@@ -157,7 +190,7 @@ def correct_session(
     session_id: int, body: ManualSessionUpdate, user: CompanyUser, company_id: CompanyScope, db: DbSession
 ) -> ApiResponse[CompanySessionDetail]:
     result = ManualAttendance(db, company_id).correct(session_id, body, user)
-    return ok(result, "Asistencia corregida", code="ATTENDANCE_SESSION_CORRECTED")
+    return ok(result, code="ATTENDANCE_SESSION_CORRECTED")
 
 
 # ---------------------------------------------------------------- empleado
@@ -181,11 +214,23 @@ def today(user: EmployeeUser, db: DbSession) -> ApiResponse[AttendanceToday]:
     description=(
         "Multipart: `images` (capturas frontales), `challenge_id` + `challenge_image` + `flash_image` "
         "(prueba de vida), "
-        "`latitude`, `longitude` y `accuracy` (la del navegador). La hora es la del servidor. Sin un rostro "
-        "verificado no se registra nada (200 con `verified: false`)."
+        "`latitude`, `longitude` y `accuracy` (la del navegador), `location_samples` (las lecturas de la toma, JSON; "
+        "más de `LOCATION_MAX_SAMPLES` o mal formadas: 422 `LOCATION_SAMPLES_INVALID`), `telemetry` y la prueba del "
+        "dispositivo (`device_key`, `device_nonce`, `device_signature`). En un sitio con código (antifraude 2b), la "
+        "entrada y la salida llevan `site_code` (6 dígitos o el texto del QR del kiosco). La hora es la del servidor. "
+        "Sin un rostro verificado no se registra nada (200 con `verified: false`)."
     ),
     dependencies=[Depends(verification_rate_limit)],
-    responses={409: {"model": ErrorResponse}, 413: {"model": ErrorResponse}, 422: {"model": ErrorResponse}},
+    responses={
+        403: {
+            "model": ErrorResponse,
+            "description": "Con el código de sitio obligatorio: `SITE_CODE_REQUIRED` o "
+            "`SITE_CODE_INVALID` (y los de la ubicación)",
+        },
+        409: {"model": ErrorResponse, "description": "`SITE_CODE_USED` (y los de la jornada)"},
+        413: {"model": ErrorResponse},
+        422: {"model": ErrorResponse},
+    },
 )
 def record(
     request: Request,
@@ -198,19 +243,27 @@ def record(
     longitude: Annotated[float, Form(ge=-180, le=180)],
     accuracy: Annotated[float, Form(ge=0, le=100_000, description="Precisión (m) que informa el navegador")],
     liveness: Liveness,
+    client: EmployeeClient,
+    samples: LocationSamples,
     camera_label: CameraLabel = None,
+    site_code: Annotated[
+        str | None, Form(max_length=64, description="Código del kiosco del sitio: 6 dígitos o el texto de su QR")
+    ] = None,
 ) -> ApiResponse[AttendanceActionResult]:
     employee = approved_employee(user)
     frontal = read_image_uploads(images, max_files=3)
     ip, user_agent = request_meta(request)
     verifier = VerificationService(db, ip=ip, user_agent=user_agent)
 
-    def verify() -> tuple[VerificationResult, VerificationLog | None]:
-        result = verifier.verify_face(user, frontal, pipeline, liveness=liveness, camera_label=camera_label)
-        return result, verifier.last_log
+    def verify() -> Verified:
+        result = verifier.verify_face(
+            user, frontal, pipeline, liveness=liveness, camera_label=camera_label, client=client
+        )
+        return Verified(result, verifier.last_log, verifier.last_review, verifier.last_network)
 
     location = DeviceLocation(latitude=latitude, longitude=longitude, accuracy=accuracy)
-    result = AttendanceService(db, employee.company_id).act(employee, user, ACTIONS[action], location, verify)
+    service = AttendanceService(db, employee.company_id)
+    result = service.act(employee, user, ACTIONS[action], location, verify, samples, site_code)
     code = "ATTENDANCE_RECORDED" if result.verified else "IDENTITY_NOT_VERIFIED"
     return ok(result, result.message, code=code)
 
@@ -221,7 +274,7 @@ def record(
 def history(user: EmployeeUser, db: DbSession, page: Pagination) -> ApiResponse[AttendanceHistory]:
     employee = approved_employee(user)
     result = AttendanceOverview(db, employee.company_id).mine(employee, page)
-    return ok(result, f"{result.total} jornada(s)", code="MY_WORK_SESSIONS")
+    return ok(result, code="MY_WORK_SESSIONS", params={"count": result.total})
 
 
 @employee_router.get(
@@ -230,7 +283,7 @@ def history(user: EmployeeUser, db: DbSession, page: Pagination) -> ApiResponse[
 def available_shifts(user: EmployeeUser, db: DbSession, page: Pagination) -> ApiResponse[ShiftList]:
     employee = approved_employee(user)
     result = ShiftService(db, employee.company_id).search(search=None, active=True, page=page)
-    return ok(result, f"{result.total} turno(s)", code="SHIFTS")
+    return ok(result, code="SHIFTS", params={"count": result.total})
 
 
 @employee_router.get(
@@ -239,7 +292,7 @@ def available_shifts(user: EmployeeUser, db: DbSession, page: Pagination) -> Api
 def my_requests(user: EmployeeUser, db: DbSession, page: Pagination) -> ApiResponse[ShiftRequestList]:
     employee = approved_employee(user)
     result = ShiftRequestService(db, employee.company_id).mine(employee, page)
-    return ok(result, f"{result.total} solicitud(es)", code="SHIFT_REQUESTS")
+    return ok(result, code="SHIFT_REQUESTS", params={"count": result.total})
 
 
 @employee_router.post(
@@ -252,7 +305,7 @@ def my_requests(user: EmployeeUser, db: DbSession, page: Pagination) -> ApiRespo
 def request_change(body: ShiftRequestCreate, user: EmployeeUser, db: DbSession) -> ApiResponse[ShiftRequestRead]:
     employee = approved_employee(user)
     result = ShiftRequestService(db, employee.company_id).create(employee, body)
-    return ok(result, "Solicitud enviada a tu empresa", code="SHIFT_REQUEST_CREATED", status_code=201)
+    return ok(result, code="SHIFT_REQUEST_CREATED", status_code=201)
 
 
 @employee_router.post(
@@ -264,4 +317,4 @@ def request_change(body: ShiftRequestCreate, user: EmployeeUser, db: DbSession) 
 def cancel_request(request_id: int, user: EmployeeUser, db: DbSession) -> ApiResponse[ShiftRequestRead]:
     employee = approved_employee(user)
     result = ShiftRequestService(db, employee.company_id).cancel(employee, request_id)
-    return ok(result, "Solicitud cancelada", code="SHIFT_REQUEST_CANCELLED")
+    return ok(result, code="SHIFT_REQUEST_CANCELLED")

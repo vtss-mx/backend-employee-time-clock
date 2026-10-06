@@ -10,8 +10,14 @@
 #                                        psql: docker exec -it timeclock-perf-db psql -U perf volume
 #   docker rm -f timeclock-perf-db    → la borra (sus datos viven en memoria del contenedor)
 #
-# Resultado: perf/results/db-plans.txt (resumen por tiempo con banderas y el plan de cada sentencia).
+# Resultado: perf/results/db-plans.txt (resumen por tiempo con banderas y el plan de cada sentencia). Una corrida
+# con filtro escribe perf/results/db-plans-filtered.txt: nunca reemplaza la auditoría completa con unos cuantos casos.
 # Requiere la imagen dev del backend (scripts/quality.sh la construye) y Docker.
+#
+# Se mide COMO EN PRODUCCIÓN: las migraciones y la siembra con el dueño; los planes con el usuario de la API
+# (sujeto a la seguridad por fila) y cada caso con su alcance (la empresa o la plataforma, perf/db/explain.py).
+#   PERF_DB_ROLE=owner perf/db/run.sh  → los planes con el dueño (superusuario: sin seguridad por fila), para
+#                                        comparar cuánto cuesta la política.
 set -eu
 cd "$(dirname "$0")/../.."
 NAME=timeclock-perf-db
@@ -28,12 +34,13 @@ trap cleanup EXIT
 
 FRESH=0
 if ! docker ps --format '{{.Names}}' | grep -qx "$NAME"; then
-  # Sin puerto publicado ni volumen: la base solo existe dentro de esta red de Docker.
-  # fsync apagado solo acelera la siembra; no cambia los planes que se miden.
+  # Sin puerto publicado ni volumen: la base solo existe dentro de esta red de Docker. Con los MISMOS parámetros
+  # que producción (postgres/start.sh: memoria, SSD, autovacuum, jit=off...); fsync apagado solo acelera la
+  # siembra y no cambia los planes que se miden.
   docker run -d --rm --name "$NAME" --network "$NET" --shm-size=1g \
-    -e POSTGRES_USER=perf -e POSTGRES_PASSWORD=perf -e POSTGRES_DB=volume postgres:16-alpine \
-    postgres -c shared_buffers=256MB -c max_connections=150 -c maintenance_work_mem=512MB -c max_wal_size=4GB \
-    -c fsync=off -c synchronous_commit=off -c full_page_writes=off >/dev/null
+    -e POSTGRES_USER=perf -e POSTGRES_PASSWORD=perf -e POSTGRES_DB=volume \
+    -v "$PWD/postgres/start.sh:/usr/local/bin/timeclock-postgres.sh:ro" --entrypoint /usr/local/bin/timeclock-postgres.sh \
+    postgres:16-alpine -c fsync=off -c synchronous_commit=off -c full_page_writes=off >/dev/null
   until docker exec "$NAME" pg_isready -U perf -d volume >/dev/null 2>&1; do sleep 1; done
   FRESH=1
 fi
@@ -47,7 +54,12 @@ in_backend() {
     -v "$PWD:/app" "$IMAGE" "$@"
 }
 
+STARTED=$(date +%s)
 in_backend alembic upgrade head
+echo "Migraciones aplicadas en $(( $(date +%s) - STARTED )) s"
+# Roles de mínimo privilegio (los mismos que crea el servicio migrate): el usuario de la API mide los planes.
+APP_PASSWORD=perf-app
+in_backend env DB_APP_PASSWORD="$APP_PASSWORD" DB_READONLY_PASSWORD= python -m app.cli db roles
 if [ "$FRESH" = 1 ]; then
   echo "Sembrando el volumen (la primera vez tarda unos minutos)..."
   docker exec -i "$NAME" psql -q -v ON_ERROR_STOP=1 -U perf -d volume < perf/db/seed.sql >/dev/null
@@ -55,4 +67,12 @@ fi
 # Estadísticas y mapa de visibilidad al día (como en producción con autovacuum).
 docker exec "$NAME" psql -q -U perf -d volume -c "VACUUM (ANALYZE)"
 mkdir -p perf/results
-in_backend python perf/db/explain.py perf/results/db-plans.txt "${1:-}"
+PLANS=perf/results/db-plans.txt
+[ -z "${1:-}" ] || PLANS=perf/results/db-plans-filtered.txt
+if [ "${PERF_DB_ROLE:-app}" = owner ]; then
+  in_backend python perf/db/explain.py "$PLANS" "${1:-}"
+else
+  in_backend env DATABASE_URL="postgresql+psycopg://timeclock_app:$APP_PASSWORD@$NAME:5432/volume" \
+    DATABASE_DIRECT_URL="postgresql+psycopg://perf:perf@$NAME:5432/volume" DB_APP_PASSWORD="$APP_PASSWORD" \
+    python perf/db/explain.py "$PLANS" "${1:-}"
+fi

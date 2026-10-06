@@ -5,7 +5,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, Query, status
 
 from app.core.responses import ApiResponse, ok
-from app.dependencies import CompanyScope, DbSession, Pagination, require_screen
+from app.dependencies import CompanyScope, CompanyUser, DbSession, Pagination, require_screen, trash_of
 from app.models import Screen
 from app.schemas.common import ErrorResponse
 from app.schemas.department import (
@@ -34,22 +34,26 @@ LIST = [Depends(require_screen(Screen.COMPANY_DEPARTMENTS, Screen.COMPANY_SHIFTS
 NOT_FOUND: dict[int | str, dict[str, Any]] = {
     404: {"model": ErrorResponse, "description": "Departamento (o empleado) no encontrado"}
 }
+#: La papelera la ve solo la pantalla que elimina y restaura departamentos (no Turnos ni Calendario).
+DepartmentTrash = Annotated[bool, Depends(trash_of(Screen.COMPANY_DEPARTMENTS))]
 
 
 @router.get(
     "",
     response_model=ApiResponse[DepartmentList],
     summary="Departamentos de la empresa (paginado)",
+    description="`deleted=true`: la papelera («Eliminados»), con quién y cuándo eliminó cada uno.",
     dependencies=LIST,
 )
 def list_departments(
     company: CompanyScope,
     db: DbSession,
     page: Pagination,
+    deleted: DepartmentTrash,
     search: Annotated[str | None, Query(max_length=100, description="Fragmento del nombre")] = None,
 ) -> ApiResponse[DepartmentList]:
-    result = DepartmentService(db, company).list_departments(search=search, page=page)
-    return ok(result, f"{result.total} departamento(s)", code="DEPARTMENTS_LISTED")
+    result = DepartmentService(db, company).list_departments(search=search, page=page, deleted=deleted)
+    return ok(result, code="DEPARTMENTS_LISTED", params={"count": result.total})
 
 
 @router.post(
@@ -63,19 +67,19 @@ def list_departments(
 )
 def create_department(payload: DepartmentCreate, company: CompanyScope, db: DbSession) -> ApiResponse[DepartmentRead]:
     service = DepartmentService(db, company)
-    return ok(service.read(service.create(payload)), "Departamento creado", code="DEPARTMENT_CREATED", status_code=201)
+    return ok(service.read(service.create(payload)), code="DEPARTMENT_CREATED", status_code=201)
 
 
 @router.get(
     "/{department_id}",
     response_model=ApiResponse[DepartmentRead],
-    summary="Detalle",
+    summary="Detalle (también de uno en «Eliminados», con `deleted_at`)",
     responses=NOT_FOUND,
     dependencies=MANAGE,
 )
 def get_department(department_id: int, company: CompanyScope, db: DbSession) -> ApiResponse[DepartmentRead]:
     service = DepartmentService(db, company)
-    return ok(service.read(service.get(department_id)), "Departamento encontrado", code="DEPARTMENT_FOUND")
+    return ok(service.read(service.get(department_id, include_deleted=True)), code="DEPARTMENT_FOUND")
 
 
 @router.put(
@@ -89,22 +93,40 @@ def update_department(
     department_id: int, payload: DepartmentUpdate, company: CompanyScope, db: DbSession
 ) -> ApiResponse[DepartmentRead]:
     service = DepartmentService(db, company)
-    return ok(
-        service.read(service.update(department_id, payload)), "Departamento actualizado", code="DEPARTMENT_UPDATED"
-    )
+    return ok(service.read(service.update(department_id, payload)), code="DEPARTMENT_UPDATED")
 
 
 @router.delete(
     "/{department_id}",
     dependencies=MANAGE,
     response_model=ApiResponse[None],
-    summary="Eliminar un departamento sin empleados",
-    description="Sus responsables se retiran con él. Con empleados asignados responde 409 `DEPARTMENT_HAS_EMPLOYEES`.",
-    responses={**NOT_FOUND, 409: {"model": ErrorResponse, "description": "Tiene empleados asignados"}},
+    summary="Eliminar un departamento sin empleados (a «Eliminados»)",
+    description=(
+        "Borrado lógico: su nombre queda libre y se puede restaurar durante `SOFT_DELETE_RETENTION_DAYS`. Sus "
+        "responsables se retiran con él (restaurarlo no los regresa). Con empleados asignados responde 409 "
+        "`DEPARTMENT_HAS_EMPLOYEES`."
+    ),
+    responses={
+        **NOT_FOUND,
+        409: {"model": ErrorResponse, "description": "`DEPARTMENT_HAS_EMPLOYEES` o `ALREADY_DELETED`"},
+    },
 )
-def delete_department(department_id: int, company: CompanyScope, db: DbSession) -> ApiResponse[None]:
-    DepartmentService(db, company).delete(department_id)
-    return ok(None, "Departamento eliminado", code="DEPARTMENT_DELETED")
+def delete_department(department_id: int, company: CompanyScope, user: CompanyUser, db: DbSession) -> ApiResponse[None]:
+    DepartmentService(db, company).delete(department_id, user)
+    return ok(None, code="DEPARTMENT_DELETED")
+
+
+@router.post(
+    "/{department_id}/restore",
+    dependencies=MANAGE,
+    response_model=ApiResponse[DepartmentRead],
+    summary="Restaurar un departamento de «Eliminados»",
+    description="Su nombre debe seguir libre (409 `RESTORE_CONFLICT`).",
+    responses={**NOT_FOUND, 409: {"model": ErrorResponse, "description": "`NOT_DELETED` o `RESTORE_CONFLICT`"}},
+)
+def restore_department(department_id: int, company: CompanyScope, db: DbSession) -> ApiResponse[DepartmentRead]:
+    service = DepartmentService(db, company)
+    return ok(service.read(service.restore(department_id)), code="DEPARTMENT_RESTORED")
 
 
 @router.post(
@@ -120,7 +142,7 @@ def assign_employee(
 ) -> ApiResponse[DepartmentRead]:
     service = DepartmentService(db, company)
     department = service.assign(department_id, payload.employee_id)
-    return ok(service.read(department), "Empleado asignado", code="DEPARTMENT_EMPLOYEE_ASSIGNED")
+    return ok(service.read(department), code="DEPARTMENT_EMPLOYEE_ASSIGNED")
 
 
 @router.delete(
@@ -135,7 +157,7 @@ def unassign_employee(
 ) -> ApiResponse[DepartmentRead]:
     service = DepartmentService(db, company)
     department = service.unassign(department_id, employee_id)
-    return ok(service.read(department), "Empleado quitado del departamento", code="DEPARTMENT_EMPLOYEE_REMOVED")
+    return ok(service.read(department), code="DEPARTMENT_EMPLOYEE_REMOVED")
 
 
 @router.post(
@@ -150,7 +172,7 @@ def add_manager(
 ) -> ApiResponse[DepartmentRead]:
     service = DepartmentService(db, company)
     department = service.add_manager(department_id, payload.employee_id)
-    return ok(service.read(department), "Responsable agregado", code="DEPARTMENT_MANAGER_ADDED")
+    return ok(service.read(department), code="DEPARTMENT_MANAGER_ADDED")
 
 
 @router.delete(
@@ -165,4 +187,4 @@ def remove_manager(
 ) -> ApiResponse[DepartmentRead]:
     service = DepartmentService(db, company)
     department = service.remove_manager(department_id, employee_id)
-    return ok(service.read(department), "Responsable retirado", code="DEPARTMENT_MANAGER_REMOVED")
+    return ok(service.read(department), code="DEPARTMENT_MANAGER_REMOVED")

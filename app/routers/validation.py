@@ -31,11 +31,16 @@ router = APIRouter(
 def validate(
     user: CurrentUser,
     db: DbSession,
-    field: Annotated[str, Query(max_length=40, description="Campo (p. ej. email, phone, company_rfc)")],
+    field: Annotated[str, Query(max_length=40, description="Campo (p. ej. email, phone, company_tax_id)")],
     value: Annotated[str, Query(max_length=255)] = "",
     exclude_id: Annotated[int | None, Query(description="Al editar: id del registro (su valor no cuenta)")] = None,
     related: Annotated[
-        str | None, Query(max_length=255, description="Valor relacionado (el correo, al validar el teléfono)")
+        str | None,
+        Query(
+            max_length=255,
+            description="Valor relacionado: el correo, al validar el teléfono; «país:tipo» (p. ej. `US:US_EIN`), al "
+            "validar el identificador fiscal de una empresa",
+        ),
     ] = None,
 ) -> ApiResponse[dict]:
     # Cada consulta pregunta por correos/teléfonos de toda la plataforma: con límite por usuario.

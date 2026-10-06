@@ -9,6 +9,7 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
+    UniqueConstraint,
     false,
     text,
 )
@@ -17,7 +18,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.core.database import Base
 from app.core.db_schemas import AUTH, CATALOG, TENANCY, WORKFORCE
 from app.models.enums import ValidatorMode
-from app.models.mixins import AddressMixin, TimestampMixin
+from app.models.mixins import AddressMixin, SoftDeleteMixin, TimestampMixin, trash_index
 
 #: Radio permitido para iniciar sesión (m): de una sala a un predio grande.
 LOCATION_RADIUS_MIN_M = 10
@@ -28,7 +29,7 @@ if TYPE_CHECKING:
     from app.models.user import User
 
 
-class Validator(AddressMixin, TimestampMixin, Base):
+class Validator(SoftDeleteMixin, AddressMixin, TimestampMixin, Base):
     """Validador de identidad de una empresa (p. ej. "Recepción planta 1").
 
     Su cuenta (auth.users, rol VALIDATOR) inicia sesión en una tableta o un teléfono e identifica
@@ -36,6 +37,9 @@ class Validator(AddressMixin, TimestampMixin, Base):
 
     Tiene el domicilio del acceso donde opera y su punto en el mapa. Si `location_required`, solo
     puede iniciar sesión a no más de `location_radius_m` metros de ese punto.
+
+    Con borrado lógico (migración 0068), junto con su cuenta: deja de contar contra el límite y en el cobro, su correo
+    queda libre y su historial de identificaciones se conserva; su foto de perfil se borra de verdad.
     """
 
     __tablename__ = "validators"
@@ -58,6 +62,8 @@ class Validator(AddressMixin, TimestampMixin, Base):
             "NOT location_required OR (latitude IS NOT NULL AND location_radius_m IS NOT NULL)",
             name="location_point",
         ),
+        # Destino de la FK compuesta de sus dispositivos: el validador y su empresa van juntos.
+        UniqueConstraint("id", "company_id", name="uq_validators_id_company"),
         # La cuenta del validador es de la MISMA empresa que el validador (lo garantiza la base).
         ForeignKeyConstraint(
             ["user_id", "company_id"],
@@ -65,6 +71,8 @@ class Validator(AddressMixin, TimestampMixin, Base):
             name="fk_validators_user_company",
             ondelete="CASCADE",
         ),
+        # Papelera de la empresa (el más reciente primero) y depuración de los eliminados.
+        trash_index("validators", "company_id", "deleted_at", "id"),
         {"schema": WORKFORCE},
     )
 

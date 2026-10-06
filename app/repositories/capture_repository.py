@@ -4,6 +4,7 @@ from datetime import datetime
 from sqlalchemy.dialects import postgresql, sqlite
 from sqlalchemy.orm import Session
 
+from app.core.row_security import crossing_tenants
 from app.models import CaptureFingerprint
 
 
@@ -30,5 +31,9 @@ class CaptureFingerprintRepository:
             set_={"company_id": stmt.excluded.company_id, "created_at": stmt.excluded.created_at},
             where=CaptureFingerprint.created_at < since,
         ).returning(CaptureFingerprint.digest)
-        claimed = self.db.scalars(stmt).all()
+        # Un reenvío se detecta en TODA la plataforma (una captura robada en una empresa no sirve en otra) y una
+        # huella vencida de otra empresa se renueva para esta: la única escritura que cruza empresas a propósito
+        # en una captura facial (solo huellas SHA-256: nunca datos de la otra empresa).
+        with crossing_tenants(self.db):
+            claimed = self.db.scalars(stmt).all()
         return len(claimed) == len(unique)

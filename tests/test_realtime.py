@@ -1,9 +1,13 @@
 """Canal WebSocket de validación en tiempo real: campos de cada rol según sus pantallas."""
 
 import pytest
+from sqlalchemy import delete
 from starlette.websockets import WebSocketDisconnect
 
 from app.core.config import settings
+from app.core.database import SessionLocal
+from app.models import RoleScreen, UserRole
+from app.services.catalog_service import clear_catalog_cache
 from tests.conftest import COMPANY_EMAIL, COMPANY_PASSWORD, DESKTOP_UA, create_employee, login
 from tests.test_validators import validator_headers
 
@@ -77,8 +81,20 @@ def test_realtime_requires_company_auth(client, company_headers):
         socket.send_json({"type": "auth", "token": "basura"})
         assert socket.receive_json()["code"] == "TOKEN_INVALID"
 
+    # El empleado no valida formularios, pero captura su rostro: entra para el destello dictado (antifraude 2a).
     create_employee(client, company_headers)
     employee_token = token(client, "juan@empresa.com", "Empleado123")
+    ws, socket = connect(client, employee_token)
+    try:
+        socket.send_json({"type": "validate", "field": "email", "value": "x"})
+        assert socket.receive_json()["code"] == "FIELD_NOT_ALLOWED"
+    finally:
+        ws.__exit__(None, None, None)
+    # Sin campos que validar ni rostros que capturar (su rol perdió esas pantallas), el canal no tiene nada para él.
+    with SessionLocal() as db:
+        db.execute(delete(RoleScreen).where(RoleScreen.role_code == UserRole.EMPLOYEE))
+        db.commit()
+    clear_catalog_cache()
     with client.websocket_connect(URL) as socket:
         socket.send_json({"type": "auth", "token": employee_token})
         assert socket.receive_json()["statusCode"] == 403
@@ -170,3 +186,29 @@ def test_each_role_validates_only_the_fields_of_its_screens(client, company_head
         assert validate(socket, "PNO120315AB1", field="company_rfc")["code"] == "FIELD_NOT_ALLOWED"
     finally:
         ws.__exit__(None, None, None)
+
+
+@pytest.mark.parametrize(
+    ("url", "headers", "ready", "invalid"),
+    [
+        (f"{URL}?lang=en-US", {}, "Validation channel ready", "Invalid channel message"),
+        # Sin `?lang=` (o con uno que la API no habla), la cabecera; sin ninguna, es-MX.
+        (f"{URL}?lang=fr", {"Accept-Language": "en-US,en;q=0.9"}, "Validation channel ready", None),
+        (URL, {}, "Canal de validación listo", "Mensaje del canal inválido"),
+        (f"{URL}?lang=es-MX", {"Accept-Language": "en-US"}, "Canal de validación listo", None),  # `?lang=` gana
+    ],
+)
+def test_the_channel_speaks_the_language_of_its_url(client, company_headers, url, headers, ready, invalid):
+    """La aplicación web manda el idioma en `?lang=` (un navegador no deja poner cabeceras a un WebSocket); cada
+    mensaje del canal sale en ese idioma, también los de las validaciones."""
+    with client.websocket_connect(url, headers=headers) as socket:
+        socket.send_json({"type": "auth", "token": token(client)})
+        assert socket.receive_json()["message"] == ready
+        if invalid:
+            socket.send_json({"type": "validate", "id": "req-lang-01", "field": 5})
+            assert socket.receive_json()["message"] == invalid
+            empty = validate(socket, "   ", msg_id="req-lang-02")
+            assert empty["code"] == "EMPTY" and empty["message"] in {
+                "El número de empleado es obligatorio",
+                "Employee number is required",
+            }

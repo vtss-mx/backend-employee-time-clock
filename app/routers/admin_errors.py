@@ -46,28 +46,30 @@ def list_errors(
     search: Annotated[str | None, Query(max_length=100, description="Código, mensaje, ruta o excepción")] = None,
 ) -> ApiResponse[ErrorReportList]:
     result = ErrorReportService(db).list_reports(status=status, severity=severity, search=search, page=page)
-    return ok(result, f"{result.total} error(es)", code="ERROR_REPORTS_LISTED")
+    return ok(result, code="ERROR_REPORTS_LISTED", params={"count": result.total})
 
 
 @router.get(
     "/summary", response_model=ApiResponse[ErrorSummary], summary="Conteos por estado y gravedad (menú y filtros)"
 )
 def errors_summary(_: AdminUser, db: DbSession) -> ApiResponse[ErrorSummary]:
-    return ok(ErrorReportService(db).summary(), "Resumen de errores", code="ERROR_SUMMARY")
+    return ok(ErrorReportService(db).summary(), code="ERROR_SUMMARY")
 
 
 @router.get(
     "/server",
     response_model=ApiResponse[ServerStatus],
-    summary="Estado del servidor: dependencias y capacidad adaptativa",
+    summary="Estado del servidor: dependencias, capacidad adaptativa y almacenamiento de imágenes",
     description=(
         "Detalle que las sondas públicas no muestran: el error de cada componente (BD, motor facial y "
-        "su fila) y el control de admisión de este proceso (límite vigente, fila, descartes y las APIs "
-        "con más demanda)."
+        "su fila), el control de admisión de este proceso (límite vigente, fila, descartes y las APIs "
+        "con más demanda) y la copia cifrada de imágenes al bucket (configurado o no, pendientes, "
+        "copiadas y último error de cada tarea)."
     ),
 )
-def server_status(_: AdminUser) -> ApiResponse[ServerStatus]:
-    return ok(ServerStatus.model_validate(health_service.server_status()), "Estado del servidor", code="SERVER_STATUS")
+def server_status(_: AdminUser, db: DbSession) -> ApiResponse[ServerStatus]:
+    status = ServerStatus.model_validate(health_service.server_status(db))
+    return ok(status, code="SERVER_STATUS")
 
 
 @router.post(
@@ -82,7 +84,7 @@ def server_status(_: AdminUser) -> ApiResponse[ServerStatus]:
 )
 def resolve_errors(payload: ErrorBulkResolve, admin: AdminUser, db: DbSession) -> ApiResponse[ErrorBulkResult]:
     resolved = ErrorReportService(db).resolve_matching(payload, admin)
-    return ok(ErrorBulkResult(resolved=resolved), f"{resolved} error(es) solucionado(s)", code="ERRORS_RESOLVED")
+    return ok(ErrorBulkResult(resolved=resolved), code="ERRORS_RESOLVED", params={"count": resolved})
 
 
 @router.get(
@@ -92,7 +94,7 @@ def resolve_errors(payload: ErrorBulkResolve, admin: AdminUser, db: DbSession) -
     responses=NOT_FOUND,
 )
 def get_error(report_id: int, _: AdminUser, db: DbSession) -> ApiResponse[ErrorReportDetail]:
-    return ok(ErrorReportService(db).detail(report_id), "Error encontrado", code="ERROR_REPORT_FOUND")
+    return ok(ErrorReportService(db).detail(report_id), code="ERROR_REPORT_FOUND")
 
 
 @router.get(
@@ -105,7 +107,7 @@ def error_occurrences(
     report_id: int, _: AdminUser, db: DbSession, page: Pagination
 ) -> ApiResponse[ErrorOccurrenceList]:
     result = ErrorReportService(db).occurrences(report_id, page)
-    return ok(result, f"{result.total} ocurrencia(s)", code="ERROR_OCCURRENCES_LISTED")
+    return ok(result, code="ERROR_OCCURRENCES_LISTED", params={"count": result.total})
 
 
 @router.patch(
@@ -118,4 +120,4 @@ def set_error_status(
     report_id: int, payload: ErrorStatusUpdate, admin: AdminUser, db: DbSession
 ) -> ApiResponse[ErrorReportDetail]:
     result = ErrorReportService(db).set_status(report_id, payload.status, admin)
-    return ok(result, "Seguimiento actualizado", code="ERROR_STATUS_UPDATED")
+    return ok(result, code="ERROR_STATUS_UPDATED")

@@ -34,6 +34,64 @@ def test_postgres_engine_bounds_every_wait_and_hides_personal_data():
         engine.dispose()
 
 
+def test_behind_pgbouncer_the_engine_sends_no_session_parameters():
+    """PgBouncer en modo transacción rechaza parámetros de sesión al conectar ("unsupported startup parameter")
+    y una sentencia preparada no sobrevive al cambio de conexión: ninguna de las dos cosas. El tiempo límite lo
+    pone PgBouncer (connect_query) y se verifica al arrancar (`statement_timeout_missing`)."""
+    engine = database.build_engine("postgresql+psycopg://tc:secreto@pgbouncer.invalid:6432/timeclock", pooled=True)
+    connect: dict = {}
+
+    @event.listens_for(engine, "do_connect")
+    def _capture(_dialect, _record, _args, params):
+        connect.update(params)
+        raise ConnectionAbortedError
+
+    try:
+        with pytest.raises(ConnectionAbortedError):
+            engine.connect()
+        assert "options" not in connect
+        assert connect["prepare_threshold"] is None
+        assert connect["connect_timeout"] == settings.DB_CONNECT_TIMEOUT_SECONDS
+        assert engine.pool.size() == settings.DB_POOL_SIZE  # el pool del proceso sigue acotado
+    finally:
+        engine.dispose()
+    assert database.session_options(pooled=True) == {}
+
+
+class _ShowEngine:
+    """Motor de PostgreSQL simulado que responde `SHOW statement_timeout` con `value`."""
+
+    dialect = type("Dialect", (), {"name": "postgresql"})()
+
+    def __init__(self, value: str) -> None:
+        self.value = value
+
+    def connect(self):
+        return self
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc) -> None:
+        return None
+
+    def execute(self, statement):
+        assert str(statement) == "SHOW statement_timeout"
+        return type("Result", (), {"scalar_one": lambda _self: self.value})()
+
+
+@pytest.mark.parametrize(("value", "missing"), [("0", True), ("15s", False), ("15000ms", False)])
+def test_startup_detects_queries_without_a_time_limit(monkeypatch, value, missing):
+    """Un PgBouncer sin connect_query dejaría cada consulta sin límite en silencio: se detecta al arrancar."""
+    monkeypatch.setattr(database, "engine", _ShowEngine(value))
+    assert database.statement_timeout_missing() is missing
+
+
+def test_the_test_database_never_reports_a_missing_time_limit():
+    """SQLite no tiene statement_timeout que revisar; en PostgreSQL (TEST_DATABASE_URL) lo manda el motor."""
+    assert database.statement_timeout_missing() is False
+
+
 def test_sqlite_engine_enforces_foreign_keys_on_every_connection():
     """Las pruebas en SQLite respetan ON DELETE CASCADE y las restricciones como PostgreSQL."""
     engine = database.build_engine("sqlite://")

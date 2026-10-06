@@ -8,6 +8,10 @@ Diseño:
   FIFO acotada (`max_waiting`). Si la cola está llena se responde de inmediato
   (backpressure / fail-fast) en lugar de acumular peticiones y degradar todo el servicio.
 - Una solicitud que espera más de `wait_timeout` segundos se rechaza con un error reintentable.
+- Un worker de REPUESTO (`try_acquire`): la petición que ya tiene el suyo puede tomar otro que esté libre en ese
+  instante para una parte de su análisis que corre en paralelo (la ráfaga, en otro núcleo). Nunca espera ni se
+  adelanta a la fila: si alguien espera turno o no hay uno libre, la petición lo hace con el suyo, como siempre
+  (bajo carga todo es secuencial y nadie espera de más).
 """
 
 import logging
@@ -16,6 +20,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 
+from app.core.observability import observed
 from app.core.system import available_cpus  # noqa: F401  (reexportado)
 
 logger = logging.getLogger(__name__)
@@ -56,8 +61,9 @@ class WorkerPool[T]:
 
     @contextmanager
     def lease(self) -> Iterator[T]:
-        """Obtiene un worker en orden de llegada (FIFO) y lo devuelve al terminar."""
-        with self._cond:
+        """Obtiene un worker en orden de llegada (FIFO) y lo devuelve al terminar. La espera se mide
+        (`face.queue_wait`: una cola llena o un tiempo agotado cuentan como falla)."""
+        with observed("face.queue_wait"), self._cond:
             if not self._idle and self._waiting >= self.max_waiting:
                 self._rejected += 1
                 raise QueueFullError("Cola de reconocimiento facial llena")
@@ -81,10 +87,22 @@ class WorkerPool[T]:
         try:
             yield resource
         finally:
-            with self._cond:
-                self._idle.append(resource)
-                self._processed += 1
-                self._cond.notify_all()
+            self.release(resource)
+
+    def try_acquire(self) -> T | None:
+        """Un worker libre AHORA para trabajo en paralelo de una petición que ya tiene el suyo, o None. Solo si nadie
+        espera turno: un repuesto nunca se adelanta a la fila ni la hace esperar más (se devuelve con `release`)."""
+        with self._cond:
+            if not self._idle or self._waiting:
+                return None
+            return self._idle.pop()
+
+    def release(self, resource: T) -> None:
+        """Devuelve un worker (de `lease` o de `try_acquire`) y despierta al siguiente de la fila."""
+        with self._cond:
+            self._idle.append(resource)
+            self._processed += 1
+            self._cond.notify_all()
 
     def _skip_ticket(self, ticket: int) -> None:
         # Un ticket que expira se descarta para no detener la fila.

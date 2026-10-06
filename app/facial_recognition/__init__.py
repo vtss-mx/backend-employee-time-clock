@@ -2,12 +2,22 @@
 
 Punto de entrada: `lease_pipeline()` reserva uno de los N workers (1 por núcleo) del pool.
 Los modelos se cargan una sola vez y se reutilizan durante toda la vida del proceso.
+
+`run_on_spare(tarea)` corre una parte del análisis de una petición en OTRO worker que esté libre en ese instante (otro
+núcleo), en paralelo a lo que la petición sigue haciendo con el suyo: hoy, la ráfaga del protocolo de captura
+(`capture_protocol.BurstMeasure`). Sin un worker libre devuelve None y la petición lo hace con el suyo, como antes.
+
+`map_on_spares(worker, n, tarea)` reparte n análisis iguales (las fotos del registro facial, `enrollment_selection`)
+entre el worker de la petición y los de repuesto que `run_on_spare` entregue en ese instante.
 """
 
+import contextvars
 import logging
+import queue
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
+from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import asdict
 
@@ -37,6 +47,7 @@ def build_thresholds() -> QualityThresholds:
         mask_threshold=settings.FACE_MASK_THRESHOLD,
         mask_max_skin_ratio=settings.FACE_MASK_MAX_SKIN_RATIO,
         mask_strict_threshold=settings.FACE_MASK_STRICT_THRESHOLD,
+        noise_min_background=settings.FACE_NOISE_MIN_BACKGROUND,
     )
 
 
@@ -57,6 +68,20 @@ class _PipelineHolder:
         self._lock = threading.Lock()
         self._last_failure = 0.0
         self._last_error: str | None = None
+        self._spare_lock = threading.Lock()
+        self._spare_threads: ThreadPoolExecutor | None = None
+
+    def loaded(self) -> WorkerPool[FacePipeline] | None:
+        """El pool si ya está cargado (sin cargarlo: un repuesto nunca dispara la carga de los modelos)."""
+        return self._pool
+
+    def spare_threads(self, size: int) -> ThreadPoolExecutor:
+        """Hilos del trabajo en paralelo, uno por worker: cada tarea lleva su worker de repuesto, así que nunca hacen
+        fila (se crean la primera vez que hacen falta)."""
+        with self._spare_lock:
+            if self._spare_threads is None:
+                self._spare_threads = ThreadPoolExecutor(max_workers=size, thread_name_prefix="face-spare")
+            return self._spare_threads
 
     def pool(self) -> WorkerPool[FacePipeline]:
         if self._pool is not None:
@@ -150,6 +175,90 @@ def lease_pipeline() -> Iterator[FacePipeline]:
         yield pipeline
 
 
+def run_on_spare[R](task: Callable[[FacePipeline], R]) -> Future[R] | None:
+    """Corre `task` con un worker LIBRE en este instante, en otro hilo y en paralelo a la petición que lo pide (que
+    sigue con el suyo). None si no hay uno libre, si alguien espera turno o si el motor aún no carga: la petición lo
+    hace con su worker, como antes. Cota: un repuesto por tarea y los hilos del tamaño del pool (nunca hacen fila).
+
+    La tarea recibe una copia del contexto de la petición (idioma, traceId y medición del rendimiento) y no debe tocar
+    la base: es CPU, sin transacción abierta. El worker se devuelve al terminar, aunque nadie espere el resultado."""
+    pool = _holder.loaded()
+    pipeline = pool.try_acquire() if pool is not None else None
+    if pool is None or pipeline is None:
+        return None
+    spare_pool, spare = pool, pipeline
+    context = contextvars.copy_context()
+
+    def run() -> R:
+        try:
+            return context.run(task, spare)
+        finally:
+            spare_pool.release(spare)
+
+    try:
+        return _holder.spare_threads(spare_pool.size).submit(run)
+    except RuntimeError:  # el proceso se está apagando (no acepta hilos nuevos): la petición lo hace con el suyo
+        spare_pool.release(spare)
+        return None
+
+
+def map_on_spares[R](
+    pipeline: FacePipeline, count: int, task: Callable[[FacePipeline, int], R], *, wait: float
+) -> list[R]:
+    """`task(worker, i)` para cada i de 0 a count-1, en orden de i, repartido entre el worker de la petición
+    (`pipeline`) y los de repuesto LIBRES en este instante (`run_on_spare`: nunca espera ni se adelanta a la fila, y
+    como mucho pide count-1, los que hacen falta). Todos toman de UNA fila de índices compartida: el que termina antes
+    toma el siguiente, así que un núcleo lento no retrasa a los demás.
+
+    El worker de la petición también trabaja; al vaciarse la fila recoge a los repuestos con tope `wait` (s) y lo que
+    un repuesto no terminó (tiempo agotado o una falla, que queda registrada) lo hace él: el resultado NUNCA depende de
+    los repuestos (sin ninguno libre, todo es secuencial como antes). Una excepción del worker de la petición sigue su
+    camino y vacía la fila para que los repuestos paren pronto. Las tareas reciben la copia del contexto de la petición
+    (`run_on_spare`) y no deben tocar la base ni el estado del intento (`face_signals`): solo CPU."""
+    indices: queue.SimpleQueue[int] = queue.SimpleQueue()
+    for index in range(count):
+        indices.put(index)
+    results: dict[int, R] = {}
+    lock = threading.Lock()
+
+    def drain(worker: FacePipeline) -> None:
+        while True:
+            try:
+                index = indices.get_nowait()
+            except queue.Empty:
+                return
+            value = task(worker, index)
+            with lock:
+                results[index] = value
+
+    spares: list[Future[None]] = []
+    while len(spares) < count - 1 and (future := run_on_spare(drain)) is not None:
+        spares.append(future)
+    try:
+        drain(pipeline)
+    except BaseException:
+        _empty(indices)
+        raise
+    deadline = time.monotonic() + wait
+    for future in spares:
+        try:
+            future.result(timeout=max(0.0, deadline - time.monotonic()))
+        except Exception:
+            logger.exception("Un worker de repuesto no terminó su parte: la petición la hace con su worker")
+    with lock:
+        done = dict(results)
+    return [done[index] if index in done else task(pipeline, index) for index in range(count)]
+
+
+def _empty(indices: queue.SimpleQueue[int]) -> None:
+    """Vacía la fila de índices (los repuestos la encuentran vacía y terminan)."""
+    while True:
+        try:
+            indices.get_nowait()
+        except queue.Empty:
+            return
+
+
 def face_engine_status() -> dict:
     return _holder.status()
 
@@ -168,4 +277,6 @@ __all__ = [
     "face_engine_status",
     "face_pool",
     "lease_pipeline",
+    "map_on_spares",
+    "run_on_spare",
 ]

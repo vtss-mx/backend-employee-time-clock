@@ -13,19 +13,41 @@ from app.models import (
     ApiScope,
     AssignmentState,
     AttendanceAction,
+    AttendanceReviewStatus,
+    BillingStatus,
     BoardState,
     CatalogCountry,
     CatalogFaceError,
     CatalogSessionRevocationReason,
     CatalogVerificationReason,
+    ChargeStatus,
+    Currency,
+    DiscountRecurrence,
+    DiscountType,
+    EmployeeDeviceMode,
     EnrollmentStatus,
     ErrorSeverity,
     ErrorStatus,
     FaceStatus,
     FlashMode,
+    FraudCaseEventKind,
+    FraudCaseStatus,
+    FraudKind,
+    PaymentStatus,
+    PolicyChangeStatus,
+    PolicyPreset,
+    PricePeriod,
+    PricingMode,
+    RiskAction,
+    RiskSignal,
+    RiskTier,
     Screen,
     SessionRevocationReason,
     ShiftRequestStatus,
+    SignalMode,
+    SlowAlertStatus,
+    StorageCategory,
+    SuspensionReason,
     UserRole,
     ValidatorMode,
     ValidatorModeMethod,
@@ -34,8 +56,9 @@ from app.models import (
     WorkSessionStatus,
 )
 from app.services.catalog_service import clear_catalog_cache, get_catalogs
-from app.services.enrollment_service import DUPLICATE_FLAG
+from app.services.enrollment_service import DUPLICATE_FLAG, POSSIBLE_DUPLICATE_FLAG
 from app.services.face_service import SECURITY_REASONS, SPOOF_FLAG
+from app.services.policy_rules import PRESETS
 from tests.conftest import COMPANY_EMAIL, COMPANY_PASSWORD, create_employee, login, submit_enrollment
 from tests.test_policy import admin_policy
 from tests.test_validators import validator_headers
@@ -48,6 +71,7 @@ REASONS = {
     "OTHER_EMPLOYEE", "EMPLOYEE_INACTIVE",
     "NO_MATCH", "LIVENESS_FAILED", "LIVENESS_MISMATCH", "FACE_NOT_REGISTERED", "EMPTY_GALLERY", "AMBIGUOUS_MATCH",
     "INCONSISTENT_MATCH", "FLASH_INCONCLUSIVE", *SECURITY_REASONS,
+    "STEP_UP_REQUIRED",
 }  # fmt: skip
 
 
@@ -61,6 +85,7 @@ def test_catalogs_require_a_session(client, company_headers):
     assert response.status_code == 200 and response.json()["code"] == "CATALOGS"
     data = response.json()["data"]
     assert [m["code"] for m in data["validator_modes"]] == ["QR_OR_FACE", "QR", "FACE", "QR_AND_FACE"]
+    assert [m["code"] for m in data["flash_modes"]] == ["OFF", "OBSERVE", "ENFORCE"]  # la política del ADMIN
     assert {m["code"]: m["methods"] for m in data["validator_modes"]}["QR_OR_FACE"] == ["FACE", "QR"]
     assert data["face_statuses"][0] == {
         **data["face_statuses"][0],
@@ -78,7 +103,25 @@ def test_catalogs_require_a_session(client, company_headers):
     assert data["accessories"][0] == {**data["accessories"][0], "code": "GLASSES", "phrase": "los lentes"}
     errors = {e["code"]: e for e in data["face_errors"]}
     assert errors["NO_FACE"]["retryable"] is True and errors["FACE_NOT_REGISTERED"]["retryable"] is False
-    assert [f["code"] for f in data["enrollment_flags"]] == ["GLASSES", "HEADWEAR", "MASK", "SPOOF", "DUPLICATE_FACE"]
+    assert [f["code"] for f in data["enrollment_flags"]] == [
+        "GLASSES",
+        "HEADWEAR",
+        "MASK",
+        "SPOOF",
+        "DUPLICATE_FACE",
+        "POSSIBLE_DUPLICATE",
+    ]
+    # Antifraude: lo que ven la empresa y el ADMIN viaja; las señales del motor (qué se mide) no.
+    assert "risk_signals" not in data
+    assert [t["code"] for t in data["risk_tiers"]] == ["LOW", "MEDIUM", "HIGH", "CRITICAL"]
+    assert [a["code"] for a in data["risk_actions"]] == ["ALLOW", "ALERT", "STEP_UP", "REVIEW", "DENY"]
+    assert data["attendance_review_statuses"][0] == {**data["attendance_review_statuses"][0], "tone": "warning"}
+    # Monedas del cobro: código ISO, símbolo y decimales (los del redondeo), en el orden del catálogo.
+    assert [(c["code"], c["symbol"], c["decimals"]) for c in data["currencies"]] == [
+        ("MXN", "$", 2),
+        ("USD", "$", 2),
+        ("EUR", "€", 2),
+    ]
 
 
 def test_code_and_catalogs_name_the_same_values():
@@ -89,6 +132,7 @@ def test_code_and_catalogs_name_the_same_values():
     assert _codes("face_statuses") == {s.value for s in FaceStatus}
     assert _codes("enrollment_statuses") == {s.value for s in EnrollmentStatus}
     assert _codes("error_statuses") == {s.value for s in ErrorStatus}
+    assert _codes("slow_alert_statuses") == {s.value for s in SlowAlertStatus}
     assert _codes("work_modes") == {m.value for m in WorkMode}
     assert _codes("attendance_actions") == {a.value for a in AttendanceAction}
     assert _codes("work_session_statuses") == {s.value for s in WorkSessionStatus}
@@ -101,10 +145,41 @@ def test_code_and_catalogs_name_the_same_values():
     assert _codes("flash_modes") == {m.value for m in FlashMode}
     assert _codes("verification_reasons") == REASONS
     assert _codes("session_revocation_reasons") == {r.value for r in SessionRevocationReason}
-    assert _codes("enrollment_flags") == {a.value for a in Accessory} | {SPOOF_FLAG, DUPLICATE_FLAG}
+    assert _codes("enrollment_flags") == {a.value for a in Accessory} | {
+        SPOOF_FLAG,
+        DUPLICATE_FLAG,
+        POSSIBLE_DUPLICATE_FLAG,
+    }
+    # Antifraude (migración 0062).
+    assert _codes("fraud_kinds") == {k.value for k in FraudKind}
+    assert _codes("signal_modes") == {m.value for m in SignalMode}
+    assert _codes("risk_signals") == {s.value for s in RiskSignal}
+    assert _codes("risk_tiers") == {t.value for t in RiskTier}
+    assert _codes("risk_actions") == {a.value for a in RiskAction}
+    assert _codes("attendance_review_statuses") == {s.value for s in AttendanceReviewStatus}
+    assert _codes("employee_device_modes") == {m.value for m in EmployeeDeviceMode}
+    assert _codes("policy_presets") == {p.value for p in PolicyPreset} == set(PRESETS)
+    assert _codes("policy_change_statuses") == {s.value for s in PolicyChangeStatus}
+    assert _codes("fraud_case_statuses") == {s.value for s in FraudCaseStatus}
+    assert _codes("fraud_case_event_kinds") == {k.value for k in FraudCaseEventKind}
+    # Cada señal dice su tipo de fraude, su modo y su motivo de negocio (de sus catálogos).
+    for signal in get_catalogs().entries["risk_signals"]:
+        assert signal["kind"] in _codes("fraud_kinds") and signal["review_reason"] in _codes("review_reasons")
     assert _codes("screens") == {s.value for s in Screen}
     assert _codes("api_scopes") == {s.value for s in ApiScope}
     assert _codes("api_key_statuses") == {s.value for s in ApiKeyStatus}
+    # Cobranza y consumo (los medios de pago solo los nombra el catálogo: la lógica no los distingue).
+    assert _codes("pricing_modes") == {m.value for m in PricingMode}
+    assert _codes("price_periods") == {p.value for p in PricePeriod}
+    assert _codes("discount_types") == {t.value for t in DiscountType}
+    assert _codes("discount_recurrences") == {r.value for r in DiscountRecurrence}
+    assert _codes("billing_statuses") == {s.value for s in BillingStatus}
+    assert _codes("suspension_reasons") == {r.value for r in SuspensionReason}
+    assert _codes("charge_statuses") == {s.value for s in ChargeStatus}
+    assert _codes("payment_statuses") == {s.value for s in PaymentStatus}
+    assert _codes("storage_categories") == {c.value for c in StorageCategory}
+    assert _codes("currencies") == {c.value for c in Currency}
+    assert {"TRANSFER", "CASH"} <= _codes("payment_methods")
     # Calendario: el empleado solo pide vacaciones o permisos; la incapacidad y lo demás lo registra la empresa.
     day_off = get_catalogs().entries["day_off_types"]
     assert {r["code"] for r in day_off} == {"VACATION", "PERMISSION", "SICK_LEAVE", "OTHER"}
@@ -159,12 +234,9 @@ def test_face_and_session_messages_come_from_the_database(client, company_header
     headers = login(client, "juan@empresa.com", "Empleado123")
     _set(CatalogFaceError, "NO_FACE", message="No te vemos: acércate a la cámara")
     _set(CatalogFaceError, "IMAGE_TOO_SMALL", message="Mínimo {min_dimension}px")
-    response = submit_enrollment(client, headers, frontal=(b"face:juan", b"noface"))
-    assert response.json() == {
-        **response.json(),
-        "code": "NO_FACE",
-        "message": "Foto 2: No te vemos: acércate a la cámara",
-    }
+    # El registro descarta las fotos sin rostro; sin suficientes útiles responde con el motivo más frecuente.
+    response = submit_enrollment(client, headers, frontal=(b"face:juan", b"noface", b"noface"))
+    assert response.json() == {**response.json(), "code": "NO_FACE", "message": "No te vemos: acércate a la cámara"}
     # Los datos del error llenan los marcadores del mensaje.
     assert get_catalogs().face_error_message("IMAGE_TOO_SMALL", {"min_dimension": 200}) == "Mínimo 200px"
 
@@ -178,7 +250,8 @@ def test_face_and_session_messages_come_from_the_database(client, company_header
 def test_confidence_and_phone_country_must_be_active_in_the_catalog(client, company_headers):
     url, admin = admin_policy(client, company_headers)
     accepted = client.put(url, json={"min_confidence": 0.95}, headers=admin)
-    assert accepted.status_code == 200 and accepted.json()["data"]["min_confidence"] == 0.95
+    # Bajar la confianza relaja la seguridad: queda por aprobar de otro ADMIN, ya con el valor del catálogo.
+    assert accepted.status_code == 200 and accepted.json()["data"]["change"]["changes"][0]["after"] == 0.95
     not_a_level = client.put(url, json={"min_confidence": 0.951}, headers=admin)
     assert not_a_level.status_code == 422 and not_a_level.json()["code"] == "INVALID_CONFIDENCE_LEVEL"
 

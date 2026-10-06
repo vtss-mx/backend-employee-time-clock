@@ -11,6 +11,7 @@ from tests.conftest import (
     approved_employee,
     create_employee,
     login,
+    second_admin,
     submit_enrollment,
 )
 from tests.test_face import _verify
@@ -31,11 +32,18 @@ def admin_policy(client, company_headers) -> tuple[str, dict[str, str]]:
 
 
 def set_policy(client, company_headers, **changes):
-    """La política la configura el ADMIN de la plataforma (como desde su consola)."""
+    """La política la configura el ADMIN de la plataforma (como desde su consola). Lo que relaja la seguridad lo
+    aprueba un segundo ADMIN (regla de dos personas); devuelve la política vigente."""
     url, admin = admin_policy(client, company_headers)
     response = client.put(url, json=changes, headers=admin)
     assert response.status_code == 200, response.text
-    return response.json()["data"]
+    data = response.json()["data"]
+    change = data["change"]
+    if change is not None and change["status"] == "PENDING":
+        approved = client.post(f"{url}/changes/{change['id']}/approve", headers=second_admin(client))
+        assert approved.status_code == 200, approved.text
+        data = approved.json()["data"]
+    return data["policy"]
 
 
 def test_policy_defaults_and_permissions(client, company_headers):
@@ -144,14 +152,15 @@ def test_migration_without_a_photo_or_with_an_engine_crash_is_not_retried_on_eve
     employee_id = client.get("/api/users/me", headers=headers).json()["data"]["employee"]["id"]
     _old_model_only(employee_id)
     with SessionLocal() as db:
-        db.query(FaceEnrollment).update({"photo_encrypted": None})
+        photo = db.query(FaceEnrollment.photo_object).scalar()
+        db.query(FaceEnrollment).update({"photo_object": None})  # sin foto de dónde migrar
         db.commit()
     assert _verify(client, headers).json()["code"] == "FACE_NOT_REGISTERED"
     assert face_service.migration_blocked(employee_id)
 
     face_service.clear_migration_blocks()
-    with SessionLocal() as db:
-        db.query(FaceEnrollment).update({"photo_encrypted": encrypt_bytes(b"face:juan")})
+    with SessionLocal() as db:  # vuelve su foto (sigue en el bucket) y el motor truena al analizarla
+        db.query(FaceEnrollment).update({"photo_object": photo})
         db.commit()
 
     def crash(*_args, **_kwargs):

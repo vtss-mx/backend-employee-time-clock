@@ -55,6 +55,8 @@ CRITICAL_PREFIXES = (
     "POST auth/refresh",
     "POST auth/company",
     "POST checkpoint/",
+    # El kiosco de un sitio: sin su código vigente, la entrada y la salida en ese sitio no se confirman (antifraude 2b).
+    "POST kiosk/code",
     "POST verification/",
     "POST face/challenge",
     "POST enrollment/face",
@@ -63,15 +65,41 @@ CRITICAL_PREFIXES = (
     "GET users/me/qr",
     "GET users/me",
 )
+#: Rutas FACIALES (regla 18 de la raíz; excepción que decidió el dueño del producto el 2026-10-06): las que esperan un
+#: worker del motor facial y analizan varias capturas (registro facial del empleado y en persona, verificación,
+#: identificación del validador, registro de asistencia y la revisión de una captura) y el reto que las empieza. Su
+#: petición lenta se cuenta desde `SLOW_REQUEST_FACE_THRESHOLD_MS` (2 500 ms) y la de las demás desde
+#: `SLOW_REQUEST_THRESHOLD_MS` (1 000 ms). Una ruta nueva que use el motor (`Pipeline`) se agrega aquí:
+#: `tests/test_slow_requests.py` falla si esta lista y las rutas que usan el motor no coinciden.
+FACE_PREFIXES = (
+    "POST face/",
+    "POST enrollment/face",
+    "POST employees/{id}/face/enroll",
+    "POST employees/{id}/face/verify",
+    "POST verification/face",
+    "POST checkpoint/identify/face",
+    "POST me/attendance/",
+)
 #: Lo que puede esperar: tableros, resúmenes, documentación y los reportes de fallas del navegador
 #: (si el servidor está saturado, se descartan primero: la app no los reintenta). El tablero de
-#: asistencia se refresca solo cada pocos segundos y la seguridad facial del ADMIN es una estadística:
-#: al saturarse ceden su lugar a checar, identificar e iniciar sesión.
+#: asistencia se refresca solo cada pocos segundos y la seguridad facial, el consumo y el resumen de la
+#: cobranza del ADMIN son estadísticas: al saturarse ceden su lugar a checar, identificar e iniciar sesión.
+#: Las fotos de perfil son adorno: al saturarse la app muestra las iniciales. La pantalla "Rendimiento" del ADMIN
+#: (sus lecturas) y los lotes de rendimiento del navegador también son estadísticas. Descargar un documento de la
+#: empresa (hasta COMPANY_DOCUMENT_MAX_MB descifrados y en base64) puede esperar a que pase la saturación; el del
+#: ADMIN comparte el grupo de `GET admin/companies/{id}` (los grupos tienen 3 segmentos) y su tráfico es mínimo.
 BACKGROUND_PREFIXES = (
+    "GET users/{id}/avatar",
+    "GET documents/{id}/file",
     "GET admin/stats",
     "GET admin/face-security",
+    "GET admin/fraud-cases",
+    "GET admin/usage",
+    "GET admin/billing/overview",
+    "GET admin/performance",
     "GET attendance/board",
     "POST client-errors",
+    "POST telemetry/",
     "GET docs",
     "GET redoc",
     "GET openapi.json",
@@ -95,12 +123,18 @@ def overflow_group(tier: Tier) -> str:
     return f"{OTHER} {tier.name}"
 
 
-def group_of(method: str, path: str, prefix: str = "/api") -> str:
-    """`GET /api/employees/12/qr` → `GET employees/{id}/qr` (a lo más 3 segmentos)."""
+def group_of(method: str, path: str, prefix: str = "/api", depth: int | None = 3) -> str:
+    """`GET /api/employees/12/qr` → `GET employees/{id}/qr` (a lo más `depth` segmentos; None = todos)."""
     if path.startswith(prefix):
         path = path[len(prefix) :]
-    parts = ["{id}" if _ID.match(part) else part for part in path.strip("/").split("/") if part][:3]
+    parts = ["{id}" if _ID.match(part) else part for part in path.strip("/").split("/") if part][:depth]
     return f"{method} {'/'.join(parts)}"
+
+
+def is_face_route(method: str, path: str) -> bool:
+    """¿Es una ruta facial (`FACE_PREFIXES`)? Con la ruta COMPLETA (ids → `{id}`): `employees/{id}/face/verify` lo es y
+    `employees/{id}/face/reset` no (pide otro registro facial, no analiza capturas)."""
+    return group_of(method, path, depth=None).startswith(FACE_PREFIXES)
 
 
 def tier_of(group: str) -> Tier:

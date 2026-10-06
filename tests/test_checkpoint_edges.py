@@ -83,7 +83,7 @@ def test_qr_holder_without_usable_face_samples_is_not_confirmed(client, company_
     ana = approved(client, company_headers, "ana", number="EMP-001")
     _old_model_only(ana["id"])
     with SessionLocal() as db:
-        db.query(FaceEnrollment).update({"photo_encrypted": None})
+        db.query(FaceEnrollment).update({"photo_object": None})  # sin foto de dónde generarlas
         db.commit()
     headers = validator_headers(client, company_headers, mode="QR_AND_FACE")
     qr = qr_content(ana["id"])

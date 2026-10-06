@@ -1,0 +1,30 @@
+ Container timeclock-scale-k6-run-7e1dcfa5c7ab Creating 
+ Container timeclock-scale-k6-run-7e1dcfa5c7ab Created 
+
+
+  █ TOTAL RESULTS 
+
+    checks_total.......: 6001    298.793549/s
+    checks_succeeded...: 100.00% 6001 out of 6001
+    checks_failed......: 0.00%   0 out of 6001
+
+    ✓ respuesta 200
+
+    HTTP
+    http_req_duration..............: avg=15.36ms p(50)=8.8ms  p(95)=32.24ms p(99)=185.79ms max=732.14ms
+      { expected_response:true }...: avg=15.36ms p(50)=8.8ms  p(95)=32.24ms p(99)=185.79ms max=732.14ms
+    http_req_failed................: 0.00%  0 out of 6002
+    http_reqs......................: 6002   298.84334/s
+
+    EXECUTION
+    iteration_duration.............: avg=15.47ms p(50)=8.92ms p(95)=32.37ms p(99)=185.94ms max=732.46ms
+    iterations.....................: 6001   298.793549/s
+    vus............................: 2      min=1         max=32 
+    vus_max........................: 300    min=300       max=300
+
+    NETWORK
+    data_received..................: 95 MB  4.7 MB/s
+    data_sent......................: 3.3 MB 165 kB/s
+
+
+

@@ -6,8 +6,9 @@ Las horas son de la hora del servidor (UTC en la API); la app las muestra en la 
 from datetime import date, datetime, time
 from typing import Annotated
 
-from pydantic import AfterValidator, BaseModel, Field
+from pydantic import AfterValidator, BaseModel, Field, field_validator
 
+from app.i18n import LocalizedValueError
 from app.models.shift import MAX_BREAKS
 from app.schemas.calendar import DayOffRead
 from app.schemas.common import EmployeeRef, Page
@@ -48,6 +49,13 @@ class WorkSessionRead(BaseModel):
     #: La empresa la registró o la corrigió: cuándo y por qué (lo ve también el empleado).
     edited_at: datetime | None = None
     edit_reason: str | None = None
+    #: "En revisión" (motor de riesgo; catalog.attendance_review_statuses): None si no hay nada que revisar.
+    review_status: str | None = None
+    #: Por qué, en términos del negocio (catalog.review_reasons). Solo lo ve la empresa (nunca el empleado).
+    review_reasons: list[str] = []
+    reviewed_at: datetime | None = None
+    #: Nota de la empresa al confirmar o rechazar (la ve también el empleado).
+    review_note: str | None = None
 
 
 class OccurrenceRead(BaseModel):
@@ -92,6 +100,9 @@ class AttendanceToday(BaseModel):
     day_off: DayOffRead | None = None
     #: Con jornada abierta: la ventana de sus descansos.
     break_window: BreakWindowRead | None = None
+    #: Antifraude 2b: antes de la entrada y la salida la app pide el código del kiosco del sitio (algún sitio del turno
+    #: lo activó y la empresa lo revisa).
+    site_code: bool = False
 
 
 class AttendanceActionResult(BaseModel):
@@ -162,6 +173,8 @@ class AttendanceEventRead(BaseModel):
     operator: str | None = None
     #: Motivo de un registro de la empresa (modalidad COMPANY).
     note: str | None = None
+    #: Se guardó "en revisión" (riesgo alto).
+    under_review: bool = False
 
 
 class CompanySessionDetail(CompanySessionRead):
@@ -179,7 +192,7 @@ def _minute(value: time) -> time:
 def _reason(value: str) -> str:
     text = " ".join(value.split())
     if len(text) < 5:
-        raise ValueError("Explica brevemente el motivo")
+        raise LocalizedValueError("REASON_REQUIRED")
     return text
 
 
@@ -213,3 +226,21 @@ class ManualSessionCreate(ManualTimes):
 
 class ManualSessionUpdate(ManualTimes):
     """Corregir una jornada: sus horas y descansos completos (lo anterior queda en la bitácora)."""
+
+
+class AttendanceReviewDecision(BaseModel):
+    """La empresa confirma o rechaza un registro "en revisión"; rechazar exige la nota (la ve el empleado)."""
+
+    decision: str = Field(max_length=20, description="CONFIRMED o REJECTED (catalog.attendance_review_statuses)")
+    note: str | None = Field(default=None, max_length=500)
+
+    @field_validator("note")
+    @classmethod
+    def _strip(cls, value: str | None) -> str | None:
+        return " ".join(value.split()) or None if value else None
+
+
+class AttendanceReviewCount(BaseModel):
+    """Registros "en revisión" de la empresa (contador del menú), con tope."""
+
+    pending: int

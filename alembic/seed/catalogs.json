@@ -2,28 +2,28 @@
   "roles": [
     {
       "code": "ADMIN",
-      "name": "Admin",
+      "name": "Administrador",
       "description": "Administrador de la plataforma: da de alta y administra empresas (no ve sus empleados).",
       "sort_order": 1,
       "active": true
     },
     {
       "code": "COMPANY",
-      "name": "Company",
+      "name": "Empresa",
       "description": "Administrador de una empresa: gestiona sus empleados, validadores y política de verificación.",
       "sort_order": 2,
       "active": true
     },
     {
       "code": "EMPLOYEE",
-      "name": "Employee",
+      "name": "Empleado",
       "description": "Empleado: registra su rostro y se identifica con rostro o con su código QR.",
       "sort_order": 3,
       "active": true
     },
     {
       "code": "VALIDATOR",
-      "name": "Validator",
+      "name": "Validador",
       "description": "Validador de identidad: tableta o teléfono que identifica a los empleados de su empresa.",
       "sort_order": 4,
       "active": true
@@ -131,7 +131,7 @@
     {
       "code": "APPROVED",
       "name": "Validado",
-      "description": "Identidad validada. Puede identificarse con su rostro o su código QR.",
+      "description": "Puede identificarse con su rostro o su código QR.",
       "employee_note": "Identidad validada",
       "tone": "success",
       "sort_order": 3,
@@ -140,7 +140,7 @@
     {
       "code": "REJECTED",
       "name": "Rechazado",
-      "description": "El registro fue rechazado; el empleado deberá registrarse de nuevo.",
+      "description": "El empleado deberá registrar su rostro de nuevo.",
       "employee_note": "Debes registrar tu rostro de nuevo",
       "tone": "danger",
       "sort_order": 4,
@@ -269,7 +269,7 @@
       "code": "LIVENESS_FAILED",
       "name": "Prueba de vida no superada",
       "description": null,
-      "message": "No fue posible verificar tu identidad: no se detectó el movimiento solicitado",
+      "message": "No se detectó el movimiento solicitado. Intenta de nuevo.",
       "sort_order": 2,
       "active": true
     },
@@ -277,7 +277,7 @@
       "code": "LIVENESS_MISMATCH",
       "name": "Capturas de personas distintas",
       "description": null,
-      "message": "No fue posible verificar tu identidad: las capturas no corresponden a la misma persona",
+      "message": "Las capturas no corresponden a la misma persona. Intenta de nuevo.",
       "sort_order": 3,
       "active": true
     },
@@ -301,7 +301,7 @@
       "code": "AMBIGUOUS_MATCH",
       "name": "Parecido a varias personas",
       "description": null,
-      "message": "No fue posible distinguir a la persona con suficiente certeza. Intenta de nuevo con buena luz",
+      "message": "No se pudo distinguir a la persona con suficiente certeza. Intenta de nuevo con buena luz.",
       "sort_order": 6,
       "active": true
     },
@@ -309,7 +309,7 @@
       "code": "INCONSISTENT_MATCH",
       "name": "Capturas no concluyentes",
       "description": null,
-      "message": "Las capturas no coinciden con una sola persona. Intenta de nuevo",
+      "message": "Las capturas no coinciden con una sola persona. Intenta de nuevo.",
       "sort_order": 7,
       "active": true
     },
@@ -373,7 +373,7 @@
       "code": "SPOOF_DETECTED",
       "name": "Posible foto o pantalla",
       "description": "El anti-spoofing detectó una foto impresa, una pantalla o un video.",
-      "message": "No se pudo confirmar que seas una persona frente a la cámara.",
+      "message": "No se pudo confirmar que seas una persona frente a la cámara. Intenta de nuevo.",
       "sort_order": 15,
       "active": true
     },
@@ -389,7 +389,7 @@
       "code": "STATIC_CAPTURE",
       "name": "Foto fija",
       "description": "Las capturas del intento son idénticas: una persona real nunca da dos fotogramas iguales.",
-      "message": "Las capturas son idénticas, como si fueran una foto fija. Colócate frente a la cámara e inténtalo de nuevo.",
+      "message": "Las capturas son idénticas, como una foto fija. Colócate frente a la cámara e intenta de nuevo.",
       "sort_order": 17,
       "active": true
     },
@@ -397,7 +397,7 @@
       "code": "REPLAY_DETECTED",
       "name": "Captura reutilizada",
       "description": "La captura ya se había recibido antes: es un reenvío de una captura guardada.",
-      "message": "Esta captura ya se había usado antes. Toma una captura nueva frente a la cámara.",
+      "message": "Esta captura ya se usó. Toma una nueva frente a la cámara.",
       "sort_order": 18,
       "active": true
     },
@@ -421,7 +421,7 @@
       "code": "CHALLENGE_TOO_FAST",
       "name": "Giro demasiado rápido",
       "description": "La captura del giro llegó antes de lo que tarda una persona en girar la cabeza.",
-      "message": "El giro se capturó demasiado rápido. Sigue la indicación en pantalla e inténtalo de nuevo.",
+      "message": "El giro se capturó demasiado rápido. Sigue la indicación en pantalla e intenta de nuevo.",
       "sort_order": 21,
       "active": true
     },
@@ -429,7 +429,7 @@
       "code": "ALREADY_USED",
       "name": "QR ya usado",
       "description": "Cada código dinámico sirve una sola vez: este ya se había escaneado.",
-      "message": "Este código QR ya se usó y no vuelve a servir. Pide al empleado que muestre el código nuevo de su teléfono.",
+      "message": "Este código QR ya se usó. Pide al empleado que muestre el código nuevo de su teléfono.",
       "sort_order": 22,
       "active": true
     },
@@ -445,16 +445,56 @@
       "code": "FLASH_MISMATCH",
       "name": "El rostro no reflejó el destello",
       "description": "Intento sospechoso: los colores de la pantalla no se reflejaron en el rostro (video inyectado o generado).",
-      "message": "No pudimos confirmar que estás frente a la pantalla. Inténtalo de nuevo mirando de frente a la cámara",
+      "message": "No se pudo confirmar que estés frente a la pantalla. Mira de frente a la cámara e intenta de nuevo.",
       "sort_order": 24,
       "active": true
     },
     {
       "code": "FLASH_INCONCLUSIVE",
       "name": "Destello no medible",
-      "description": "Con tanta luz ambiente que los colores de la pantalla no se notaron en el rostro.",
-      "message": "No pudimos ver el reflejo de la pantalla en tu rostro. Evita la luz directa del sol, sube el brillo de la pantalla e inténtalo de nuevo",
+      "description": "Demasiada luz ambiente: los colores de la pantalla no se notaron en el rostro.",
+      "message": "No se detectó el reflejo de la pantalla en tu rostro. Evita la luz directa del sol, sube el brillo de la pantalla e intenta de nuevo.",
       "sort_order": 25,
+      "active": true
+    },
+    {
+      "code": "FLASH_FLAT",
+      "name": "Destello plano",
+      "description": null,
+      "message": "No se pudo confirmar que estés frente a la pantalla. Mira de frente a la cámara e intenta de nuevo.",
+      "sort_order": 26,
+      "active": true
+    },
+    {
+      "code": "REPLAY_PERCEPTUAL",
+      "name": "Captura casi idéntica a otra",
+      "description": null,
+      "message": "Esta captura ya se usó. Toma una nueva frente a la cámara.",
+      "sort_order": 27,
+      "active": true
+    },
+    {
+      "code": "KNOWN_ATTACK",
+      "name": "Ataque conocido",
+      "description": null,
+      "message": "No se pudo confirmar tu identidad. Intenta de nuevo con buena luz, frente a la pantalla.",
+      "sort_order": 28,
+      "active": true
+    },
+    {
+      "code": "RISK_DENIED",
+      "name": "Riesgo crítico",
+      "description": null,
+      "message": "No se pudo confirmar tu identidad. Intenta de nuevo con buena luz, frente a la pantalla.",
+      "sort_order": 29,
+      "active": true
+    },
+    {
+      "code": "STEP_UP_REQUIRED",
+      "name": "Paso extra solicitado",
+      "description": null,
+      "message": "Por seguridad, completa un paso más de la prueba de vida",
+      "sort_order": 30,
       "active": true
     }
   ],
@@ -2733,10 +2773,207 @@
       "active": true
     }
   ],
+  "tax_id_types": [
+    {
+      "code": "MX_RFC",
+      "name": "Registro Federal de Contribuyentes",
+      "description": "12 caracteres (persona moral) o 13 (persona física)",
+      "country_code": "MX",
+      "short_name": "RFC",
+      "pattern": "^[A-ZÑ&]{3,4}[0-9]{6}[A-Z0-9]{2}[0-9A]$",
+      "min_length": 12,
+      "max_length": 13,
+      "example": "PNO120315AB1",
+      "sort_order": 1,
+      "active": true
+    },
+    {
+      "code": "US_EIN",
+      "name": "Número de identificación del empleador",
+      "description": "9 dígitos",
+      "country_code": "US",
+      "short_name": "EIN",
+      "pattern": "^[0-9]{9}$",
+      "min_length": 9,
+      "max_length": 9,
+      "example": "123456789",
+      "sort_order": 2,
+      "active": true
+    },
+    {
+      "code": "CA_BN",
+      "name": "Número de empresa",
+      "description": "9 dígitos, con o sin la cuenta de programa (p. ej. RT0001)",
+      "country_code": "CA",
+      "short_name": "BN",
+      "pattern": "^[0-9]{9}([A-Z]{2}[0-9]{4})?$",
+      "min_length": 9,
+      "max_length": 15,
+      "example": "123456789",
+      "sort_order": 3,
+      "active": true
+    },
+    {
+      "code": "ES_NIF",
+      "name": "Número de identificación fiscal (antes CIF)",
+      "description": "9 caracteres: letras y dígitos",
+      "country_code": "ES",
+      "short_name": "NIF",
+      "pattern": "^([0-9]{8}[A-Z]|[XYZ][0-9]{7}[A-Z]|[ABCDEFGHJNPQRSUVW][0-9]{7}[0-9A-J]|[KLM][0-9]{7}[A-Z])$",
+      "min_length": 9,
+      "max_length": 9,
+      "example": "B12345678",
+      "sort_order": 4,
+      "active": true
+    },
+    {
+      "code": "CO_NIT",
+      "name": "Número de identificación tributaria",
+      "description": "De 7 a 16 dígitos, con el dígito de verificación al final",
+      "country_code": "CO",
+      "short_name": "NIT",
+      "pattern": "^[0-9]{7,16}$",
+      "min_length": 7,
+      "max_length": 16,
+      "example": "8001972684",
+      "sort_order": 5,
+      "active": true
+    },
+    {
+      "code": "AR_CUIT",
+      "name": "Clave Única de Identificación Tributaria",
+      "description": "11 dígitos, con el dígito verificador al final",
+      "country_code": "AR",
+      "short_name": "CUIT",
+      "pattern": "^(20|23|24|25|26|27|30|33|34)[0-9]{9}$",
+      "min_length": 11,
+      "max_length": 11,
+      "example": "30500010912",
+      "sort_order": 6,
+      "active": true
+    },
+    {
+      "code": "CL_RUT",
+      "name": "Rol Único Tributario",
+      "description": "De 8 a 9 caracteres: el número y su dígito verificador (0 a 9 o K)",
+      "country_code": "CL",
+      "short_name": "RUT",
+      "pattern": "^[0-9]{7,8}[0-9K]$",
+      "min_length": 8,
+      "max_length": 9,
+      "example": "60803000K",
+      "sort_order": 7,
+      "active": true
+    },
+    {
+      "code": "PE_RUC",
+      "name": "Registro Único de Contribuyentes",
+      "description": "11 dígitos; empieza con 10, 15, 16, 17 o 20",
+      "country_code": "PE",
+      "short_name": "RUC",
+      "pattern": "^(10|15|16|17|20)[0-9]{9}$",
+      "min_length": 11,
+      "max_length": 11,
+      "example": "20131312955",
+      "sort_order": 8,
+      "active": true
+    },
+    {
+      "code": "BR_CNPJ",
+      "name": "Registro Nacional de Personas Jurídicas",
+      "description": "14 caracteres: 12 letras o dígitos y 2 dígitos verificadores",
+      "country_code": "BR",
+      "short_name": "CNPJ",
+      "pattern": "^[0-9A-Z]{12}[0-9]{2}$",
+      "min_length": 14,
+      "max_length": 14,
+      "example": "11222333000181",
+      "sort_order": 9,
+      "active": true
+    },
+    {
+      "code": "GB_VAT",
+      "name": "Número de registro del IVA",
+      "description": "GB y 9 o 12 dígitos",
+      "country_code": "GB",
+      "short_name": "VAT",
+      "pattern": "^GB([0-9]{9}|[0-9]{12})$",
+      "min_length": 11,
+      "max_length": 14,
+      "example": "GB123456789",
+      "sort_order": 10,
+      "active": true
+    },
+    {
+      "code": "GB_CRN",
+      "name": "Número de registro mercantil",
+      "description": "8 caracteres: 8 dígitos, o 2 letras y 6 dígitos",
+      "country_code": "GB",
+      "short_name": "CRN",
+      "pattern": "^([0-9]{8}|[A-Z]{2}[0-9]{6})$",
+      "min_length": 8,
+      "max_length": 8,
+      "example": "01234567",
+      "sort_order": 11,
+      "active": true
+    },
+    {
+      "code": "DE_VAT",
+      "name": "Número de identificación a efectos del IVA",
+      "description": "DE y 9 dígitos",
+      "country_code": "DE",
+      "short_name": "USt-IdNr.",
+      "pattern": "^DE[0-9]{9}$",
+      "min_length": 11,
+      "max_length": 11,
+      "example": "DE123456789",
+      "sort_order": 12,
+      "active": true
+    },
+    {
+      "code": "FR_SIREN",
+      "name": "Número SIREN de la empresa",
+      "description": "9 dígitos",
+      "country_code": "FR",
+      "short_name": "SIREN",
+      "pattern": "^[0-9]{9}$",
+      "min_length": 9,
+      "max_length": 9,
+      "example": "732829320",
+      "sort_order": 13,
+      "active": true
+    },
+    {
+      "code": "FR_SIRET",
+      "name": "Número SIRET del establecimiento",
+      "description": "14 dígitos: el SIREN y 5 del establecimiento",
+      "country_code": "FR",
+      "short_name": "SIRET",
+      "pattern": "^[0-9]{14}$",
+      "min_length": 14,
+      "max_length": 14,
+      "example": "73282932000074",
+      "sort_order": 14,
+      "active": true
+    },
+    {
+      "code": "OTHER",
+      "name": "Otro identificador fiscal",
+      "description": "De 3 a 30 letras o dígitos",
+      "country_code": null,
+      "short_name": "ID fiscal",
+      "pattern": "^[0-9A-Z]{3,30}$",
+      "min_length": 3,
+      "max_length": 30,
+      "example": "ABC123456",
+      "sort_order": 15,
+      "active": true
+    }
+  ],
   "enrollment_rejection_reasons": [
     {
       "code": "PERSON_MISMATCH",
-      "name": "La persona de la foto no corresponde al empleado",
+      "name": "La persona de la foto no es el empleado",
       "description": null,
       "sort_order": 1,
       "active": true
@@ -2750,7 +2987,7 @@
     },
     {
       "code": "SPOOFING",
-      "name": "Se detecta suplantación (foto de foto o pantalla)",
+      "name": "Suplantación detectada (foto de una foto o de una pantalla)",
       "description": null,
       "sort_order": 3,
       "active": true
@@ -3030,7 +3267,7 @@
     {
       "code": "STANDARD",
       "name": "Estándar",
-      "description": "Rechaza cuando la mayoría de las capturas parecen una foto, una pantalla o un video. Recomendado para la mayoría de las cámaras.",
+      "description": "Rechaza cuando la mayoría de las capturas parecen una foto, una pantalla o un video. Recomendado para casi todas las cámaras.",
       "threshold": 0.05,
       "any_frame": false,
       "sort_order": 1,
@@ -3048,7 +3285,7 @@
     {
       "code": "MAXIMUM",
       "name": "Máximo",
-      "description": "Basta con que una sola captura parezca una foto o una pantalla para rechazar. Exige buena luz y una cámara de calidad.",
+      "description": "Rechaza si una sola captura parece una foto o una pantalla. Exige buena luz y una cámara de calidad.",
       "threshold": 0.5,
       "any_frame": true,
       "sort_order": 3,
@@ -3073,7 +3310,7 @@
     {
       "code": "ENFORCE",
       "name": "Obligatorio",
-      "description": "El rostro debe reflejar los colores que pinta la pantalla: un video inyectado o generado no los ve. Con luz del sol directa puede pedir repetir. Actívalo después de calibrar.",
+      "description": "El rostro debe reflejar los colores de la pantalla: un video inyectado o generado no los refleja. Con luz del sol directa puede pedir repetir. Actívalo después de calibrar.",
       "sort_order": 3,
       "active": true
     }
@@ -3083,7 +3320,7 @@
       "code": "LOGOUT",
       "name": "Cierre de sesión",
       "description": "La persona cerró su sesión.",
-      "message": "Tu sesión ya no es válida. Inicia sesión nuevamente.",
+      "message": "Tu sesión ya no es válida. Inicia sesión de nuevo.",
       "sort_order": 1,
       "active": true
     },
@@ -3091,7 +3328,7 @@
       "code": "LOGOUT_ALL",
       "name": "Cierre en todos los dispositivos",
       "description": "La persona cerró sesión en todos sus dispositivos.",
-      "message": "Tu sesión ya no es válida. Inicia sesión nuevamente.",
+      "message": "Tu sesión ya no es válida. Inicia sesión de nuevo.",
       "sort_order": 2,
       "active": true
     },
@@ -3099,7 +3336,7 @@
       "code": "REVOKED_BY_USER",
       "name": "Cerrada desde otra sesión",
       "description": "La persona cerró esta sesión desde su lista de sesiones activas.",
-      "message": "Tu sesión ya no es válida. Inicia sesión nuevamente.",
+      "message": "Tu sesión ya no es válida. Inicia sesión de nuevo.",
       "sort_order": 3,
       "active": true
     },
@@ -3107,7 +3344,7 @@
       "code": "PASSWORD_CHANGED",
       "name": "Cambio de contraseña",
       "description": "La contraseña cambió: se cierran las demás sesiones.",
-      "message": "Tu sesión ya no es válida. Inicia sesión nuevamente.",
+      "message": "Tu sesión ya no es válida. Inicia sesión de nuevo.",
       "sort_order": 4,
       "active": true
     },
@@ -3115,7 +3352,7 @@
       "code": "PASSWORD_RESET",
       "name": "Contraseña restablecida",
       "description": "Un administrador restableció la contraseña.",
-      "message": "Tu sesión ya no es válida. Inicia sesión nuevamente.",
+      "message": "Tu sesión ya no es válida. Inicia sesión de nuevo.",
       "sort_order": 5,
       "active": true
     },
@@ -3123,7 +3360,7 @@
       "code": "ACCOUNT_DEACTIVATED",
       "name": "Cuenta desactivada",
       "description": "La cuenta (o el empleo en esa empresa) se desactivó.",
-      "message": "Tu sesión ya no es válida. Inicia sesión nuevamente.",
+      "message": "Tu sesión ya no es válida. Inicia sesión de nuevo.",
       "sort_order": 6,
       "active": true
     },
@@ -3131,7 +3368,7 @@
       "code": "COMPANY_DEACTIVATED",
       "name": "Empresa desactivada",
       "description": "La empresa se desactivó: se cierran las sesiones de su personal.",
-      "message": "Tu sesión ya no es válida. Inicia sesión nuevamente.",
+      "message": "Tu sesión ya no es válida. Inicia sesión de nuevo.",
       "sort_order": 7,
       "active": true
     },
@@ -3139,7 +3376,7 @@
       "code": "EMPLOYEE_REMOVED",
       "name": "Baja de la empresa",
       "description": "La persona dejó de ser empleada de esa empresa.",
-      "message": "Tu sesión ya no es válida. Inicia sesión nuevamente.",
+      "message": "Tu sesión ya no es válida. Inicia sesión de nuevo.",
       "sort_order": 8,
       "active": true
     },
@@ -3147,7 +3384,7 @@
       "code": "SIGNED_IN_ELSEWHERE",
       "name": "Sesión en otro dispositivo",
       "description": "Un inicio de sesión nuevo desplazó a este (una sola sesión activa por persona).",
-      "message": "Se inició sesión con tu cuenta en otro dispositivo. Por seguridad, solo puedes tener una sesión activa a la vez.",
+      "message": "Se inició sesión con tu cuenta en otro dispositivo. Solo puedes tener una sesión activa a la vez.",
       "sort_order": 9,
       "active": true
     },
@@ -3155,7 +3392,7 @@
       "code": "REFRESH_REUSE_DETECTED",
       "name": "Posible robo de sesión",
       "description": "Se presentó un token de renovación ya usado: se asume robo y se cierra la sesión.",
-      "message": "Tu sesión ya no es válida. Inicia sesión nuevamente.",
+      "message": "Tu sesión ya no es válida. Inicia sesión de nuevo.",
       "sort_order": 10,
       "active": true
     },
@@ -3171,8 +3408,24 @@
       "code": "DEVICE_REVOKED",
       "name": "Dispositivo revocado",
       "description": "La empresa retiró la autorización del dispositivo del validador.",
-      "message": "La empresa retiró la autorización de este dispositivo. Pide que lo autoricen de nuevo para operar.",
+      "message": "La empresa retiró la autorización de este dispositivo. Pide que lo autoricen de nuevo.",
       "sort_order": 12,
+      "active": true
+    },
+    {
+      "code": "COMPANY_SUSPENDED",
+      "name": "Empresa suspendida",
+      "description": "El administrador de la plataforma suspendió a la empresa (falta de pago o decisión manual).",
+      "message": "Tu empresa está suspendida. Contacta al administrador de la plataforma para reactivarla.",
+      "sort_order": 13,
+      "active": true
+    },
+    {
+      "code": "ACCOUNT_DELETED",
+      "name": "Cuenta eliminada",
+      "description": "La cuenta o su empresa se eliminó: se cierran sus sesiones.",
+      "message": "Tu cuenta se eliminó. Contacta a tu empresa si crees que es un error.",
+      "sort_order": 14,
       "active": true
     }
   ],
@@ -3217,7 +3470,7 @@
       "code": "INVALID_IMAGE",
       "name": "Imagen no válida",
       "description": null,
-      "message": "No se pudo procesar la imagen. Toma otra foto",
+      "message": "No se pudo procesar la imagen. Toma otra foto.",
       "retryable": true,
       "sort_order": 5,
       "active": true
@@ -3235,7 +3488,7 @@
       "code": "MULTIPLE_FACES",
       "name": "Varias personas",
       "description": null,
-      "message": "Se detectó más de una persona. Solo debe aparecer un rostro",
+      "message": "Se detectó más de una persona. Solo debe aparecer un rostro.",
       "retryable": true,
       "sort_order": 7,
       "active": true
@@ -3244,7 +3497,7 @@
       "code": "LOW_DETECTION_SCORE",
       "name": "Rostro poco claro",
       "description": null,
-      "message": "El rostro no se distingue con claridad. Mira de frente a la cámara",
+      "message": "El rostro no se distingue con claridad. Mira de frente a la cámara.",
       "retryable": true,
       "sort_order": 8,
       "active": true
@@ -3253,7 +3506,7 @@
       "code": "FACE_TOO_SMALL",
       "name": "Rostro lejano",
       "description": null,
-      "message": "El rostro está muy lejos. Acércate a la cámara",
+      "message": "El rostro está muy lejos. Acércate a la cámara.",
       "retryable": true,
       "sort_order": 9,
       "active": true
@@ -3262,7 +3515,7 @@
       "code": "FACE_CUT_OFF",
       "name": "Rostro incompleto",
       "description": null,
-      "message": "El rostro está incompleto. Céntralo en la cámara",
+      "message": "El rostro está incompleto. Céntralo en la cámara.",
       "retryable": true,
       "sort_order": 10,
       "active": true
@@ -3298,7 +3551,7 @@
       "code": "TOO_DARK",
       "name": "Muy oscura",
       "description": null,
-      "message": "La imagen está muy oscura. Busca mejor iluminación",
+      "message": "La imagen está muy oscura. Busca mejor iluminación.",
       "retryable": true,
       "sort_order": 14,
       "active": true
@@ -3307,7 +3560,7 @@
       "code": "TOO_BRIGHT",
       "name": "Sobreexpuesta",
       "description": null,
-      "message": "La imagen está sobreexpuesta. Evita luz directa",
+      "message": "La imagen está sobreexpuesta. Evita la luz directa.",
       "retryable": true,
       "sort_order": 15,
       "active": true
@@ -3316,7 +3569,7 @@
       "code": "TOO_BLURRY",
       "name": "Borrosa",
       "description": null,
-      "message": "La imagen está borrosa. Mantente quieto",
+      "message": "La imagen está borrosa. Mantente quieto.",
       "retryable": true,
       "sort_order": 16,
       "active": true
@@ -3334,7 +3587,7 @@
       "code": "SPOOF_DETECTED",
       "name": "Posible suplantación",
       "description": null,
-      "message": "No pudimos confirmar que eres una persona frente a la cámara. Evita reflejos y pantallas, y usa tu rostro real (no una foto o video)",
+      "message": "No se pudo confirmar que seas una persona frente a la cámara. Evita reflejos y pantallas, y usa tu rostro real (no una foto o video).",
       "retryable": true,
       "sort_order": 18,
       "active": true
@@ -3343,7 +3596,7 @@
       "code": "ENROLL_INCONSISTENT",
       "name": "Capturas inconsistentes",
       "description": null,
-      "message": "Las fotografías no son consistentes entre sí. Repite la captura con una sola persona, de frente y bien iluminada",
+      "message": "Las fotos no coinciden entre sí. Repite la captura con una sola persona, de frente y con buena luz.",
       "retryable": true,
       "sort_order": 19,
       "active": true
@@ -3352,7 +3605,7 @@
       "code": "LIVENESS_REQUIRED",
       "name": "Falta la prueba de vida",
       "description": null,
-      "message": "Se requiere completar la prueba de vida",
+      "message": "Completa la prueba de vida para continuar",
       "retryable": true,
       "sort_order": 20,
       "active": true
@@ -3361,7 +3614,7 @@
       "code": "CHALLENGE_INVALID",
       "name": "Reto vencido",
       "description": null,
-      "message": "El reto de verificación expiró o no es válido. Inténtalo de nuevo",
+      "message": "El reto de verificación venció o no es válido. Intenta de nuevo.",
       "retryable": true,
       "sort_order": 21,
       "active": true
@@ -3370,7 +3623,7 @@
       "code": "LIVENESS_FAILED",
       "name": "Prueba de vida no superada",
       "description": "En el registro facial (en la identificación se usa catalog.verification_reasons).",
-      "message": "No se detectó el movimiento solicitado. Inténtalo de nuevo",
+      "message": "No se detectó el movimiento solicitado. Intenta de nuevo.",
       "retryable": true,
       "sort_order": 22,
       "active": true
@@ -3379,7 +3632,7 @@
       "code": "LIVENESS_MISMATCH",
       "name": "Otra persona en el reto",
       "description": "En el registro facial (en la identificación se usa catalog.verification_reasons).",
-      "message": "Las capturas no corresponden a la misma persona. Inténtalo de nuevo",
+      "message": "Las capturas no corresponden a la misma persona. Intenta de nuevo.",
       "retryable": true,
       "sort_order": 23,
       "active": true
@@ -3388,7 +3641,7 @@
       "code": "FACE_NOT_REGISTERED",
       "name": "Sin registro facial",
       "description": "El empleado intenta verificarse sin tener su rostro registrado.",
-      "message": "No tienes información facial registrada. Contacta a tu empresa.",
+      "message": "No tienes registro facial. Contacta a tu empresa.",
       "retryable": false,
       "sort_order": 24,
       "active": true
@@ -3397,7 +3650,7 @@
       "code": "FACE_SERVICE_BUSY",
       "name": "Motor facial ocupado",
       "description": null,
-      "message": "Hay muchas solicitudes de reconocimiento en este momento. Intenta en unos segundos.",
+      "message": "Hay muchas solicitudes de reconocimiento en este momento. Intenta de nuevo en unos segundos.",
       "retryable": true,
       "sort_order": 25,
       "active": true
@@ -3415,7 +3668,7 @@
       "code": "FACE_PROCESSING_ERROR",
       "name": "Error del motor facial",
       "description": null,
-      "message": "No fue posible procesar el rostro en este momento. Intenta nuevamente.",
+      "message": "No se pudo procesar el rostro en este momento. Intenta de nuevo.",
       "retryable": true,
       "sort_order": 27,
       "active": true
@@ -3433,7 +3686,7 @@
       "code": "STATIC_CAPTURE",
       "name": "Foto fija",
       "description": "Las capturas del intento son idénticas: una persona real nunca da dos fotogramas iguales.",
-      "message": "Las capturas son idénticas, como si fueran una foto fija. Colócate frente a la cámara e inténtalo de nuevo.",
+      "message": "Las capturas son idénticas, como una foto fija. Colócate frente a la cámara e intenta de nuevo.",
       "retryable": true,
       "sort_order": 29,
       "active": true
@@ -3442,7 +3695,7 @@
       "code": "REPLAY_DETECTED",
       "name": "Captura reutilizada",
       "description": "La captura ya se había recibido antes: es un reenvío de una captura guardada.",
-      "message": "Esta captura ya se había usado antes. Toma una captura nueva frente a la cámara.",
+      "message": "Esta captura ya se usó. Toma una nueva frente a la cámara.",
       "retryable": true,
       "sort_order": 30,
       "active": true
@@ -3469,7 +3722,7 @@
       "code": "CHALLENGE_TOO_FAST",
       "name": "Giro demasiado rápido",
       "description": "La captura del giro llegó antes de lo que tarda una persona en girar la cabeza.",
-      "message": "El giro se capturó demasiado rápido. Sigue la indicación en pantalla e inténtalo de nuevo.",
+      "message": "El giro se capturó demasiado rápido. Sigue la indicación en pantalla e intenta de nuevo.",
       "retryable": true,
       "sort_order": 33,
       "active": true
@@ -3478,7 +3731,7 @@
       "code": "FACE_ALREADY_REGISTERED",
       "name": "Rostro ya registrado",
       "description": "El rostro ya está registrado como otro empleado de la empresa.",
-      "message": "Este rostro ya está registrado como otro empleado de la empresa.",
+      "message": "Este rostro ya está registrado como otro empleado de la empresa",
       "retryable": false,
       "sort_order": 34,
       "active": true
@@ -3487,7 +3740,7 @@
       "code": "FACE_LOCKED",
       "name": "Bloqueo por intentos",
       "description": "Demasiados intentos fallidos o sospechosos seguidos.",
-      "message": "Demasiados intentos fallidos. Por seguridad, espera {minutes} min para volver a intentarlo.",
+      "message": "Demasiados intentos fallidos. Por seguridad, espera {minutes} min e intenta de nuevo.",
       "retryable": false,
       "sort_order": 35,
       "active": true
@@ -3496,7 +3749,7 @@
       "code": "LOW_QUALITY",
       "name": "Calidad insuficiente",
       "description": "La captura no alcanza la calidad mínima de la política (detección, nitidez y luz).",
-      "message": "La foto no tiene la calidad suficiente. Busca buena luz, limpia la cámara y mantente quieto",
+      "message": "La foto no tiene la calidad suficiente. Busca buena luz, limpia la cámara y mantente quieto.",
       "retryable": true,
       "sort_order": 36,
       "active": true
@@ -3505,9 +3758,54 @@
       "code": "FLASH_MISMATCH",
       "name": "El rostro no reflejó el destello",
       "description": "Los colores que pintó la pantalla no se reflejaron en el rostro: la imagen no viene de una persona frente a la pantalla (video inyectado o generado).",
-      "message": "No pudimos confirmar que estás frente a la pantalla. Mira de frente a la cámara, sin filtros ni otra cámara, e inténtalo de nuevo",
+      "message": "No se pudo confirmar que estés frente a la pantalla. Mira de frente a la cámara, sin filtros ni otra cámara, e intenta de nuevo.",
       "retryable": true,
       "sort_order": 37,
+      "active": true
+    },
+    {
+      "code": "FLASH_FLAT",
+      "name": "Destello plano",
+      "description": null,
+      "message": "No se pudo confirmar que estés frente a la pantalla. Mira de frente a la cámara, sin filtros ni otra cámara, e intenta de nuevo.",
+      "retryable": true,
+      "sort_order": 38,
+      "active": true
+    },
+    {
+      "code": "REPLAY_PERCEPTUAL",
+      "name": "Captura casi idéntica a otra",
+      "description": null,
+      "message": "Esta captura ya se usó. Toma una nueva frente a la cámara.",
+      "retryable": true,
+      "sort_order": 39,
+      "active": true
+    },
+    {
+      "code": "KNOWN_ATTACK",
+      "name": "Ataque conocido",
+      "description": null,
+      "message": "No se pudo confirmar tu identidad. Intenta de nuevo con buena luz, frente a la pantalla.",
+      "retryable": true,
+      "sort_order": 40,
+      "active": true
+    },
+    {
+      "code": "RISK_DENIED",
+      "name": "Riesgo crítico",
+      "description": null,
+      "message": "No se pudo confirmar tu identidad. Intenta de nuevo con buena luz, frente a la pantalla.",
+      "retryable": true,
+      "sort_order": 41,
+      "active": true
+    },
+    {
+      "code": "STEP_UP_REQUIRED",
+      "name": "Paso extra",
+      "description": null,
+      "message": "Por seguridad, completa un paso más: sigue las indicaciones en pantalla",
+      "retryable": true,
+      "sort_order": 42,
       "active": true
     }
   ],
@@ -3545,6 +3843,13 @@
       "name": "Rostro ya registrado en otro empleado",
       "description": "El rostro se parece al registro aprobado de otro empleado de la empresa: confirma que no sea la misma persona con dos cuentas.",
       "sort_order": 5,
+      "active": true
+    },
+    {
+      "code": "POSSIBLE_DUPLICATE",
+      "name": "Parecido con otro empleado",
+      "description": "El rostro se parece, con el nivel de sospecha de la empresa, al de otro empleado aprobado: revisa a los más parecidos antes de aprobar.",
+      "sort_order": 6,
       "active": true
     }
   ],
@@ -3602,7 +3907,7 @@
     {
       "code": "WARNING",
       "name": "Advertencia",
-      "description": "Solicitud rechazada: validación, permisos o reglas de negocio (4xx).",
+      "description": "Solo historial: solicitudes rechazadas (4xx) registradas antes. Ya no se registran.",
       "tone": "info",
       "sort_order": 3,
       "active": true
@@ -3688,7 +3993,7 @@
     {
       "code": "MISSED_CHECKOUT",
       "name": "Sin salida",
-      "description": "Venció el límite para checar la salida sin hacerlo.",
+      "description": "No checó su salida antes del límite.",
       "tone": "danger",
       "sort_order": 3,
       "active": true
@@ -3722,7 +4027,7 @@
     {
       "code": "CANCELLED",
       "name": "Cancelada",
-      "description": "Se retiró y ya no aplica (el empleado antes de que se decidiera, o la empresa).",
+      "description": "La retiró el empleado (antes de la decisión) o la empresa.",
       "tone": "muted",
       "sort_order": 4,
       "active": true
@@ -3772,7 +4077,7 @@
     {
       "code": "MISSED_CHECKOUT",
       "name": "Sin salida",
-      "description": "Venció el límite para checar su salida sin hacerlo.",
+      "description": "No checó su salida antes del límite.",
       "tone": "danger",
       "sort_order": 6,
       "active": true
@@ -3814,7 +4119,7 @@
     {
       "code": "ENDED",
       "name": "Terminado",
-      "description": "Ya no rige: lo registrado con él lo conserva.",
+      "description": "Ya no rige; lo registrado con él no cambia.",
       "tone": "muted",
       "sort_order": 3,
       "active": true
@@ -3824,7 +4129,7 @@
     {
       "code": "VACATION",
       "name": "Vacaciones",
-      "description": "Días de vacaciones del empleado (los puede pedir desde Mi asistencia).",
+      "description": "El empleado también puede pedirlas desde Mi asistencia.",
       "phrase": "Estás de vacaciones",
       "requestable": true,
       "tone": "info",
@@ -3834,7 +4139,7 @@
     {
       "code": "PERMISSION",
       "name": "Permiso",
-      "description": "Permiso para faltar con autorización de la empresa (lo puede pedir desde Mi asistencia).",
+      "description": "Ausencia autorizada por la empresa; el empleado puede pedirla desde Mi asistencia.",
       "phrase": "Tienes permiso",
       "requestable": true,
       "tone": "info",
@@ -3854,7 +4159,7 @@
     {
       "code": "OTHER",
       "name": "Otro motivo",
-      "description": "Otro día libre que autoriza la empresa (la registra la empresa).",
+      "description": "Otro día libre que autoriza y registra la empresa.",
       "phrase": "Tienes día libre",
       "requestable": false,
       "tone": "muted",
@@ -3899,6 +4204,1366 @@
       "active": true
     }
   ],
+  "pricing_modes": [
+    {
+      "code": "PER_USER",
+      "name": "Por empleado activo",
+      "description": "Cada empleado y cada validador activos, día por día (un validador cuenta como un empleado): quien entra o sale a mitad del periodo paga solo sus días.",
+      "sort_order": 1,
+      "active": true
+    },
+    {
+      "code": "FLAT",
+      "name": "Monto fijo",
+      "description": "Un monto fijo por empresa, prorrateado por los días cobrables del periodo.",
+      "sort_order": 2,
+      "active": true
+    }
+  ],
+  "price_periods": [
+    {
+      "code": "DAY",
+      "name": "Por día",
+      "description": "El precio es de un día.",
+      "sort_order": 1,
+      "active": true
+    },
+    {
+      "code": "MONTH",
+      "name": "Por mes",
+      "description": "El precio es de un mes; cada día cuesta su parte proporcional.",
+      "sort_order": 2,
+      "active": true
+    },
+    {
+      "code": "YEAR",
+      "name": "Por año",
+      "description": "El precio es de un año; cada día cuesta su parte proporcional.",
+      "sort_order": 3,
+      "active": true
+    }
+  ],
+  "discount_types": [
+    {
+      "code": "PERCENT",
+      "name": "Porcentaje",
+      "description": "Porcentaje del subtotal (hasta 100 %).",
+      "sort_order": 1,
+      "active": true
+    },
+    {
+      "code": "AMOUNT",
+      "name": "Monto fijo",
+      "description": "Monto fijo por cargo (nunca mayor que el subtotal).",
+      "sort_order": 2,
+      "active": true
+    }
+  ],
+  "discount_recurrences": [
+    {
+      "code": "ALWAYS",
+      "name": "En todos los cargos",
+      "description": "El descuento se aplica en cada cargo.",
+      "sort_order": 1,
+      "active": true
+    },
+    {
+      "code": "FIRST",
+      "name": "Solo en los primeros cargos",
+      "description": "Se aplica en los primeros N cargos de la empresa.",
+      "sort_order": 2,
+      "active": true
+    },
+    {
+      "code": "EVERY",
+      "name": "Cada cierto número de cargos",
+      "description": "Se aplica cada N cargos (el N-ésimo, el 2N-ésimo...).",
+      "sort_order": 3,
+      "active": true
+    }
+  ],
+  "billing_statuses": [
+    {
+      "code": "ACTIVE",
+      "name": "Activa",
+      "description": "La empresa opera con normalidad.",
+      "tone": "success",
+      "sort_order": 1,
+      "active": true
+    },
+    {
+      "code": "SUSPENDED",
+      "name": "Suspendida",
+      "description": "Nadie de la empresa puede iniciar sesión ni operar hasta que se reactive.",
+      "tone": "danger",
+      "sort_order": 2,
+      "active": true
+    }
+  ],
+  "suspension_reasons": [
+    {
+      "code": "NON_PAYMENT",
+      "name": "Falta de pago",
+      "description": "Automática: un cargo siguió sin pagarse después de los días de gracia.",
+      "sort_order": 1,
+      "active": true
+    },
+    {
+      "code": "MANUAL",
+      "name": "Suspensión manual",
+      "description": "La decidió el administrador de la plataforma, con su motivo.",
+      "sort_order": 2,
+      "active": true
+    }
+  ],
+  "charge_statuses": [
+    {
+      "code": "OPEN",
+      "name": "Por pagar",
+      "description": "Tiene saldo pendiente.",
+      "tone": "warning",
+      "sort_order": 1,
+      "active": true
+    },
+    {
+      "code": "PAID",
+      "name": "Pagado",
+      "description": "Los pagos registrados cubren su total.",
+      "tone": "success",
+      "sort_order": 2,
+      "active": true
+    },
+    {
+      "code": "VOID",
+      "name": "Anulado",
+      "description": "Se anuló con su motivo: no se cobra y lo que se le había aplicado queda a favor.",
+      "tone": "muted",
+      "sort_order": 3,
+      "active": true
+    }
+  ],
+  "payment_statuses": [
+    {
+      "code": "CONFIRMED",
+      "name": "Confirmado",
+      "description": "El pago se registró y se aplicó a los cargos abiertos (lo que sobra queda a favor).",
+      "tone": "success",
+      "sort_order": 1,
+      "active": true
+    },
+    {
+      "code": "VOID",
+      "name": "Anulado",
+      "description": "Se anuló con su motivo: los cargos que cubría vuelven a quedar por pagar.",
+      "tone": "muted",
+      "sort_order": 2,
+      "active": true
+    }
+  ],
+  "payment_methods": [
+    {
+      "code": "TRANSFER",
+      "name": "Transferencia",
+      "description": null,
+      "sort_order": 1,
+      "active": true
+    },
+    {
+      "code": "DEPOSIT",
+      "name": "Depósito bancario",
+      "description": null,
+      "sort_order": 2,
+      "active": true
+    },
+    {
+      "code": "CASH",
+      "name": "Efectivo",
+      "description": null,
+      "sort_order": 3,
+      "active": true
+    },
+    {
+      "code": "CARD",
+      "name": "Tarjeta",
+      "description": null,
+      "sort_order": 4,
+      "active": true
+    },
+    {
+      "code": "CHECK",
+      "name": "Cheque",
+      "description": null,
+      "sort_order": 5,
+      "active": true
+    },
+    {
+      "code": "OTHER",
+      "name": "Otro",
+      "description": null,
+      "sort_order": 6,
+      "active": true
+    }
+  ],
+  "company_document_types": [
+    {
+      "code": "TAX_CERTIFICATE",
+      "name": "Constancia de situación fiscal",
+      "description": "Constancia del SAT con el RFC, el régimen y el domicilio fiscal.",
+      "sort_order": 1,
+      "active": true
+    },
+    {
+      "code": "INCORPORATION",
+      "name": "Acta constitutiva",
+      "description": "Escritura pública con la que se constituyó la empresa.",
+      "sort_order": 2,
+      "active": true
+    },
+    {
+      "code": "PROOF_OF_ADDRESS",
+      "name": "Comprobante de domicilio",
+      "description": "Recibo reciente de luz, agua o teléfono.",
+      "sort_order": 3,
+      "active": true
+    },
+    {
+      "code": "REPRESENTATIVE_ID",
+      "name": "Identificación del representante legal",
+      "description": "Credencial para votar, pasaporte o cédula de quien firma por la empresa.",
+      "sort_order": 4,
+      "active": true
+    },
+    {
+      "code": "CONTRACT",
+      "name": "Contrato",
+      "description": "Contrato de servicio con la plataforma u otro acuerdo firmado.",
+      "sort_order": 5,
+      "active": true
+    },
+    {
+      "code": "OTHER",
+      "name": "Otro",
+      "description": "Cualquier otro documento de la empresa.",
+      "sort_order": 6,
+      "active": true
+    }
+  ],
+  "currencies": [
+    {
+      "code": "MXN",
+      "name": "Peso mexicano",
+      "description": "Pesos mexicanos (MXN). La moneda por omisión de la plataforma.",
+      "symbol": "$",
+      "decimals": 2,
+      "sort_order": 1,
+      "active": true
+    },
+    {
+      "code": "USD",
+      "name": "Dólar estadounidense",
+      "description": "Dólares de Estados Unidos (USD). Para clientes del extranjero, el IVA suele ser 0 %.",
+      "symbol": "$",
+      "decimals": 2,
+      "sort_order": 2,
+      "active": true
+    },
+    {
+      "code": "EUR",
+      "name": "Euro",
+      "description": "Euros (EUR). Para clientes del extranjero, el IVA suele ser 0 %.",
+      "symbol": "€",
+      "decimals": 2,
+      "sort_order": 3,
+      "active": true
+    }
+  ],
+  "storage_categories": [
+    {
+      "code": "PEOPLE",
+      "name": "Personal",
+      "description": "Empleados, departamentos, validadores y sus dispositivos.",
+      "sort_order": 1,
+      "active": true
+    },
+    {
+      "code": "BIOMETRICS",
+      "name": "Biometría",
+      "description": "Plantillas faciales cifradas, registros faciales y huellas de capturas.",
+      "sort_order": 2,
+      "active": true
+    },
+    {
+      "code": "ATTENDANCE",
+      "name": "Asistencia",
+      "description": "Jornadas, descansos, registros, ausencias y la bitácora de identificaciones.",
+      "sort_order": 3,
+      "active": true
+    },
+    {
+      "code": "SECURITY",
+      "name": "Sesiones y seguridad",
+      "description": "Sesiones de acceso y métricas de los intentos faciales.",
+      "sort_order": 4,
+      "active": true
+    },
+    {
+      "code": "BILLING",
+      "name": "Cobranza",
+      "description": "Cargos, pagos, comprobantes y documentos de la empresa.",
+      "sort_order": 5,
+      "active": true
+    }
+  ],
+  "slow_alert_statuses": [
+    {
+      "code": "OPEN",
+      "name": "Abierta",
+      "description": "Nadie la ha atendido todavía (o volvió a ocurrir después de resolverse).",
+      "tone": "danger",
+      "sort_order": 1,
+      "active": true
+    },
+    {
+      "code": "ACKNOWLEDGED",
+      "name": "En atención",
+      "description": "Alguien ya la está revisando; si vuelve a ocurrir, sigue en atención.",
+      "tone": "warning",
+      "sort_order": 2,
+      "active": true
+    },
+    {
+      "code": "RESOLVED",
+      "name": "Resuelta",
+      "description": "Corregida. Si la ruta vuelve a tardar más del umbral, se reabre sola.",
+      "tone": "success",
+      "sort_order": 3,
+      "active": true
+    }
+  ],
+  "fraud_kinds": [
+    {
+      "code": "PRESENTATION",
+      "name": "Presentación (foto, pantalla o máscara)",
+      "description": "Una foto, una pantalla o una máscara frente a la cámara.",
+      "sort_order": 1,
+      "active": true
+    },
+    {
+      "code": "INJECTION",
+      "name": "Inyección (cámara virtual o programa)",
+      "description": "Imágenes que no salen de la cámara: cámara virtual, programa o llamada directa a la API.",
+      "sort_order": 2,
+      "active": true
+    },
+    {
+      "code": "REPLAY",
+      "name": "Reenvío de capturas",
+      "description": "Capturas ya usadas, reenviadas con cambios mínimos, o artefactos de un ataque conocido.",
+      "sort_order": 3,
+      "active": true
+    },
+    {
+      "code": "LOCATION",
+      "name": "Ubicación falsa",
+      "description": "Ubicación simulada o poco creíble para checar desde otro lugar.",
+      "sort_order": 4,
+      "active": true
+    },
+    {
+      "code": "BUDDY_PUNCHING",
+      "name": "Suplantación entre compañeros",
+      "description": "Una persona checa por otra: cuenta compartida, QR reenviado o títere remoto.",
+      "sort_order": 5,
+      "active": true
+    },
+    {
+      "code": "INTERNAL",
+      "name": "Fraude interno",
+      "description": "Abuso desde la empresa o un validador: registros faciales aprobados con el rostro de otra persona o dispositivos no autorizados.",
+      "sort_order": 6,
+      "active": true
+    },
+    {
+      "code": "MORPH",
+      "name": "Rostro combinado (morphing)",
+      "description": "Un registro facial que mezcla los rasgos de dos personas.",
+      "sort_order": 7,
+      "active": true
+    },
+    {
+      "code": "OTHER",
+      "name": "Otro",
+      "description": "Riesgo alto sin un tipo claro: lo decide la revisión.",
+      "sort_order": 8,
+      "active": true
+    }
+  ],
+  "signal_modes": [
+    {
+      "code": "OFF",
+      "name": "Apagada",
+      "description": "La señal no se mide ni se registra.",
+      "sort_order": 1,
+      "active": true
+    },
+    {
+      "code": "OBSERVE",
+      "name": "Solo medir",
+      "description": "Se mide y se registra con sus puntos, sin cambiar la decisión: sirve para calibrar antes de exigirla.",
+      "sort_order": 2,
+      "active": true
+    },
+    {
+      "code": "ENFORCE",
+      "name": "Obligatoria",
+      "description": "Sus puntos cuentan para la decisión; si es una regla dura, niega el intento.",
+      "sort_order": 3,
+      "active": true
+    }
+  ],
+  "review_reasons": [
+    {
+      "code": "CAPTURE",
+      "name": "Captura poco confiable",
+      "description": "La captura del rostro tuvo indicios de foto, pantalla o video.",
+      "sort_order": 1,
+      "active": true
+    },
+    {
+      "code": "REPLAY",
+      "name": "Captura repetida",
+      "description": "La captura se parece demasiado a otra ya recibida.",
+      "sort_order": 2,
+      "active": true
+    },
+    {
+      "code": "KNOWN_ATTACK",
+      "name": "Coincide con un fraude conocido",
+      "description": "La captura coincide con un intento de fraude ya confirmado.",
+      "sort_order": 3,
+      "active": true
+    },
+    {
+      "code": "IDENTITY",
+      "name": "Identidad poco clara",
+      "description": "El rostro coincidió con poca holgura o se parece a otra persona de la empresa.",
+      "sort_order": 4,
+      "active": true
+    },
+    {
+      "code": "CAMERA",
+      "name": "Cámara poco confiable",
+      "description": "La cámara no informó su nombre o se comportó como una cámara virtual.",
+      "sort_order": 5,
+      "active": true
+    },
+    {
+      "code": "LOCATION",
+      "name": "Ubicación poco confiable",
+      "description": "La ubicación parece simulada, cambió más rápido de lo posible o quedó en el límite del sitio.",
+      "sort_order": 6,
+      "active": true
+    },
+    {
+      "code": "ACTIVITY",
+      "name": "Actividad inusual en la empresa",
+      "description": "La empresa recibe varios intentos sospechosos en este momento.",
+      "sort_order": 7,
+      "active": true
+    },
+    {
+      "code": "DEVICE",
+      "name": "Dispositivo no reconocido",
+      "description": "El registro se hizo desde un dispositivo que la empresa no ha aprobado o que no se pudo verificar.",
+      "sort_order": 8,
+      "active": true
+    },
+    {
+      "code": "NETWORK",
+      "name": "Red poco confiable",
+      "description": "La conexión venía de un centro de datos o de otro país, o cambió de repente.",
+      "sort_order": 9,
+      "active": true
+    },
+    {
+      "code": "BROWSER",
+      "name": "Navegador poco confiable",
+      "description": "El navegador o las capturas mostraron indicios de un programa en lugar de la aplicación.",
+      "sort_order": 10,
+      "active": true
+    },
+    {
+      "code": "PRESENCE",
+      "name": "Presencia sin confirmar",
+      "description": "El registro no traía el código vigente del sitio.",
+      "sort_order": 11,
+      "active": true
+    }
+  ],
+  "risk_signals": [
+    {
+      "code": "SPOOF_PROB_LOW",
+      "name": "Probabilidad de rostro real baja",
+      "description": "El anti-spoofing pasó, pero la probabilidad de rostro real quedó cerca de su umbral.",
+      "sort_order": 1,
+      "active": true,
+      "kind": "PRESENTATION",
+      "points": 20,
+      "mode": "ENFORCE",
+      "hard": false,
+      "client": false,
+      "review_reason": "CAPTURE"
+    },
+    {
+      "code": "FLASH_WEAK",
+      "name": "Respuesta débil al destello",
+      "description": "El rostro reflejó el destello sin seguir bien los colores emitidos.",
+      "sort_order": 2,
+      "active": true,
+      "kind": "PRESENTATION",
+      "points": 15,
+      "mode": "OBSERVE",
+      "hard": false,
+      "client": false,
+      "review_reason": "CAPTURE"
+    },
+    {
+      "code": "FLASH_FLAT",
+      "name": "Destello plano (rostro igual al fondo)",
+      "description": "El rostro y el fondo respondieron igual al destello: típico de una pantalla o una foto frente a la cámara.",
+      "sort_order": 3,
+      "active": true,
+      "kind": "PRESENTATION",
+      "points": 30,
+      "mode": "OBSERVE",
+      "hard": false,
+      "client": false,
+      "review_reason": "CAPTURE"
+    },
+    {
+      "code": "REPLAY_PERCEPTUAL",
+      "name": "Reenvío perceptual",
+      "description": "Una captura casi idéntica (pHash y embedding) a otra de un intento anterior del mismo empleado. Regla dura al exigirla.",
+      "sort_order": 4,
+      "active": true,
+      "kind": "REPLAY",
+      "points": 60,
+      "mode": "OBSERVE",
+      "hard": true,
+      "client": false,
+      "review_reason": "REPLAY"
+    },
+    {
+      "code": "KNOWN_ATTACK",
+      "name": "Firma de un ataque conocido",
+      "description": "La captura coincide con las huellas de un fraude confirmado de la empresa o de la plataforma. Regla dura al exigirla.",
+      "sort_order": 5,
+      "active": true,
+      "kind": "REPLAY",
+      "points": 80,
+      "mode": "OBSERVE",
+      "hard": true,
+      "client": false,
+      "review_reason": "KNOWN_ATTACK"
+    },
+    {
+      "code": "MATCH_MARGIN_LOW",
+      "name": "Coincidencia justa",
+      "description": "El rostro coincidió apenas por encima del mínimo de la empresa.",
+      "sort_order": 6,
+      "active": true,
+      "kind": "BUDDY_PUNCHING",
+      "points": 10,
+      "mode": "ENFORCE",
+      "hard": false,
+      "client": false,
+      "review_reason": "IDENTITY"
+    },
+    {
+      "code": "CAMERA_LABEL_MISSING",
+      "name": "Cámara sin nombre",
+      "description": "La captura no informó el nombre de la cámara: la aplicación siempre lo envía; un programa, no.",
+      "sort_order": 7,
+      "active": true,
+      "kind": "INJECTION",
+      "points": 20,
+      "mode": "OBSERVE",
+      "hard": false,
+      "client": true,
+      "review_reason": "CAMERA"
+    },
+    {
+      "code": "LOCATION_EDGE",
+      "name": "Ubicación en el límite del sitio",
+      "description": "El registro quedó en el borde de la geocerca del sitio.",
+      "sort_order": 8,
+      "active": true,
+      "kind": "LOCATION",
+      "points": 10,
+      "mode": "OBSERVE",
+      "hard": false,
+      "client": true,
+      "review_reason": "LOCATION"
+    },
+    {
+      "code": "LOCATION_ROUND_ACCURACY",
+      "name": "Precisión redonda",
+      "description": "La precisión que informó el dispositivo es un número redondo, típico de una ubicación simulada.",
+      "sort_order": 9,
+      "active": true,
+      "kind": "LOCATION",
+      "points": 10,
+      "mode": "OBSERVE",
+      "hard": false,
+      "client": true,
+      "review_reason": "LOCATION"
+    },
+    {
+      "code": "COMPANY_UNDER_ATTACK",
+      "name": "Empresa bajo ataque",
+      "description": "La empresa acumula intentos sospechosos recientes (refuerzo automático).",
+      "sort_order": 10,
+      "active": true,
+      "kind": "OTHER",
+      "points": 15,
+      "mode": "ENFORCE",
+      "hard": false,
+      "client": false,
+      "review_reason": "ACTIVITY"
+    },
+    {
+      "code": "DEVICE_NEW",
+      "name": "Dispositivo nuevo",
+      "description": "El empleado checa desde un dispositivo que no había usado o que su empresa no ha aprobado (según el modo del dispositivo).",
+      "sort_order": 11,
+      "active": true,
+      "kind": "BUDDY_PUNCHING",
+      "points": 15,
+      "mode": "OBSERVE",
+      "hard": false,
+      "client": false,
+      "review_reason": "DEVICE"
+    },
+    {
+      "code": "DEVICE_KEY_MISSING",
+      "name": "Sin llave del dispositivo",
+      "description": "Falta la firma de la llave del dispositivo o no se pudo verificar: la aplicación siempre la envía; un programa o una ventana privada, no.",
+      "sort_order": 12,
+      "active": true,
+      "kind": "INJECTION",
+      "points": 25,
+      "mode": "OBSERVE",
+      "hard": false,
+      "client": false,
+      "review_reason": "DEVICE"
+    },
+    {
+      "code": "DEVICE_SHARED",
+      "name": "Dispositivo compartido",
+      "description": "El mismo dispositivo checó por varios empleados de la empresa en poco tiempo: típico de un compañero que checa por otros.",
+      "sort_order": 13,
+      "active": true,
+      "kind": "BUDDY_PUNCHING",
+      "points": 35,
+      "mode": "OBSERVE",
+      "hard": false,
+      "client": false,
+      "review_reason": "DEVICE"
+    },
+    {
+      "code": "IDENTITY_MISMATCH",
+      "name": "Se parece más a otro empleado",
+      "description": "El rostro se parece al menos tanto a otro empleado de la empresa como al verificado (1:N en cada verificación): registro con el rostro de otra persona o suplantación.",
+      "sort_order": 14,
+      "active": true,
+      "kind": "INTERNAL",
+      "points": 40,
+      "mode": "OBSERVE",
+      "hard": false,
+      "client": false,
+      "review_reason": "IDENTITY"
+    },
+    {
+      "code": "NETWORK_HOSTING",
+      "name": "Red de un centro de datos",
+      "description": "La IP es de una nube o de un centro de datos (VPN, servidor intermediario o un programa), según la base local de IP.",
+      "sort_order": 15,
+      "active": true,
+      "kind": "INJECTION",
+      "points": 20,
+      "mode": "OBSERVE",
+      "hard": false,
+      "client": false,
+      "review_reason": "NETWORK"
+    },
+    {
+      "code": "NETWORK_COUNTRY_MISMATCH",
+      "name": "Red de otro país",
+      "description": "La IP es de un país distinto al del sitio donde se checó: ubicación simulada o VPN.",
+      "sort_order": 16,
+      "active": true,
+      "kind": "LOCATION",
+      "points": 20,
+      "mode": "OBSERVE",
+      "hard": false,
+      "client": false,
+      "review_reason": "NETWORK"
+    },
+    {
+      "code": "NETWORK_JUMP",
+      "name": "Cambio de red repentino",
+      "description": "La IP cambió de país o de red desde el registro anterior, más rápido de lo creíble.",
+      "sort_order": 17,
+      "active": true,
+      "kind": "LOCATION",
+      "points": 15,
+      "mode": "OBSERVE",
+      "hard": false,
+      "client": false,
+      "review_reason": "NETWORK"
+    },
+    {
+      "code": "LOCATION_STATIC",
+      "name": "Ubicación congelada",
+      "description": "Las lecturas de la ubicación fueron idénticas (coordenadas y precisión): un GPS real siempre varía un poco; un simulador, no.",
+      "sort_order": 18,
+      "active": true,
+      "kind": "LOCATION",
+      "points": 15,
+      "mode": "OBSERVE",
+      "hard": false,
+      "client": true,
+      "review_reason": "LOCATION"
+    },
+    {
+      "code": "LOCATION_JUMP",
+      "name": "Salto de ubicación",
+      "description": "Desde el registro anterior, la ubicación se movió más rápido de lo que se puede viajar con holgura.",
+      "sort_order": 19,
+      "active": true,
+      "kind": "LOCATION",
+      "points": 20,
+      "mode": "OBSERVE",
+      "hard": false,
+      "client": true,
+      "review_reason": "LOCATION"
+    },
+    {
+      "code": "AUTOMATION",
+      "name": "Navegador automatizado",
+      "description": "El navegador muestra rastros de automatización (WebDriver, Playwright, Selenium o un navegador sin interfaz).",
+      "sort_order": 20,
+      "active": true,
+      "kind": "INJECTION",
+      "points": 30,
+      "mode": "OBSERVE",
+      "hard": false,
+      "client": true,
+      "review_reason": "BROWSER"
+    },
+    {
+      "code": "VIRTUAL_CAMERA_PRESENT",
+      "name": "Cámara virtual instalada",
+      "description": "El dispositivo tiene una cámara virtual (OBS, ManyCam…) aunque la captura no la haya usado.",
+      "sort_order": 21,
+      "active": true,
+      "kind": "INJECTION",
+      "points": 20,
+      "mode": "OBSERVE",
+      "hard": false,
+      "client": true,
+      "review_reason": "CAMERA"
+    },
+    {
+      "code": "TRACK_INCONSISTENT",
+      "name": "Cámara incoherente",
+      "description": "La cámara informó una resolución o cuadros por segundo fuera de lo que dice admitir, o no tiene identificador.",
+      "sort_order": 22,
+      "active": true,
+      "kind": "INJECTION",
+      "points": 20,
+      "mode": "OBSERVE",
+      "hard": false,
+      "client": true,
+      "review_reason": "CAMERA"
+    },
+    {
+      "code": "FRAME_TIMING_SYNTHETIC",
+      "name": "Ritmo de video sintético",
+      "description": "Los fotogramas llegaron a un ritmo exacto, sin la variación de una cámara real: típico de un video o una cámara virtual.",
+      "sort_order": 23,
+      "active": true,
+      "kind": "INJECTION",
+      "points": 20,
+      "mode": "OBSERVE",
+      "hard": false,
+      "client": true,
+      "review_reason": "CAMERA"
+    },
+    {
+      "code": "SCREEN_INCOHERENT",
+      "name": "Pantalla incoherente",
+      "description": "La pantalla no corresponde al dispositivo que dice ser (un teléfono sin pantalla táctil o con pantalla de escritorio) o no tiene medidas.",
+      "sort_order": 24,
+      "active": true,
+      "kind": "INJECTION",
+      "points": 15,
+      "mode": "OBSERVE",
+      "hard": false,
+      "client": true,
+      "review_reason": "BROWSER"
+    },
+    {
+      "code": "TELEMETRY_MISSING",
+      "name": "Sin telemetría de la captura",
+      "description": "Falta la telemetría que la aplicación siempre envía, o llegó mal formada: típico de un programa que llama a la API.",
+      "sort_order": 25,
+      "active": true,
+      "kind": "INJECTION",
+      "points": 20,
+      "mode": "OBSERVE",
+      "hard": false,
+      "client": true,
+      "review_reason": "BROWSER"
+    },
+    {
+      "code": "JPEG_TABLE_UNKNOWN",
+      "name": "Imagen de otro codificador",
+      "description": "Las capturas no tienen las tablas JPEG de la aplicación: otro programa las produjo o se mezclaron imágenes de fuentes distintas.",
+      "sort_order": 26,
+      "active": true,
+      "kind": "INJECTION",
+      "points": 20,
+      "mode": "OBSERVE",
+      "hard": false,
+      "client": false,
+      "review_reason": "BROWSER"
+    },
+    {
+      "code": "BURST_MISSING",
+      "name": "Sin ráfaga de la captura",
+      "description": "Falta la ráfaga de recortes que la aplicación siempre envía, o llegó dañada. Suele indicar un programa que llama a la API.",
+      "sort_order": 27,
+      "active": true,
+      "kind": "INJECTION",
+      "points": 15,
+      "mode": "OBSERVE",
+      "hard": false,
+      "client": true,
+      "review_reason": "BROWSER"
+    },
+    {
+      "code": "BURST_DISCONTINUOUS",
+      "name": "Ráfaga discontinua",
+      "description": "Los recortes no siguen a un mismo rostro: hay saltos, recortes sin rostro u otra persona. Suele indicar un montaje.",
+      "sort_order": 28,
+      "active": true,
+      "kind": "INJECTION",
+      "points": 25,
+      "mode": "OBSERVE",
+      "hard": false,
+      "client": false,
+      "review_reason": "CAPTURE"
+    },
+    {
+      "code": "BURST_FROZEN",
+      "name": "Imagen congelada",
+      "description": "La ráfaga casi no cambió entre recortes. Una cámara real siempre tiene ruido y movimiento; una imagen fija, no.",
+      "sort_order": 29,
+      "active": true,
+      "kind": "INJECTION",
+      "points": 25,
+      "mode": "OBSERVE",
+      "hard": false,
+      "client": false,
+      "review_reason": "CAPTURE"
+    },
+    {
+      "code": "BURST_LOOP",
+      "name": "Video en bucle",
+      "description": "La ráfaga repitió fotogramas idénticos. Una cámara real nunca repite su ruido; un video en bucle, sí.",
+      "sort_order": 30,
+      "active": true,
+      "kind": "INJECTION",
+      "points": 30,
+      "mode": "OBSERVE",
+      "hard": false,
+      "client": false,
+      "review_reason": "CAPTURE"
+    },
+    {
+      "code": "MOIRE_HIGH",
+      "name": "Patrón de pantalla",
+      "description": "El rostro muestra el patrón de píxeles de una pantalla fotografiada.",
+      "sort_order": 31,
+      "active": true,
+      "kind": "PRESENTATION",
+      "points": 15,
+      "mode": "OBSERVE",
+      "hard": false,
+      "client": false,
+      "review_reason": "CAPTURE"
+    },
+    {
+      "code": "NOISE_MISMATCH",
+      "name": "Ruido del sensor incoherente",
+      "description": "El rostro es mucho más liso que el fondo de la misma captura. Suele indicar un rostro pegado, generado o recapturado.",
+      "sort_order": 32,
+      "active": true,
+      "kind": "PRESENTATION",
+      "points": 15,
+      "mode": "OBSERVE",
+      "hard": false,
+      "client": false,
+      "review_reason": "CAPTURE"
+    },
+    {
+      "code": "PERSPECTIVE_FLAT",
+      "name": "Movimiento de superficie plana",
+      "description": "Al girar, el rostro se movió como una superficie plana, sin la perspectiva de la nariz. Suele indicar una foto inclinada.",
+      "sort_order": 33,
+      "active": true,
+      "kind": "PRESENTATION",
+      "points": 30,
+      "mode": "OBSERVE",
+      "hard": false,
+      "client": false,
+      "review_reason": "CAPTURE"
+    },
+    {
+      "code": "PULSE_ABSENT",
+      "name": "Sin pulso visible (solo se mide)",
+      "description": "La ráfaga no mostró el cambio de color de la piel con el latido. Solo se mide y nunca decide: falla seguido con poca luz o movimiento.",
+      "sort_order": 34,
+      "active": true,
+      "kind": "PRESENTATION",
+      "points": 0,
+      "mode": "OBSERVE",
+      "hard": false,
+      "client": false,
+      "review_reason": "CAPTURE"
+    },
+    {
+      "code": "FLASH_UNPACED",
+      "name": "Destello sin dictar",
+      "description": "Los colores del destello no se dictaron en vivo, así que pudieron prepararse de antemano. También pasa en redes que bloquean el canal en vivo.",
+      "sort_order": 35,
+      "active": true,
+      "kind": "INJECTION",
+      "points": 10,
+      "mode": "OBSERVE",
+      "hard": false,
+      "client": true,
+      "review_reason": "BROWSER"
+    },
+    {
+      "code": "FLASH_PACE_TIMING",
+      "name": "Destello fuera de tiempo",
+      "description": "Algún color del destello dictado se respondió fuera de su ventana, demasiado lento o demasiado rápido.",
+      "sort_order": 36,
+      "active": true,
+      "kind": "INJECTION",
+      "points": 15,
+      "mode": "OBSERVE",
+      "hard": false,
+      "client": false,
+      "review_reason": "BROWSER"
+    },
+    {
+      "code": "FLASH_PACE_MISMATCH",
+      "name": "Destello alterado",
+      "description": "Las capturas del destello no coinciden con las que se enviaron en vivo, o su comprobante no es válido. Solo una aplicación alterada lo produce.",
+      "sort_order": 37,
+      "active": true,
+      "kind": "INJECTION",
+      "points": 35,
+      "mode": "OBSERVE",
+      "hard": false,
+      "client": false,
+      "review_reason": "BROWSER"
+    },
+    {
+      "code": "VALIDATOR_UNSIGNED",
+      "name": "Identificación sin firma del dispositivo",
+      "description": "La identificación del validador no trajo la firma de su dispositivo o su reto ya había vencido. La app siempre firma; un programa con un token copiado, no.",
+      "sort_order": 38,
+      "active": true,
+      "kind": "INJECTION",
+      "points": 25,
+      "mode": "OBSERVE",
+      "hard": false,
+      "client": false,
+      "review_reason": "DEVICE"
+    },
+    {
+      "code": "VALIDATOR_SIGNATURE_INVALID",
+      "name": "Firma del dispositivo alterada",
+      "description": "La firma de la identificación no corresponde a su reto ni a su contenido. Solo una app alterada o un ataque la produce. Regla dura al exigirla.",
+      "sort_order": 39,
+      "active": true,
+      "kind": "INJECTION",
+      "points": 60,
+      "mode": "OBSERVE",
+      "hard": true,
+      "client": false,
+      "review_reason": "DEVICE"
+    },
+    {
+      "code": "VALIDATOR_KEY_MISMATCH",
+      "name": "Dispositivo distinto al de la sesión",
+      "description": "Firmó la identificación un dispositivo distinto al que inició sesión: típico de un token copiado a otro equipo. También pasa si el navegador borró su llave.",
+      "sort_order": 40,
+      "active": true,
+      "kind": "INTERNAL",
+      "points": 35,
+      "mode": "OBSERVE",
+      "hard": false,
+      "client": false,
+      "review_reason": "DEVICE"
+    },
+    {
+      "code": "VALIDATOR_LOCATION_MISSING",
+      "name": "Identificación sin ubicación",
+      "description": "El validador requiere ubicación y la identificación no la trajo: se retiró el permiso o la petición no salió de la app.",
+      "sort_order": 41,
+      "active": true,
+      "kind": "LOCATION",
+      "points": 20,
+      "mode": "OBSERVE",
+      "hard": false,
+      "client": true,
+      "review_reason": "LOCATION"
+    },
+    {
+      "code": "VALIDATOR_LOCATION_INACCURATE",
+      "name": "Ubicación imprecisa del validador",
+      "description": "La ubicación de la identificación es demasiado imprecisa para saber si el validador está en su lugar.",
+      "sort_order": 42,
+      "active": true,
+      "kind": "LOCATION",
+      "points": 10,
+      "mode": "OBSERVE",
+      "hard": false,
+      "client": true,
+      "review_reason": "LOCATION"
+    },
+    {
+      "code": "VALIDATOR_OUT_OF_ZONE",
+      "name": "Validador fuera de su lugar",
+      "description": "La identificación se hizo lejos del lugar donde opera el validador: una tableta que salió del sitio o un token usado en otro lado.",
+      "sort_order": 43,
+      "active": true,
+      "kind": "LOCATION",
+      "points": 30,
+      "mode": "OBSERVE",
+      "hard": false,
+      "client": true,
+      "review_reason": "LOCATION"
+    },
+    {
+      "code": "SITE_CODE_MISSING",
+      "name": "Registro sin código del sitio",
+      "description": "El sitio pide su código y el registro no lo trajo.",
+      "sort_order": 44,
+      "active": true,
+      "kind": "LOCATION",
+      "points": 25,
+      "mode": "OBSERVE",
+      "hard": false,
+      "client": true,
+      "review_reason": "PRESENCE"
+    },
+    {
+      "code": "SITE_CODE_INVALID",
+      "name": "Código del sitio no válido",
+      "description": "El código no es el vigente del sitio: venció, es de otro sitio o ya se usó. Suele indicar un código que alguien pasó desde el sitio.",
+      "sort_order": 45,
+      "active": true,
+      "kind": "LOCATION",
+      "points": 30,
+      "mode": "OBSERVE",
+      "hard": false,
+      "client": true,
+      "review_reason": "PRESENCE"
+    }
+  ],
+  "risk_tiers": [
+    {
+      "code": "LOW",
+      "name": "Bajo",
+      "description": "Sin señales que pesen: se permite.",
+      "tone": "success",
+      "sort_order": 1,
+      "active": true
+    },
+    {
+      "code": "MEDIUM",
+      "name": "Medio",
+      "description": "Algunas señales: por omisión pide un paso más.",
+      "tone": "warning",
+      "sort_order": 2,
+      "active": true
+    },
+    {
+      "code": "HIGH",
+      "name": "Alto",
+      "description": "Señales fuertes: por omisión el registro queda en revisión y se abre un caso.",
+      "tone": "danger",
+      "sort_order": 3,
+      "active": true
+    },
+    {
+      "code": "CRITICAL",
+      "name": "Crítico",
+      "description": "Señales muy fuertes: por omisión se niega, cuenta para el bloqueo y se abre un caso.",
+      "tone": "danger",
+      "sort_order": 4,
+      "active": true
+    }
+  ],
+  "risk_actions": [
+    {
+      "code": "ALLOW",
+      "name": "Permitir",
+      "description": "El intento sigue normalmente.",
+      "sort_order": 1,
+      "active": true
+    },
+    {
+      "code": "ALERT",
+      "name": "Permitir y avisar",
+      "description": "El intento sigue, pero se abre un caso para que el administrador lo revise.",
+      "sort_order": 2,
+      "active": true
+    },
+    {
+      "code": "STEP_UP",
+      "name": "Un paso más",
+      "description": "Se pide en el momento un reto más exigente (tres movimientos y destello obligatorio) sin repetir el escaneo.",
+      "sort_order": 3,
+      "active": true
+    },
+    {
+      "code": "REVIEW",
+      "name": "En revisión",
+      "description": "Se registra, pero la empresa debe confirmarlo o rechazarlo; se abre un caso.",
+      "sort_order": 4,
+      "active": true
+    },
+    {
+      "code": "DENY",
+      "name": "Negar",
+      "description": "Se rechaza el intento (cuenta para el bloqueo temporal) y se abre un caso.",
+      "sort_order": 5,
+      "active": true
+    }
+  ],
+  "attendance_review_statuses": [
+    {
+      "code": "PENDING",
+      "name": "En revisión",
+      "description": "El registro se guardó, pero la empresa debe confirmarlo o rechazarlo.",
+      "tone": "warning",
+      "sort_order": 1,
+      "active": true
+    },
+    {
+      "code": "CONFIRMED",
+      "name": "Confirmado",
+      "description": "La empresa confirmó que el registro es válido.",
+      "tone": "success",
+      "sort_order": 2,
+      "active": true
+    },
+    {
+      "code": "REJECTED",
+      "name": "Rechazado",
+      "description": "La empresa rechazó el registro: no lo hizo la persona o no fue en el lugar debido.",
+      "tone": "danger",
+      "sort_order": 3,
+      "active": true
+    }
+  ],
+  "employee_device_modes": [
+    {
+      "code": "OFF",
+      "name": "Apagado",
+      "description": "No se vincula el dispositivo del empleado.",
+      "sort_order": 1,
+      "active": true
+    },
+    {
+      "code": "OBSERVE",
+      "name": "Solo medir",
+      "description": "Se registra desde qué dispositivo checa cada empleado; uno nuevo o sin llave solo se anota como señal.",
+      "sort_order": 2,
+      "active": true
+    },
+    {
+      "code": "STEP_UP",
+      "name": "Un paso más en un dispositivo nuevo",
+      "description": "Un dispositivo nuevo pide un paso más (un reto más exigente); al superarlo, queda de confianza.",
+      "sort_order": 3,
+      "active": true
+    },
+    {
+      "code": "APPROVAL",
+      "name": "Aprobación de la empresa",
+      "description": "Mientras la empresa no apruebe un dispositivo nuevo, los registros desde él quedan en revisión.",
+      "sort_order": 4,
+      "active": true
+    }
+  ],
+  "policy_presets": [
+    {
+      "code": "STANDARD",
+      "name": "Estándar",
+      "description": "Para la mayoría: dos movimientos en 60 s, anti-spoofing Estándar y cortes de riesgo 30/60/80. El destello (hasta calibrarlo), el dispositivo del empleado, el protocolo de captura y la presencia de los validadores, en Solo medir.",
+      "sort_order": 1,
+      "active": true
+    },
+    {
+      "code": "HIGH",
+      "name": "Alto",
+      "description": "Más exigente: tres movimientos en 45 s, destello obligatorio, anti-spoofing Alto, reenvío perceptual obligatorio, un paso más en un dispositivo nuevo y cortes 25/50/75. El protocolo de captura y la presencia de los validadores, en Solo medir.",
+      "sort_order": 2,
+      "active": true
+    },
+    {
+      "code": "MAXIMUM",
+      "name": "Máximo",
+      "description": "Para fraude confirmado: tres movimientos en 30 s, anti-spoofing Máximo, reglas duras obligatorias, la empresa aprueba cada dispositivo y el riesgo alto se niega. Exige destello dictado y ráfaga (si faltan, un paso más), firma y ubicación de validadores y código de sitio. Más reintentos con poca luz.",
+      "sort_order": 3,
+      "active": true
+    }
+  ],
+  "policy_change_statuses": [
+    {
+      "code": "APPLIED",
+      "name": "Aplicado",
+      "description": "El cambio ya rige.",
+      "tone": "success",
+      "sort_order": 1,
+      "active": true
+    },
+    {
+      "code": "PENDING",
+      "name": "Por aprobar",
+      "description": "Relaja la seguridad: espera la aprobación de otro administrador.",
+      "tone": "warning",
+      "sort_order": 2,
+      "active": true
+    },
+    {
+      "code": "REJECTED",
+      "name": "Rechazado",
+      "description": "Otro administrador lo rechazó: no se aplicó.",
+      "tone": "danger",
+      "sort_order": 3,
+      "active": true
+    },
+    {
+      "code": "CANCELLED",
+      "name": "Cancelado",
+      "description": "Quien lo pidió lo retiró, o venció sin aprobarse.",
+      "tone": "muted",
+      "sort_order": 4,
+      "active": true
+    }
+  ],
+  "fraud_case_statuses": [
+    {
+      "code": "OPEN",
+      "name": "Abierto",
+      "description": "Sin revisar todavía.",
+      "tone": "warning",
+      "sort_order": 1,
+      "active": true
+    },
+    {
+      "code": "IN_REVIEW",
+      "name": "En revisión",
+      "description": "Un administrador lo está revisando.",
+      "tone": "info",
+      "sort_order": 2,
+      "active": true
+    },
+    {
+      "code": "CONFIRMED",
+      "name": "Fraude confirmado",
+      "description": "Se confirmó el fraude: sus huellas pasan a la lista de bloqueo y se olvida lo aprendido desde el intento.",
+      "tone": "danger",
+      "sort_order": 3,
+      "active": true
+    },
+    {
+      "code": "FALSE_POSITIVE",
+      "name": "Falso positivo",
+      "description": "No era fraude: sus huellas se liberan y el caso ayuda a calibrar.",
+      "tone": "success",
+      "sort_order": 4,
+      "active": true
+    },
+    {
+      "code": "INCONCLUSIVE",
+      "name": "No concluyente",
+      "description": "No hay elementos para decidir: solo cuenta para la estadística.",
+      "tone": "muted",
+      "sort_order": 5,
+      "active": true
+    }
+  ],
+  "fraud_case_event_kinds": [
+    {
+      "code": "OPENED",
+      "name": "Caso abierto",
+      "description": "El sistema abrió el caso por un intento sospechoso o de riesgo alto.",
+      "sort_order": 1,
+      "active": true
+    },
+    {
+      "code": "STATUS_CHANGED",
+      "name": "Cambio de estado",
+      "description": "Un administrador cambió el estado del caso.",
+      "sort_order": 2,
+      "active": true
+    },
+    {
+      "code": "NOTE",
+      "name": "Nota",
+      "description": "Un administrador agregó una nota.",
+      "sort_order": 3,
+      "active": true
+    },
+    {
+      "code": "EVIDENCE_VIEWED",
+      "name": "Evidencia consultada",
+      "description": "Un administrador vio los fotogramas de evidencia.",
+      "sort_order": 4,
+      "active": true
+    },
+    {
+      "code": "SIGNATURES_BLOCKED",
+      "name": "Huellas bloqueadas",
+      "description": "Las huellas del ataque pasaron a la lista de bloqueo.",
+      "sort_order": 5,
+      "active": true
+    },
+    {
+      "code": "SIGNATURES_RELEASED",
+      "name": "Huellas liberadas",
+      "description": "Las huellas del caso salieron de la lista de bloqueo.",
+      "sort_order": 6,
+      "active": true
+    },
+    {
+      "code": "LEARNING_FORGOTTEN",
+      "name": "Aprendizaje olvidado",
+      "description": "Se olvidó lo que el reconocimiento aprendió del empleado desde el intento.",
+      "sort_order": 7,
+      "active": true
+    }
+  ],
   "menu_modules": [
     {
       "code": "PLATFORM",
@@ -3909,11 +5574,19 @@
       "active": true
     },
     {
+      "code": "BUSINESS",
+      "name": "Negocio",
+      "description": "Cobranza de las empresas y su consumo de la plataforma.",
+      "icon": "Wallet",
+      "sort_order": 2,
+      "active": true
+    },
+    {
       "code": "OPERATIONS",
       "name": "Operación",
-      "description": "Salud del sistema: errores y estado del servidor.",
+      "description": "Salud del sistema: errores, rendimiento y estado del servidor.",
       "icon": "Activity",
-      "sort_order": 2,
+      "sort_order": 3,
       "active": true
     },
     {
@@ -3921,7 +5594,7 @@
       "name": "General",
       "description": "Resumen de la empresa.",
       "icon": "LayoutDashboard",
-      "sort_order": 3,
+      "sort_order": 4,
       "active": true
     },
     {
@@ -3929,15 +5602,15 @@
       "name": "Personal",
       "description": "Empleados, departamentos y la validación de sus registros faciales.",
       "icon": "Users",
-      "sort_order": 4,
+      "sort_order": 5,
       "active": true
     },
     {
       "code": "ATTENDANCE",
       "name": "Asistencia",
-      "description": "El día a día: tablero, turnos, calendario de días libres y sitios donde se checa.",
+      "description": "Tablero, turnos, calendario de días libres y sitios.",
       "icon": "Clock",
-      "sort_order": 5,
+      "sort_order": 6,
       "active": true
     },
     {
@@ -3945,15 +5618,15 @@
       "name": "Control de acceso",
       "description": "Validadores que identifican a los empleados en un acceso.",
       "icon": "ScanLine",
-      "sort_order": 6,
+      "sort_order": 7,
       "active": true
     },
     {
       "code": "DATA",
       "name": "Conexiones",
-      "description": "Conexión de la información de la empresa con sus otros sistemas (nómina, ERP).",
+      "description": "Conexión con otros sistemas de la empresa (nómina, ERP).",
       "icon": "KeyRound",
-      "sort_order": 7,
+      "sort_order": 8,
       "active": true
     },
     {
@@ -3961,7 +5634,7 @@
       "name": "Mi trabajo",
       "description": "Entrada, descansos y salida de su turno.",
       "icon": "Clock",
-      "sort_order": 8,
+      "sort_order": 9,
       "active": true
     },
     {
@@ -3969,7 +5642,7 @@
       "name": "Mi identidad",
       "description": "Registro facial, identificación y código QR.",
       "icon": "ScanFace",
-      "sort_order": 9,
+      "sort_order": 10,
       "active": true
     },
     {
@@ -3977,7 +5650,7 @@
       "name": "Cuenta",
       "description": "Empresa en que opera y su perfil.",
       "icon": "UserCircle2",
-      "sort_order": 10,
+      "sort_order": 11,
       "active": true
     }
   ],
@@ -3996,7 +5669,7 @@
     {
       "code": "ADMIN_COMPANIES",
       "name": "Empresas",
-      "description": "Alta, consulta, edición, activación y eliminación de empresas y sus administradores.",
+      "description": "Alta y administración de empresas y sus administradores.",
       "sort_order": 2,
       "active": true,
       "path": "/admin/companies",
@@ -4007,7 +5680,7 @@
     {
       "code": "ADMIN_ERRORS",
       "name": "Errores del sistema",
-      "description": "Errores registrados en el backend (cualquiera, hasta el más pequeño) y su seguimiento.",
+      "description": "Fallas del servidor y de la aplicación web, y su seguimiento.",
       "sort_order": 3,
       "active": true,
       "path": "/admin/errors",
@@ -4018,7 +5691,7 @@
     {
       "code": "ADMIN_FACE_SECURITY",
       "name": "Seguridad facial",
-      "description": "Lo que la plataforma ajustó sola para endurecer la prueba de vida, las empresas bajo ataque y lo medido del destello.",
+      "description": "Ajustes automáticos de la prueba de vida, empresas bajo ataque y mediciones del destello.",
       "sort_order": 4,
       "active": true,
       "path": "/admin/face-security",
@@ -4027,8 +5700,52 @@
       "badge": null
     },
     {
+      "code": "ADMIN_FRAUD_CASES",
+      "name": "Casos de fraude",
+      "description": "Revisión de intentos sospechosos o de riesgo alto con su evidencia.",
+      "sort_order": 6,
+      "active": true,
+      "path": "/admin/fraud-cases",
+      "short_name": "Fraude",
+      "icon": "ShieldAlert",
+      "badge": "OPEN_FRAUD_CASES"
+    },
+    {
+      "code": "ADMIN_BILLING",
+      "name": "Cobranza",
+      "description": "Plan, cargos, pagos y saldo de cada empresa; suspensión por falta de pago y reactivación.",
+      "sort_order": 3,
+      "active": true,
+      "path": "/admin/billing",
+      "short_name": null,
+      "icon": "Receipt",
+      "badge": null
+    },
+    {
+      "code": "ADMIN_USAGE",
+      "name": "Consumo",
+      "description": "Peticiones, datos, tiempo de proceso, errores y almacenamiento por empresa y por usuario.",
+      "sort_order": 4,
+      "active": true,
+      "path": "/admin/usage",
+      "short_name": null,
+      "icon": "Gauge",
+      "badge": null
+    },
+    {
+      "code": "ADMIN_PERFORMANCE",
+      "name": "Rendimiento",
+      "description": "Tiempos de respuesta de las APIs, funciones clave, base de datos y pantallas; alertas de peticiones lentas.",
+      "sort_order": 5,
+      "active": true,
+      "path": "/admin/performance",
+      "short_name": null,
+      "icon": "Timer",
+      "badge": "OPEN_SLOW_ALERTS"
+    },
+    {
       "code": "COMPANY_DASHBOARD",
-      "name": "Dashboard",
+      "name": "Panel",
       "description": "Resumen de la empresa: empleados y validaciones pendientes.",
       "sort_order": 4,
       "active": true,
@@ -4079,12 +5796,12 @@
       "path": "/company/attendance",
       "short_name": "Tablero",
       "icon": "Clock",
-      "badge": null
+      "badge": "PENDING_ATTENDANCE_REVIEWS"
     },
     {
       "code": "COMPANY_SHIFTS",
       "name": "Turnos",
-      "description": "Turnos de trabajo, su asignación a uno o varios empleados y las solicitudes de cambio de turno.",
+      "description": "Turnos, su asignación a los empleados y las solicitudes de cambio.",
       "sort_order": 9,
       "active": true,
       "path": "/company/shifts",
@@ -4095,7 +5812,7 @@
     {
       "code": "COMPANY_CALENDAR",
       "name": "Calendario",
-      "description": "Días festivos, vacaciones, permisos e incapacidades: qué días no se trabaja (y quién sí).",
+      "description": "Días festivos, vacaciones, permisos e incapacidades.",
       "sort_order": 10,
       "active": true,
       "path": "/company/calendar",
@@ -4128,12 +5845,23 @@
     {
       "code": "COMPANY_API",
       "name": "Integraciones (API)",
-      "description": "Llaves de la API para conectar los sistemas de la empresa (nómina, ERP) con su información.",
+      "description": "Llaves de la API para conectar otros sistemas (nómina, ERP).",
       "sort_order": 13,
       "active": true,
       "path": "/company/integrations",
       "short_name": "API",
       "icon": "KeyRound",
+      "badge": null
+    },
+    {
+      "code": "COMPANY_DOCUMENTS",
+      "name": "Documentos",
+      "description": "Documentos de la empresa para su facturación: constancia fiscal, acta constitutiva y más.",
+      "sort_order": 14,
+      "active": true,
+      "path": "/company/documents",
+      "short_name": null,
+      "icon": "FileText",
       "badge": null
     },
     {
@@ -4150,7 +5878,7 @@
     {
       "code": "EMPLOYEE_ATTENDANCE",
       "name": "Mi asistencia",
-      "description": "Entrada, descansos y salida de su turno (con su rostro y su ubicación) y sus vacaciones o permisos.",
+      "description": "Entrada, descansos y salida con rostro y ubicación; vacaciones y permisos.",
       "sort_order": 15,
       "active": true,
       "path": "/employee/attendance",
@@ -4244,6 +5972,22 @@
     },
     {
       "role_code": "ADMIN",
+      "screen_code": "ADMIN_FRAUD_CASES"
+    },
+    {
+      "role_code": "ADMIN",
+      "screen_code": "ADMIN_BILLING"
+    },
+    {
+      "role_code": "ADMIN",
+      "screen_code": "ADMIN_USAGE"
+    },
+    {
+      "role_code": "ADMIN",
+      "screen_code": "ADMIN_PERFORMANCE"
+    },
+    {
+      "role_code": "ADMIN",
       "screen_code": "PROFILE"
     },
     {
@@ -4285,6 +6029,10 @@
     {
       "role_code": "COMPANY",
       "screen_code": "COMPANY_API"
+    },
+    {
+      "role_code": "COMPANY",
+      "screen_code": "COMPANY_DOCUMENTS"
     },
     {
       "role_code": "COMPANY",
@@ -4342,6 +6090,22 @@
     },
     {
       "screen_code": "ADMIN_FACE_SECURITY",
+      "module_code": "OPERATIONS"
+    },
+    {
+      "screen_code": "ADMIN_FRAUD_CASES",
+      "module_code": "OPERATIONS"
+    },
+    {
+      "screen_code": "ADMIN_BILLING",
+      "module_code": "BUSINESS"
+    },
+    {
+      "screen_code": "ADMIN_USAGE",
+      "module_code": "BUSINESS"
+    },
+    {
+      "screen_code": "ADMIN_PERFORMANCE",
       "module_code": "OPERATIONS"
     },
     {
@@ -4410,6 +6174,10 @@
     },
     {
       "screen_code": "EMPLOYEE_SELECT_COMPANY",
+      "module_code": "ACCOUNT"
+    },
+    {
+      "screen_code": "COMPANY_DOCUMENTS",
       "module_code": "ACCOUNT"
     },
     {

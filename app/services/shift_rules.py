@@ -21,8 +21,8 @@ from typing import Protocol
 from zoneinfo import ZoneInfo
 
 MINUTES_PER_DAY = 24 * 60
-#: Nombre de cada día (lunes = 0, como date.weekday()).
-WEEKDAY_NAMES = ("lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo")
+#: Llave del nombre de cada día en el catálogo de mensajes (lunes = 0, como date.weekday()).
+WEEKDAY_NAMES = ("MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY")
 
 
 class ClockTimes(Protocol):

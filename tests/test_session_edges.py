@@ -163,3 +163,14 @@ def test_a_password_hashed_with_old_parameters_is_upgraded_at_sign_in(client):
         upgraded = _user(db, ADMIN_EMAIL).password_hash
     assert upgraded != legacy and not password_needs_rehash(upgraded)
     assert verify_password(ADMIN_PASSWORD, upgraded)
+
+
+def test_a_session_that_no_longer_exists_is_closed(client, company_headers):
+    """La sesión del token ya no está en la base (la depuró el mantenimiento al vencer): 401 SESSION_REVOKED, igual que
+    una revocada (antes lo provocaba borrar la cuenta; con el borrado lógico la sesión se conserva revocada)."""
+    with SessionLocal() as db:
+        for session in db.query(AuthSession).all():
+            db.delete(session)
+        db.commit()
+    response = client.get("/api/users/me", headers=company_headers)
+    assert response.status_code == 401 and response.json()["code"] == "SESSION_REVOKED"

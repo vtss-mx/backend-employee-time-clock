@@ -49,7 +49,7 @@ def test_company_manages_its_departments(client, company_headers):
     assert same.status_code == 200  # su propio nombre no choca consigo
 
     assert client.delete(f"{URL}/{hr['id']}", headers=company_headers).json()["code"] == "DEPARTMENT_DELETED"
-    assert client.get(f"{URL}/{hr['id']}", headers=company_headers).status_code == 404
+    assert client.get(f"{URL}/{hr['id']}", headers=company_headers).json()["data"]["deleted_at"]  # en «Eliminados»
 
 
 def test_employees_and_managers_of_a_department(client, company_headers):

@@ -7,7 +7,6 @@ from sqlalchemy import (
     ColumnElement,
     DateTime,
     Float,
-    ForeignKey,
     ForeignKeyConstraint,
     Index,
     Integer,
@@ -21,6 +20,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
 from app.core.db_schemas import BIOMETRICS, WORKFORCE
+from app.models.mixins import company_fk
 
 if TYPE_CHECKING:
     from app.models.employee import Employee
@@ -44,6 +44,18 @@ class FaceEmbedding(Base):
         # cada identificación 1:N mientras dure la migración) se resuelve sin leer la tabla: 53 → 2 ms
         # con 265 k muestras (migración 0047). También sirve a la FK del empleado.
         Index("ix_face_embeddings_employee_active", "employee_id", "active", "model_name", "created_at"),
+        # Galería de una empresa (huella en CADA identificación 1:N, índice y muestras, lo aprendido): solo
+        # las muestras activas de SU empresa, sin unir con los empleados de toda la plataforma.
+        Index(
+            "ix_face_embeddings_company_model",
+            "company_id",
+            "model_name",
+            postgresql_include=["id", "employee_id"],
+            postgresql_where=text("active"),
+            sqlite_where=text("active"),
+        ),
+        # El empleado es de la MISMA empresa de la muestra (FK compuesta).
+        company_fk("face_embeddings", "employee_id", f"{WORKFORCE}.employees"),
         # El embedding es del mismo empleado que su registro facial (lo garantiza la base).
         ForeignKeyConstraint(
             ["enrollment_id", "employee_id"],
@@ -59,13 +71,12 @@ class FaceEmbedding(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    employee_id: Mapped[int] = mapped_column(
-        ForeignKey(f"{WORKFORCE}.employees.id", ondelete="CASCADE"), nullable=False
-    )
-    # Registro facial del que proviene; los embeddings solo se activan al aprobarse.
-    enrollment_id: Mapped[int | None] = mapped_column(
-        ForeignKey(f"{BIOMETRICS}.face_enrollments.id", ondelete="CASCADE"), index=True
-    )
+    #: Empresa del empleado (copia): la galería de una empresa se lee sin unir tablas y con seguridad por fila.
+    company_id: Mapped[int] = mapped_column(nullable=False)
+    employee_id: Mapped[int] = mapped_column(nullable=False)
+    # Registro facial del que proviene (del MISMO empleado: FK compuesta); los embeddings solo se activan al
+    # aprobarse. Su índice sirve a esa FK y a activar o borrar las muestras de un registro.
+    enrollment_id: Mapped[int | None] = mapped_column(index=True)
     embedding_encrypted: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
     model_name: Mapped[str] = mapped_column(String(50), nullable=False)
     dimension: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -79,7 +90,11 @@ class FaceEmbedding(Base):
     last_matched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
-    employee: Mapped[Employee] = relationship(back_populates="face_embeddings", foreign_keys=[employee_id])
+    employee: Mapped[Employee] = relationship(
+        back_populates="face_embeddings",
+        primaryjoin="FaceEmbedding.employee_id == Employee.id",
+        foreign_keys=[employee_id],
+    )
 
 
 def last_useful() -> ColumnElement[datetime]:

@@ -7,7 +7,9 @@ de cargar justo antes) y para revisar cómo se arma el pool según la configurac
 """
 
 import struct
+import threading
 import zlib
+from contextvars import ContextVar
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -266,3 +268,27 @@ def test_a_request_leases_a_worker_and_returns_it(monkeypatch):
         assert pipeline == "pipeline-0"
         assert face_pool().stats().busy == 1 and face_engine_status()["queue"]["busy"] == 1
     assert face_engine_status()["queue"]["busy"] == 0 and face_engine_status()["queue"]["processed"] == 1
+
+
+def test_parallel_work_runs_on_a_spare_worker_with_the_request_context(monkeypatch):
+    """`run_on_spare` (la ráfaga en otro núcleo): un worker libre, en otro hilo, con el contexto de la petición; sin uno
+    libre, sin el motor cargado o con el proceso apagándose, None (la petición lo hace con el suyo) y nada queda
+    ocupado."""
+    holder = _PipelineHolder()
+    monkeypatch.setattr(face_module, "_holder", holder)
+    assert face_module.run_on_spare(lambda spare: spare) is None  # sin cargar: un repuesto nunca carga los modelos
+    holder._pool = WorkerPool(lambda i: f"pipeline-{i}", size=2, max_waiting=1, wait_timeout=1)
+    marker: ContextVar[str | None] = ContextVar("marker", default=None)
+    marker.set("petición")
+    with lease_pipeline() as mine:
+        future = face_module.run_on_spare(lambda spare: (spare, marker.get(), threading.current_thread().name))
+        assert future is not None
+        spare, seen, thread = future.result(timeout=5)
+        assert spare != mine and seen == "petición" and thread.startswith("face-spare")
+        assert face_pool().stats().busy == 1  # el repuesto ya regresó
+        taken = face_pool().try_acquire()  # los dos ocupados: no hay repuesto
+        assert face_module.run_on_spare(lambda spare: spare) is None
+        face_pool().release(taken)
+        holder.spare_threads(2).shutdown()  # el proceso se apaga: no acepta hilos nuevos
+        assert face_module.run_on_spare(lambda spare: spare) is None
+        assert face_pool().stats().busy == 1

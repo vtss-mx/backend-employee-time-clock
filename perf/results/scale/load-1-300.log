@@ -1,0 +1,57 @@
+ Image grafana/k6:latest Pulling 
+ 4f4fb700ef54 Pulling fs layer 0B
+ 460c68aff3e0 Pulling fs layer 0B
+ 2043a1e748be Pulling fs layer 0B
+ 44136fa355b3 Already exists 0B
+ 4f4fb700ef54 Already exists 0B
+ 4f4fb700ef54 Pull complete 0B
+ 608497185493 Download complete 0B
+ 460c68aff3e0 Download complete 0B
+ 460c68aff3e0 Pull complete 0B
+ 2043a1e748be Downloading 2.097MB
+ 2043a1e748be Downloading 7.34MB
+ 2043a1e748be Downloading 11.53MB
+ 2043a1e748be Downloading 13.63MB
+ 2043a1e748be Downloading 18.87MB
+ 2043a1e748be Downloading 24.12MB
+ 2043a1e748be Downloading 27.26MB
+ 2043a1e748be Download complete 0B
+ 2043a1e748be Extracting 1B
+ 2043a1e748be Extracting 1B
+ 2043a1e748be Pull complete 0B
+ Image grafana/k6:latest Pulled 
+ Container timeclock-scale-k6-run-196946b9fd6c Creating 
+ Container timeclock-scale-k6-run-196946b9fd6c Created 
+
+
+  █ TOTAL RESULTS 
+
+    checks_total.......: 5963   282.751004/s
+    checks_succeeded...: 97.73% 5828 out of 5963
+    checks_failed......: 2.26%  135 out of 5963
+
+    ✗ respuesta 200
+      ↳  97% — ✓ 5828 / ✗ 135
+
+    CUSTOM
+    shed_503.......................: 135    6.401373/s
+
+    HTTP
+    http_req_duration..............: avg=861.49ms p(50)=617.47ms p(95)=2.54s p(99)=5.01s max=5.35s
+      { expected_response:true }...: avg=765.25ms p(50)=605.23ms p(95)=1.96s p(99)=3.52s max=5.35s
+    http_req_failed................: 2.26%  135 out of 5964
+    http_reqs......................: 5964   282.798422/s
+
+    EXECUTION
+    dropped_iterations.............: 37     1.75445/s
+    iteration_duration.............: avg=861.73ms p(50)=617.69ms p(95)=2.54s p(99)=5.01s max=5.35s
+    iterations.....................: 5963   282.751004/s
+    vus............................: 61     min=61          max=323
+    vus_max........................: 333    min=300         max=333
+
+    NETWORK
+    data_received..................: 96 MB  4.6 MB/s
+    data_sent......................: 3.3 MB 156 kB/s
+
+
+

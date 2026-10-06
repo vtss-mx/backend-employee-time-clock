@@ -9,6 +9,7 @@ import cv2
 import numpy as np
 import pytest
 
+from app.core.config import settings
 from app.core.database import SessionLocal
 from app.core.exceptions import PermissionDeniedError, UnprocessableError
 from app.models import FaceEnrollment, User
@@ -23,6 +24,7 @@ from tests.conftest import (
     submit_enrollment,
     turn_files,
 )
+from tests.storage_support import swap_object
 from tests.test_capture_security import employee_id
 from tests.test_in_person_face import in_person
 
@@ -56,12 +58,15 @@ def test_only_active_employees_of_the_company_enroll(client, company_headers):
         _submit("juan@empresa.com", [b"face:juan"])
 
 
-def test_an_enrollment_takes_one_to_five_frontal_captures(client, company_headers):
+def test_an_enrollment_takes_one_to_the_configured_number_of_photos(client, company_headers):
+    """Desde una foto (una app anterior manda 5) hasta FACE_ENROLL_MAX_PHOTOS (36): la ruta ya lo limita; el servicio
+    lo vuelve a revisar."""
     assert create_employee(client, company_headers).status_code == 201
-    for images in ([], [b"face:juan"] * 6):
+    for images in ([], [b"face:juan"] * (settings.FACE_ENROLL_MAX_PHOTOS + 1)):
         with pytest.raises(UnprocessableError) as error:
             _submit("juan@empresa.com", images)
         assert error.value.code == "INVALID_FRAME_COUNT"
+        assert error.value.message == f"Envía entre 1 y {settings.FACE_ENROLL_MAX_PHOTOS} capturas frontales"
 
 
 def test_an_approved_face_is_not_enrolled_again(client, company_headers):
@@ -70,12 +75,13 @@ def test_an_approved_face_is_not_enrolled_again(client, company_headers):
     assert again.status_code == 409 and again.json()["code"] == "ENROLLMENT_APPROVED"
 
 
-def test_an_unreadable_photo_still_shows_the_enrollment_to_the_reviewer(client, company_headers, caplog):
+def test_an_unreadable_photo_still_shows_the_enrollment_to_the_reviewer(client, company_headers, bucket, caplog):
     assert create_employee(client, company_headers).status_code == 201
     headers = login(client, "juan@empresa.com", "Empleado123")
     enrollment = submit_enrollment(client, headers).json()["data"]["enrollment_id"]
-    with SessionLocal() as db:
-        db.get(FaceEnrollment, enrollment).photo_encrypted = b"cifrada-con-otra-llave"
+    with SessionLocal() as db:  # su objeto en el bucket está cifrado con otra llave
+        row = db.get(FaceEnrollment, enrollment)
+        row.photo_sha256 = swap_object(bucket, row.photo_object)
         db.commit()
 
     with caplog.at_level(logging.ERROR, logger="app.services.enrollment_service"):

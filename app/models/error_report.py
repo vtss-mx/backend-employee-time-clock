@@ -17,6 +17,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
 from app.core.db_schemas import AUTH, CATALOG, OPS
+from app.core.partitions import partitioned
 
 
 class ErrorReport(Base):
@@ -83,14 +84,15 @@ class ErrorReport(Base):
 
 
 class ErrorOccurrence(Base):
-    """Ocurrencias recientes de un error (pocas por vuelta de guardado; el mantenimiento depura las
-    viejas): quién, cuándo, con qué traceId y en qué empresa, para investigar."""
+    """Ocurrencias recientes de un error (pocas por vuelta de guardado): quién, cuándo, con qué traceId y en
+    qué empresa, para investigar. Particionada por mes en `occurred_at` (`app/core/partitions.py`): lo que pasa
+    de ERROR_OCCURRENCE_RETENTION_DAYS días sale con su partición."""
 
     __tablename__ = "error_occurrences"
     __table_args__ = (
         Index("ix_error_occurrences_report", "report_id", "id"),
         Index("ix_error_occurrences_occurred_at", "occurred_at"),
-        {"schema": OPS},
+        {"schema": OPS, **partitioned("occurred_at")},
     )
 
     id: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True)

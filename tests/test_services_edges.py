@@ -77,7 +77,7 @@ def test_while_one_request_reloads_the_catalogs_the_others_keep_the_previous_one
     finally:
         release.set()
         reloader.join(WAIT_SECONDS)
-    assert reloaded and reloaded[0] is not previous and reloaded[0].name("roles", "ADMIN")
+    assert reloaded and reloaded[0] is not previous and reloaded[0]["es-MX"].name("roles", "ADMIN")
 
 
 def test_without_previous_catalogs_a_database_failure_is_reported_and_retried(monkeypatch):
@@ -93,7 +93,7 @@ def test_without_previous_catalogs_a_database_failure_is_reported_and_retried(mo
     with pytest.raises(OperationalError):
         cache.get()
     monkeypatch.setattr(catalog_service, "SessionLocal", real_session)
-    assert cache.get().name("roles", "COMPANY")  # no quedó atorada "recargando"
+    assert cache.get()["en-US"].name("roles", "COMPANY")  # no quedó atorada "recargando"
 
 
 # ---------------------------------------------------------------- empresas y usuarios iniciales
@@ -103,8 +103,8 @@ def test_a_company_cannot_take_the_rfc_of_another(client, admin_headers):
     create_company(client, admin_headers)
     other = create_company(client, admin_headers, rfc="ACM010101AB2", admin_email="admin@acme.com").json()["data"]
     taken = client.put(f"/api/admin/companies/{other['id']}", json={"rfc": "PNO120315AB1"}, headers=admin_headers)
-    assert taken.status_code == 409 and taken.json()["code"] == "COMPANY_RFC_TAKEN"
-    assert taken.json()["errors"][0]["field"] == "rfc"
+    assert taken.status_code == 409 and taken.json()["code"] == "COMPANY_TAX_ID_TAKEN"
+    assert taken.json()["errors"][0]["field"] == "tax_id"
 
 
 def test_the_first_company_admin_is_created_from_the_environment(monkeypatch, caplog):
@@ -234,7 +234,7 @@ def test_an_empty_company_phone_is_reported_as_empty(client, admin_headers):
 def test_the_policy_cache_forgets_the_least_used_company(client, admin_headers, monkeypatch):
     """La caché por proceso no crece sin límite: al pasarse del tope sale la menos usada."""
     other = create_company(client, admin_headers).json()["data"]["id"]
-    monkeypatch.setattr(policy_service, "_CACHE_MAX_COMPANIES", 1)
+    monkeypatch.setattr(settings, "POLICY_CACHE_COMPANIES", 1)
     with SessionLocal() as db:
         mine = _company_of(db, COMPANY_EMAIL)
         first = PolicyService(db, mine).current()

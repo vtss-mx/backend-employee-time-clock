@@ -1,10 +1,39 @@
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.facial_recognition.pose import LivenessAction
 from app.models.enums import VerificationMethod
 from app.schemas.common import Page
+
+
+class BurstSpec(BaseModel):
+    """La ráfaga corta de recortes del rostro que el servidor pide con el reto (antifraude 2a, decisión D11): lado de
+    cada recorte (px), cuántos del tramo quieto (de frente) y del de movimiento (el primer giro o cabeceo), cuadros por
+    segundo, calidad JPEG de la hoja, cuánto más grande que el rostro es la zona recortada, su tamaño máximo (bytes) y
+    los recortes mínimos para analizarla (con menos, la app no la manda). Nunca se guarda: se analiza en memoria y se
+    descarta."""
+
+    tile: int
+    hold: int
+    move: int
+    fps: int
+    quality: float
+    margin: float
+    max_bytes: int
+    min_frames: int
+
+
+class FlashPace(BaseModel):
+    """El destello dictado por el servidor (antifraude 2a): los colores NO viajan con el reto. La app manda `token` por
+    el canal en vivo (`{"type": "flash", "token": ...}`) y recibe cada color con el token siguiente; responde cada uno
+    con la huella SHA-256 de su captura dentro de `window_ms`. Sin canal, pide los colores de siempre con
+    `POST /api/face/challenge/flash` (y el intento se marca como no dictado)."""
+
+    token: str
+    #: Colores que se dictarán.
+    total: int
+    window_ms: int
 
 
 class FaceChallengeResponse(BaseModel):
@@ -33,6 +62,27 @@ class FaceChallengeResponse(BaseModel):
     #: El destello es obligatorio (si no, se mide pero no bloquea).
     flash_required: bool = False
     expires_in: int | None = None
+    #: Reto de "un paso más" (el motor de riesgo lo pidió): el máximo de movimientos y el destello obligatorio.
+    step_up: bool = False
+    #: Reto que firma la llave del dispositivo del empleado y vuelve con las capturas (`device_nonce`,
+    #: `device_signature`, `device_key`); None si su empresa no vincula dispositivos (decisión D2).
+    device_nonce: str | None = None
+    #: Antifraude 2a: el destello dictado por el servidor (entonces `flash` va vacío) y la ráfaga que se pide con las
+    #: capturas; None si la empresa no los usa.
+    flash_pace: FlashPace | None = None
+    burst: BurstSpec | None = None
+
+
+class FlashTokenIn(BaseModel):
+    """El token inicial del destello dictado (para pedir los colores de siempre cuando no hay canal en vivo)."""
+
+    token: str = Field(min_length=1, max_length=4096)
+
+
+class FlashColors(BaseModel):
+    """Los colores del destello de siempre (#RRGGBB, en orden): el respaldo sin canal en vivo."""
+
+    flash: list[str]
 
 
 class ValidatorAttendance(BaseModel):
@@ -54,6 +104,10 @@ class VerificationResult(BaseModel):
     verified_at: datetime | None = None
     #: Solo en un validador: la entrada o salida del turno que registró esta identificación.
     attendance: ValidatorAttendance | None = None
+    #: El motor de riesgo dejó el registro "en revisión": queda guardado, pero la empresa lo confirma o rechaza.
+    review: bool = False
+    #: Solo en un validador (antifraude 2b): el reto que firma su dispositivo en la siguiente identificación.
+    device_nonce: str | None = None
 
     model_config = {
         "json_schema_extra": {

@@ -27,4 +27,4 @@ router = APIRouter(
     description="La leen todos los usuarios autenticados: el empleado ve qué se le exigirá antes de escanear.",
 )
 def get_verification_policy(company: MemberCompany, db: DbSession) -> ApiResponse[VerificationPolicyRead]:
-    return ok(PolicyService(db, company).read(author=False), "Política de verificación", code="POLICY")
+    return ok(PolicyService(db, company).read(), code="POLICY")

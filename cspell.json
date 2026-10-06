@@ -1,0 +1,88 @@
+{
+  "$schema": "https://raw.githubusercontent.com/streetsidesoftware/cspell/main/cspell.schema.json",
+  "version": "0.2",
+  "description": "Ortografía de los textos del backend (regla 16): el catálogo de mensajes (app/i18n/messages: es_mx solo contra el diccionario de español y en_us solo contra el de inglés de Estados Unidos) y los textos de los catálogos de la BD (alembic/seed/catalogs.json en español, catalogs.en-US.json en inglés). Reutiliza la instalación de cspell, el diccionario de español y las listas de palabras propias revisadas de la aplicación web (no se duplican: es la misma regla para toda la plataforma). Distingue mayúsculas y acentos. Revisa solo los textos: no las llaves, los códigos, los {marcadores}, los comentarios ni los docstrings. Se corre desde la raíz: ./scripts/quality.sh --only=backend (o: cd webapp-employee-time-clock && npx cspell --no-progress --config ../backend-employee-time-clock/cspell.json).",
+  "import": [
+    "../webapp-employee-time-clock/node_modules/@cspell/dict-es-es/cspell-ext.json"
+  ],
+  "caseSensitive": true,
+  "minWordLength": 3,
+  "dictionaryDefinitions": [
+    {
+      "name": "project-words",
+      "path": "../webapp-employee-time-clock/cspell-words.txt",
+      "addWords": true
+    },
+    {
+      "name": "project-words-es",
+      "path": "../webapp-employee-time-clock/cspell-words.es-MX.txt",
+      "addWords": true
+    },
+    {
+      "name": "project-words-en",
+      "path": "../webapp-employee-time-clock/cspell-words.en-US.txt",
+      "addWords": true
+    }
+  ],
+  "dictionaries": [
+    "project-words"
+  ],
+  "files": [
+    "app/i18n/messages/es_mx/*.py",
+    "app/i18n/messages/en_us/*.py",
+    "alembic/seed/catalogs.json",
+    "alembic/seed/catalogs.en-US.json"
+  ],
+  "overrides": [
+    {
+      "filename": "app/i18n/messages/**/*.py",
+      "languageId": "plaintext",
+      "includeRegExpList": [
+        "/\"(?:[^\"\\\\\\n]|\\\\.)*\"|'(?:[^'\\\\\\n]|\\\\.)*'/g"
+      ],
+      "ignoreRegExpList": [
+        "/\"\"\"[\\s\\S]*?\"\"\"/g",
+        "/^\\s*#.*$/gm",
+        "/\"[A-Za-z0-9_]+\"(?=\\s*:)/g",
+        "/\\{\\w+\\}/g",
+        "/^from .*$/gm",
+        "/`[^`\\n]*`/g",
+        "/\\b[A-Z0-9]*\\d[A-Z0-9]*\\b/g"
+      ]
+    },
+    {
+      "filename": "alembic/seed/*.json",
+      "languageId": "plaintext",
+      "includeRegExpList": [
+        "/(?<=\"(?:name|description|message|phrase|instruction|employee_note|short_name)\":\\s*\")(?:[^\"\\\\]|\\\\.)*/g"
+      ],
+      "ignoreRegExpList": [
+        "/\\{\\w+\\}/g",
+        "/(?<=[\\s(])\\/[\\w/{}.-]+/g",
+        "/\\b[a-z]+(?:[._][a-z]+)+\\b/g",
+        "/\\(phrase\\)/g",
+        "/\\d*N-ésimo/g"
+      ]
+    },
+    {
+      "filename": [
+        "app/i18n/messages/es_mx/**",
+        "alembic/seed/catalogs.json"
+      ],
+      "language": "es",
+      "dictionaries": [
+        "project-words-es"
+      ]
+    },
+    {
+      "filename": [
+        "app/i18n/messages/en_us/**",
+        "alembic/seed/catalogs.en-US.json"
+      ],
+      "language": "en-US",
+      "dictionaries": [
+        "project-words-en"
+      ]
+    }
+  ]
+}

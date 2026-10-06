@@ -6,13 +6,14 @@ trabaja (festivo o ausencia aprobada, sin tenerlo como laborable) aparece como "
 motivo, nunca como falta; si aun así registró su jornada, manda la jornada.
 """
 
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 
 from sqlalchemy.orm import Session
 
 from app.core.clock import as_utc, business_today
-from app.core.exceptions import NotFoundError, UnprocessableError
-from app.models import BoardState, Employee, WorkSession, WorkSessionStatus
+from app.core.exceptions import ConflictError, NotFoundError, UnprocessableError
+from app.models import AttendanceReviewStatus, BoardState, Employee, User, WorkSession, WorkSessionStatus
+from app.repositories.aggregates import LOG_COUNT_CAP, get_scoped
 from app.repositories.attendance_repository import AttendanceRepository
 from app.repositories.department_repository import DepartmentRepository
 from app.repositories.shift_repository import ShiftRepository
@@ -20,6 +21,7 @@ from app.schemas.attendance import (
     AttendanceBoard,
     AttendanceEventRead,
     AttendanceHistory,
+    AttendanceReviewDecision,
     BoardRow,
     CompanySessionDetail,
     CompanySessionList,
@@ -35,6 +37,8 @@ from app.services.shift_service import employee_ref
 
 #: Días máximos de un rango del historial (ambos incluidos), como en Reportes.
 HISTORY_MAX_DAYS = 366
+#: Lo que la empresa decide de un registro "en revisión".
+DECISIONS = (AttendanceReviewStatus.CONFIRMED, AttendanceReviewStatus.REJECTED)
 
 
 def board_state(
@@ -117,15 +121,18 @@ class AttendanceOverview:
         end: date | None,
         status: str | None,
         page: PageParams,
+        in_review: bool = False,
     ) -> CompanySessionList:
         if start and end and (end < start or (end - start).days + 1 > HISTORY_MAX_DAYS):
-            raise UnprocessableError(
-                f"Elige un rango de fechas en orden y de hasta {HISTORY_MAX_DAYS} días",
-                code="ATTENDANCE_INVALID_PERIOD",
-                field="end",
-            )
+            raise UnprocessableError(code="ATTENDANCE_INVALID_PERIOD", params={"count": HISTORY_MAX_DAYS}, field="end")
         items, total = self.repo.history(
-            employee_id=employee_id, start=start, end=end, status=status, offset=page.offset, limit=page.size
+            employee_id=employee_id,
+            start=start,
+            end=end,
+            status=status,
+            offset=page.offset,
+            limit=page.size,
+            in_review=in_review,
         )
         return CompanySessionList.of(self._with_employees(items), total, page)
 
@@ -139,7 +146,7 @@ class AttendanceOverview:
     def detail(self, session_id: int) -> CompanySessionDetail:
         session = self.repo.session(session_id)
         if session is None:
-            raise NotFoundError("Jornada no encontrada", code="WORK_SESSION_NOT_FOUND")
+            raise NotFoundError(code="WORK_SESSION_NOT_FOUND")
         read = self._with_employees([session])[0]
         events = self.repo.events_of(session.id)
         names = self.repo.site_names(event.site_id for event, _, _ in events)
@@ -158,6 +165,7 @@ class AttendanceOverview:
                     confidence=score,
                     operator=operator,
                     note=event.note,
+                    under_review=event.under_review,
                 )
                 for event, score, operator in events
             ],
@@ -167,5 +175,36 @@ class AttendanceOverview:
         items, total = self.repo.history(
             employee_id=employee.id, start=None, end=None, status=None, offset=page.offset, limit=page.size
         )
-        reads: list[WorkSessionRead] = self.sessions.reads(items)
+        reads: list[WorkSessionRead] = self.sessions.reads(items, reasons=False)
         return AttendanceHistory.of(reads, total, page)
+
+
+class AttendanceReview:
+    """La empresa confirma o rechaza un registro "en revisión" (decisión D3/D10 del dueño del producto): el registro
+    ya está guardado (nadie se quedó sin checar); rechazarlo no lo borra, queda marcado con quién, cuándo y por qué
+    (la empresa lo corrige con el registro manual si hace falta)."""
+
+    def __init__(self, db: Session, company_id: int) -> None:
+        self.db = db
+        self.company_id = company_id
+        self.overview = AttendanceOverview(db, company_id)
+
+    def pending(self) -> int:
+        return self.overview.repo.pending_reviews(LOG_COUNT_CAP)
+
+    def decide(self, session_id: int, data: AttendanceReviewDecision, user: User) -> CompanySessionDetail:
+        if data.decision not in DECISIONS:
+            raise UnprocessableError(code="INVALID_REVIEW_DECISION", field="decision")
+        if data.decision == AttendanceReviewStatus.REJECTED and not data.note:
+            raise UnprocessableError(code="REVIEW_NOTE_REQUIRED", field="note")
+        session = get_scoped(self.db, WorkSession, session_id, self.company_id, lock=True)
+        if session is None:
+            raise NotFoundError(code="WORK_SESSION_NOT_FOUND")
+        if session.review_status != AttendanceReviewStatus.PENDING:
+            raise ConflictError(code="ATTENDANCE_REVIEW_NOT_PENDING")
+        session.review_status = data.decision
+        session.reviewed_by_id = user.id
+        session.reviewed_at = datetime.now(UTC)
+        session.review_note = data.note
+        self.db.commit()
+        return self.overview.detail(session.id)

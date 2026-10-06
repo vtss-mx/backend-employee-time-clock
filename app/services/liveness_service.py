@@ -3,7 +3,10 @@
 Flujo:
 1. Quien opera la cámara solicita un reto: el servidor elige al azar de uno a tres movimientos
    (girar a la izquierda o a la derecha, mirar arriba o abajo, acercarse; nunca el mismo dos veces
-   seguidas) y, si la empresa lo usa, una secuencia de colores para el destello de la pantalla.
+   seguidas ni "acercarse" como único movimiento: una foto acercada a la cámara crece igual que un
+   rostro) y, si la empresa lo usa, una secuencia de colores para el destello de la pantalla. El reto
+   de "un paso más" (riesgo medio del motor de riesgo) pide el máximo de movimientos y el destello
+   aunque la empresa solo lo mida.
 2. El cliente captura frames frontales, uno por cada color del destello y uno por cada movimiento,
    en orden (entre movimientos la persona vuelve al frente).
 3. Al verificar, el reto se consume (uso único), debe pertenecer al usuario y no haber vencido (la
@@ -44,6 +47,13 @@ class LivenessResponse:
     steps: tuple[bytes, ...] = ()
     #: Una captura por color del destello, en orden.
     flash: tuple[bytes, ...] = ()
+    #: Antifraude 2a: la hoja de la ráfaga de recortes del rostro y su descripción (JSON, `schemas/capture.BurstMeta`),
+    #: si llegó más grande de lo permitido (no se leyó: es una señal, nunca un 413) y el comprobante del destello
+    #: dictado por el servidor (`flash_pacing`). Lo mal formado se mide; nunca rompe el intento.
+    burst: bytes | None = None
+    burst_meta: str | None = None
+    burst_oversize: bool = False
+    flash_receipt: str | None = None
 
 
 #: Sin respuesta al reto (la empresa no exige prueba de vida).
@@ -61,6 +71,12 @@ class Challenge:
     expires_at: datetime
     #: Colores del destello en orden (códigos de FLASH_PALETTE); vacío sin destello.
     flash: tuple[str, ...] = ()
+    #: Reto de "un paso más": su destello es obligatorio aunque la empresa solo lo mida.
+    step_up: bool = False
+    #: La empresa estaba reforzada por ataques al emitirlo (señal del motor de riesgo).
+    reinforced: bool = False
+    #: Destello dictado por el servidor (antifraude 2a): sus colores no viajaron con el reto; `flash` es el respaldo.
+    flash_paced: bool = False
 
 
 def random_sequence[T](options: Sequence[T], count: int) -> tuple[T, ...]:
@@ -79,17 +95,41 @@ def active_actions() -> tuple[LivenessAction, ...]:
     return tuple(a for a in LivenessAction if catalogs.is_active("liveness_actions", a.value)) or FALLBACK_ACTIONS
 
 
+def challenge_actions(options: Sequence[LivenessAction], count: int) -> tuple[LivenessAction, ...]:
+    """Los movimientos de un reto: "acercarse" nunca es el único (fase 0 del antifraude). Es lo único que una foto
+    plana sí reproduce (crece igual que un rostro); con un giro o un cabeceo, sus puntos coplanares la delatan.
+    Con un solo movimiento se elige entre los demás; con dos o más ya hay al menos uno distinto (nunca se repite
+    el mismo seguido)."""
+    others = tuple(a for a in options if a != LivenessAction.MOVE_CLOSER)
+    return random_sequence(others if count == 1 and others else options, count)
+
+
 class ChallengeStore:
-    def issue(self, db: Session, user_id: int, *, steps: int, lifetime_seconds: int, flash: int = 0) -> Challenge:
-        """Reto nuevo de `steps` movimientos (y `flash` colores) que vence en `lifetime_seconds`."""
+    def issue(
+        self,
+        db: Session,
+        user_id: int,
+        *,
+        steps: int,
+        lifetime_seconds: int,
+        flash: int = 0,
+        step_up: bool = False,
+        reinforced: bool = False,
+        paced: bool = False,
+    ) -> Challenge:
+        """Reto nuevo de `steps` movimientos (y `flash` colores) que vence en `lifetime_seconds`; `paced`: sus colores
+        los dicta el servidor uno por uno (los de `flash` quedan para el respaldo sin canal en vivo)."""
         now = datetime.now(UTC)
         challenge = Challenge(
             id=secrets.token_urlsafe(24),
             user_id=user_id,
-            actions=random_sequence(active_actions(), max(1, min(steps, MAX_STEPS))),
+            actions=challenge_actions(active_actions(), max(1, min(steps, MAX_STEPS))),
             issued_at=now,
             expires_at=now + timedelta(seconds=lifetime_seconds),
             flash=random_sequence(tuple(FLASH_PALETTE), flash) if flash > 0 else (),
+            step_up=step_up,
+            reinforced=reinforced,
+            flash_paced=paced and flash > 0,
         )
         actions = [a.value for a in challenge.actions] + [None] * (MAX_STEPS - len(challenge.actions))
         FaceChallengeRepository(db).replace_for_user(
@@ -102,6 +142,9 @@ class ChallengeStore:
                 flash_colors=",".join(challenge.flash) or None,
                 issued_at=challenge.issued_at,
                 expires_at=challenge.expires_at,
+                step_up=step_up,
+                reinforced=reinforced,
+                flash_paced=challenge.flash_paced,
             )
         )
         db.commit()
@@ -113,7 +156,7 @@ class ChallengeStore:
         db.commit()
         if row is None:
             return None
-        owner, first, second, third, colors, issued_at, expires_at = row
+        owner, first, second, third, colors, issued_at, expires_at, step_up, reinforced, paced = row
         if owner != user_id or has_passed(expires_at):
             return None
         return Challenge(
@@ -123,6 +166,9 @@ class ChallengeStore:
             issued_at=as_utc(issued_at),
             expires_at=as_utc(expires_at),
             flash=tuple(colors.split(",")) if colors else (),
+            step_up=step_up,
+            reinforced=reinforced,
+            flash_paced=paced,
         )
 
     def require(
@@ -143,7 +189,7 @@ class ChallengeStore:
             raise face_rejection("CHALLENGE_INVALID")
         if len(response.steps) != len(challenge.actions):
             raise face_rejection("LIVENESS_REQUIRED")  # falta (o sobra) la captura de algún movimiento
-        flash_missing = bool(challenge.flash) and not response.flash and flash_required
+        flash_missing = bool(challenge.flash) and not response.flash and (flash_required or challenge.step_up)
         if flash_missing or (response.flash and len(response.flash) != len(challenge.flash)):
             raise face_rejection("LIVENESS_REQUIRED")
         return challenge

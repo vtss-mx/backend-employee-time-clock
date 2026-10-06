@@ -10,9 +10,10 @@ from typing import Annotated, Self
 
 from pydantic import AfterValidator, BaseModel, Field, model_validator
 
+from app.i18n import LocalizedValueError
 from app.models.calendar import ABSENCE_MAX_DAYS
 from app.schemas.bulk import EmployeeIds
-from app.schemas.common import EmployeeRef, Page
+from app.schemas.common import Deletion, EmployeeRef, Page
 from app.schemas.shift import Name
 from app.services.calendar_rules import span_days
 
@@ -49,7 +50,7 @@ class HolidayCreate(BaseModel):
     name: Annotated[Name, Field(max_length=120, examples=["Día de la empresa"])]
 
 
-class HolidayRead(BaseModel):
+class HolidayRead(Deletion):
     id: int
     holiday_date: date
     name: str
@@ -85,9 +86,9 @@ class _AbsenceDates(BaseModel):
     @model_validator(mode="after")
     def _range(self) -> Self:
         if self.ends_on < self.starts_on:
-            raise ValueError("La fecha final no puede ser anterior a la inicial")
+            raise LocalizedValueError("DATE_RANGE_INVERTED")
         if span_days(self.starts_on, self.ends_on) > ABSENCE_MAX_DAYS:
-            raise ValueError(f"Una ausencia dura a lo más {ABSENCE_MAX_DAYS} días")
+            raise LocalizedValueError("ABSENCE_TOO_LONG", {"count": ABSENCE_MAX_DAYS})
         return self
 
 
@@ -145,7 +146,7 @@ class WorkdayCreate(BaseModel):
     note: Annotated[str | None, Field(max_length=300), AfterValidator(_note)] = None
 
 
-class WorkdayRead(BaseModel):
+class WorkdayRead(Deletion):
     id: int
     employee: EmployeeRef
     work_date: date

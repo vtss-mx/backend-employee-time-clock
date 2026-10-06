@@ -1,19 +1,34 @@
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, DateTime, Float, ForeignKey, Index, Integer, SmallInteger, String, func
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    SmallInteger,
+    String,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
 from app.core.db_schemas import OPS, TENANCY
+from app.core.partitions import partitioned
 
 
 class FaceAttemptMetric(Base):
     """Los números de cada intento facial, para que la plataforma se mida y se ajuste sola.
 
     Solo números (probabilidades, cuánto se movió la persona, respuesta al destello, tiempos): nunca
-    imágenes, plantillas ni quién era. Con ellos la autocalibración (`face_security`) endurece los
-    umbrales y se detectan ataques contra una empresa. El mantenimiento los depura a los
-    FACE_METRICS_RETENTION_DAYS días.
+    imágenes ni plantillas. Con ellos la autocalibración (`face_security`) endurece los umbrales y se
+    detectan ataques contra una empresa. Desde la migración 0062 cada fila se enlaza con su intento de la
+    bitácora (`verification_log_id`, decisión D7 del dueño del producto): así un caso de fraude confirmado
+    no "envenena" la calibración (`fraud_label`) y se puede simular una política sobre lo ocurrido.
+    Particionada por mes en `created_at` (`app/core/partitions.py`): lo que pasa de
+    FACE_METRICS_RETENTION_DAYS días sale con su partición.
     """
 
     __tablename__ = "face_attempt_metrics"
@@ -25,7 +40,9 @@ class FaceAttemptMetric(Base):
         Index("ix_face_attempt_metrics_company_reason", "company_id", "reason", "created_at"),
         # Autocalibración (intentos exitosos recientes) y depuración por antigüedad.
         Index("ix_face_attempt_metrics_created", "created_at", "id"),
-        {"schema": OPS},
+        # Sin CHECK en `fraud_label` (migración 0062): validarlo recorrería todas las particiones de la tabla más
+        # grande; la etiqueta solo la escribe la revisión de un caso (`MetricLabelRepository`).
+        {"schema": OPS, **partitioned("created_at")},
     )
 
     id: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True)
@@ -51,9 +68,31 @@ class FaceAttemptMetric(Base):
     flash_score: Mapped[float | None] = mapped_column(Float)
     flash_magnitude: Mapped[float | None] = mapped_column(Float)
     flash_background: Mapped[float | None] = mapped_column(Float)
+    #: Cociente rostro/fondo de la respuesta al destello (≈ 1: pantalla o papel; un rostro real responde más).
+    flash_ratio: Mapped[float | None] = mapped_column(Float)
     #: Calidad y luz medias de las frontales.
     quality_mean: Mapped[float | None] = mapped_column(Float)
     brightness_mean: Mapped[float | None] = mapped_column(Float)
+    #: Protocolo de captura (antifraude 2a, migración 0066): recortes de la ráfaga analizados, su micromovimiento
+    #: (niveles de gris entre recortes seguidos), el pulso por video (SNR en dB; solo se mide), el moiré y el cociente
+    #: de ruido rostro/fondo de las frontales, el paralaje de los giros y la respuesta más lenta del destello dictado
+    #: por el servidor (ms; None si no fue dictado).
+    burst_frames: Mapped[int | None] = mapped_column(SmallInteger)
+    burst_motion: Mapped[float | None] = mapped_column(Float)
+    pulse_snr: Mapped[float | None] = mapped_column(Float)
+    moire: Mapped[float | None] = mapped_column(Float)
+    noise_ratio: Mapped[float | None] = mapped_column(Float)
+    parallax: Mapped[float | None] = mapped_column(Float)
+    flash_pace_ms: Mapped[float | None] = mapped_column(Float)
+    #: Consenso de identidad de la ráfaga (decisión del dueño, 2026-10-06): mediana del parecido de sus mejores recortes
+    #: quietos con las muestras de la persona (solo endurece: bajo lo exigido menos el margen, "Rostro no reconocido").
+    burst_consensus: Mapped[float | None] = mapped_column(Float)
+    #: El intento de la bitácora (decisión D7): enlaza los números con su caso de fraude y su evaluación de
+    #: riesgo. Sin llave foránea: la bitácora también está particionada (mismo plazo).
+    verification_log_id: Mapped[int | None] = mapped_column(BigInteger().with_variant(Integer, "sqlite"))
+    #: Lo que decidió la revisión de un caso: FRAUD (no "envenena" la calibración de las personas reales) o
+    #: GENUINE (falso positivo: un genuino difícil). None = sin revisar.
+    fraud_label: Mapped[str | None] = mapped_column(String(20))
 
 
 class SecurityThreshold(Base):

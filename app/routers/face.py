@@ -9,6 +9,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile
 
+from app.core.clock import epoch_ms
 from app.core.exceptions import UnprocessableError
 from app.core.responses import ApiResponse, ok
 from app.dependencies import (
@@ -21,20 +22,12 @@ from app.dependencies import (
     require_roles,
     require_screen,
 )
-from app.models import Screen, UserRole
+from app.models import UserRole
 from app.schemas.common import ErrorResponse
 from app.schemas.face import FaceCheckResponse
-from app.schemas.verification import FaceChallengeResponse
-from app.services.face_capture_service import FaceCaptureService
-
-#: Quienes capturan rostros: el empleado (registro y verificación), el validador (punto de control) y
-#: la empresa (registro y verificación en persona). El ADMIN de la plataforma no ve rostros.
-FACE_CAPTURE_SCREENS = (
-    Screen.EMPLOYEE_ENROLL,
-    Screen.EMPLOYEE_VERIFY,
-    Screen.VALIDATOR_CHECKPOINT,
-    Screen.COMPANY_EMPLOYEES,
-)
+from app.schemas.verification import FaceChallengeResponse, FlashColors, FlashTokenIn
+from app.services import flash_pacing
+from app.services.face_capture_service import FACE_CAPTURE_SCREENS, FaceCaptureService
 
 router = APIRouter(
     prefix="/face",
@@ -73,10 +66,10 @@ def check_face(
 ) -> ApiResponse[FaceCheckResponse]:
     uploads = [*(images or []), *([image] if image is not None else [])]
     if not uploads:
-        raise UnprocessableError("Envía al menos una captura", code="IMAGE_REQUIRED")
+        raise UnprocessableError(code="IMAGE_REQUIRED")
     data = read_image_uploads(uploads, max_files=3)
     result = FaceCaptureService(db, user, company_of(user)).precheck(pipeline, data, allow_headwear=allow_headwear)
-    return ok(result, "La captura es válida", code="FACE_CHECK_PASSED")
+    return ok(result, code="FACE_CHECK_PASSED")
 
 
 @router.post(
@@ -95,5 +88,24 @@ def face_challenge(user: CurrentUser, db: DbSession) -> ApiResponse[FaceChalleng
     # company_of: 409 si un empleado de varias empresas aún no elige; 403 sin empresa (ADMIN).
     challenge = FaceCaptureService(db, user, company_of(user)).challenge()
     if not challenge.liveness_required:
-        return ok(challenge, "Prueba de vida no requerida", code="LIVENESS_NOT_REQUIRED")
-    return ok(challenge, challenge.instruction or "Reto de prueba de vida emitido", code="CHALLENGE_ISSUED")
+        return ok(challenge, code="LIVENESS_NOT_REQUIRED")
+    # El mensaje es la instrucción del primer movimiento (del catálogo, ya en el idioma de la petición).
+    return ok(challenge, challenge.instruction, code="CHALLENGE_ISSUED")
+
+
+@router.post(
+    "/challenge/flash",
+    response_model=ApiResponse[FlashColors],
+    summary="Destello de respaldo: los colores del reto cuando no hay canal en vivo",
+    description=(
+        "Con el destello dictado por el servidor (`flash_pace` del reto), los colores se piden uno por uno por el "
+        "canal en vivo (`/api/ws/validation`, mensaje `flash`). Si el canal no está disponible (un proxy que bloquea "
+        "WebSocket, una red inestable), la app manda aquí el token inicial y recibe los colores de siempre: el intento "
+        "sigue, con la señal FLASH_UNPACED (medida, nunca un rechazo). 422 FLASH_TOKEN_INVALID si el token venció, se "
+        "alteró o es de otra cuenta. Sin consultas a la base: el token va sellado."
+    ),
+    responses={422: {"model": ErrorResponse}},
+)
+def flash_fallback(body: FlashTokenIn, user: CurrentUser) -> ApiResponse[FlashColors]:
+    colors = flash_pacing.fallback_colors(body.token, user.id, epoch_ms())
+    return ok(FlashColors(flash=colors), code="FLASH_COLORS")

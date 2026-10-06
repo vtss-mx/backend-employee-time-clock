@@ -165,7 +165,7 @@ def decode_access_token(token: str) -> dict[str, Any]:
         header = jwt.get_unverified_header(token)
         key = keys.get(header.get("kid", ""))
         if key is None or header.get("typ") != ACCESS_TOKEN_TYPE:
-            raise AuthenticationError("Token inválido", code="TOKEN_INVALID")
+            raise AuthenticationError(code="TOKEN_INVALID")
         return jwt.decode(
             token,
             key.public,
@@ -176,6 +176,6 @@ def decode_access_token(token: str) -> dict[str, Any]:
             options={"require": REQUIRED_CLAIMS},
         )
     except jwt.ExpiredSignatureError as exc:
-        raise AuthenticationError("La sesión ha expirado", code="TOKEN_EXPIRED") from exc
+        raise AuthenticationError(code="TOKEN_EXPIRED") from exc
     except jwt.PyJWTError as exc:
-        raise AuthenticationError("Token inválido", code="TOKEN_INVALID") from exc
+        raise AuthenticationError(code="TOKEN_INVALID") from exc

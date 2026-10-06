@@ -6,12 +6,15 @@ A prueba de trampas:
 - Cada registro del empleado se confirma con su rostro y prueba de vida (`VerificationService`):
   nadie checa por otro. La verificación queda en la bitácora y se enlaza al registro.
 - La ubicación se exige siempre: con la precisión mínima de la política y, los días que no son
-  remotos, dentro de la geocerca de uno de sus sitios. Un registro más lejos de lo que se puede
+  remotos, dentro de la geocerca de uno de los sitios de su turno (el turno dice dónde y cuándo: sus
+  sitios y sus días remotos de hoy; editarlo aplica desde ese momento). Un registro más lejos de lo que se puede
   viajar desde el anterior se rechaza (ubicación falsificada o cuenta compartida).
 - El estado lo decide el servidor: solo se permiten las acciones que tienen sentido ahora (no hay
   salida sin entrada ni dos entradas para el mismo turno). Dos registros simultáneos se atienden en
   orden (candado de fila del empleado) y los índices únicos de la base cierran cualquier carrera.
 - Las identificaciones en un validador cuentan como registros en sitio (`from_validator`).
+- Código de sitio (antifraude 2b, decisión D9): en un sitio que lo activó, la entrada y la salida llevan el código
+  rotativo de su kiosco (`site_codes`): obligatorio, se revisa antes de usar el rostro; en «Solo medir», es una señal.
 
 Solo dentro de sus turnos (decisión del dueño del producto):
 - La entrada, en la ventana de la jornada: desde `early_check_in_minutes` antes de la entrada y antes
@@ -30,7 +33,7 @@ Turnos nocturnos y turnos que se cruzan los resuelve `shift_rules` (la jornada d
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from typing import cast
 from zoneinfo import ZoneInfo
 
@@ -40,12 +43,16 @@ from app.core.clock import as_utc
 from app.core.config import settings
 from app.core.exceptions import AppError, ConflictError, PermissionDeniedError, UnprocessableError
 from app.core.geo import distance_m
+from app.core.ip_intel import IpInfo
+from app.i18n import DayMonth, Text, t
 from app.models import (
     AttendanceAction,
     AttendanceEvent,
+    AttendanceReviewStatus,
     Employee,
     Shift,
     ShiftAssignment,
+    SignalMode,
     User,
     VerificationLog,
     WorkBreak,
@@ -66,11 +73,15 @@ from app.schemas.attendance import (
     WorkSessionRead,
 )
 from app.schemas.auth import DeviceLocation
+from app.schemas.capture import LocationSample
 from app.schemas.verification import ValidatorAttendance, VerificationResult
+from app.services import site_codes
 from app.services.calendar_rules import DayOff, DaysOff
 from app.services.calendar_service import CalendarService, day_off_read
 from app.services.location_service import format_distance
 from app.services.policy_service import PolicyService, PolicySnapshot
+from app.services.risk_engine import LocationEvidence, PreviousPunch, location_context
+from app.services.risk_rules import Hit
 from app.services.shift_rules import (
     Occurrence,
     closest,
@@ -88,15 +99,58 @@ from app.services.site_service import site_ref
 VALIDATOR_MIN_SHIFT_MINUTES = 30
 #: Distancias menores no se consideran viaje (el error normal del GPS entre dos lecturas).
 TRAVEL_MIN_KM = 1.0
+#: Media vuelta al mundo (km): la mayor distancia entre dos puntos; acota la búsqueda del registro anterior.
+HALF_EARTH_KM = 20_038
 #: Días hacia adelante en que se busca la siguiente jornada para mostrarla.
 NEXT_SHIFT_HORIZON_DAYS = 8
 
+#: Llave del mensaje de cada acción registrada (catálogo de mensajes, en el idioma de la petición).
 ACTION_DONE = {
-    AttendanceAction.CHECK_IN: "Entrada registrada",
-    AttendanceAction.BREAK_START: "Descanso iniciado",
-    AttendanceAction.BREAK_END: "Descanso terminado",
-    AttendanceAction.CHECK_OUT: "Salida registrada",
+    AttendanceAction.CHECK_IN: "CHECK_IN_RECORDED",
+    AttendanceAction.BREAK_START: "BREAK_STARTED",
+    AttendanceAction.BREAK_END: "BREAK_ENDED",
+    AttendanceAction.CHECK_OUT: "CHECK_OUT_RECORDED",
 }
+
+
+def done_text(action: AttendanceAction, review: bool) -> Text:
+    """Lo que se le dice a la persona al registrar; si el motor de riesgo lo dejó "en revisión", también eso (sin
+    decirle qué lo causó)."""
+    done = Text(ACTION_DONE[action])
+    return Text("ATTENDANCE_DONE_UNDER_REVIEW", {"done": done}) if review else done
+
+
+@dataclass(frozen=True)
+class Verified:
+    """Lo que devuelve la verificación facial de un registro: el resultado, su intento en la bitácora, sus motivos de
+    negocio si quedó "en revisión" (catalog.review_reasons) y la red de su IP (se guarda con el registro)."""
+
+    result: VerificationResult
+    log: VerificationLog | None = None
+    review: tuple[str, ...] = ()
+    network: IpInfo | None = None
+
+
+@dataclass(frozen=True)
+class _Travel:
+    """El registro anterior con ubicación y lo recorrido desde él (km ya sin la incertidumbre de ambas lecturas)."""
+
+    previous: AttendanceEvent
+    km: float
+    hours: float
+
+    @property
+    def speed_kmh(self) -> float:
+        return self.km / self.hours
+
+
+def flag_review(session: WorkSession, reasons: tuple[str, ...]) -> None:
+    """La jornada queda "en revisión" (otra vez, si ya se había confirmado o rechazado) con sus motivos acumulados."""
+    known = [code for code in (session.review_reasons or "").split(",") if code]
+    merged = known + [code for code in reasons if code not in known]
+    session.review_status = AttendanceReviewStatus.PENDING
+    session.review_reasons = ",".join(merged)[:200] or None
+    session.reviewed_by_id = session.reviewed_at = session.review_note = None
 
 
 def now_utc() -> datetime:
@@ -108,8 +162,9 @@ def _zone() -> ZoneInfo:
     return ZoneInfo(settings.APP_TIMEZONE)
 
 
-def _clock(moment: datetime) -> str:
-    return as_utc(moment).astimezone(_zone()).strftime("%H:%M")
+def _clock(moment: datetime) -> time:
+    """La hora del instante en la zona del negocio (se escribe como la acostumbra cada idioma: 07:55 o 7:55 AM)."""
+    return as_utc(moment).astimezone(_zone()).time()
 
 
 @dataclass(frozen=True)
@@ -117,6 +172,7 @@ class _Slot:
     """Una jornada programada con la asignación y el turno de los que sale."""
 
     assignment: ShiftAssignment
+    shift: Shift
     occurrence: Occurrence
 
 
@@ -165,45 +221,52 @@ class _State:
             )
         return [AttendanceAction.CHECK_IN] if self.can_check_in else []
 
-    def day_off_reason(self, today: date) -> str:
+    def day_off_reason(self, today: date) -> Text:
         slot, day_off = cast(_Slot, self.slot), cast(DayOff, self.day_off)
         return day_off.explain(slot.occurrence.work_date, today)
 
     def denial(self, action: AttendanceAction, today: date) -> AppError:
         """Por qué no se puede esa acción ahora (con su código estable)."""
         if self.session is None and self.day_off is not None:
+            reason = self.day_off_reason(today)
             return ConflictError(
-                self.day_off_reason(today),
                 code="DAY_OFF",
+                key=reason.key,
+                params=reason.params,
                 details={"kind": self.day_off.kind, "name": self.day_off.name},
             )
-        reasons: dict[AttendanceAction, Callable[[], str]] = {
+        reasons: dict[AttendanceAction, Callable[[], Text]] = {
             AttendanceAction.CHECK_IN: self._no_check_in,
             AttendanceAction.BREAK_START: self._no_break,
-            AttendanceAction.BREAK_END: lambda: "No tienes un descanso en curso",
-            AttendanceAction.CHECK_OUT: lambda: "No tienes una entrada registrada para checar tu salida",
+            AttendanceAction.BREAK_END: lambda: Text("NO_BREAK_IN_PROGRESS"),
+            AttendanceAction.CHECK_OUT: lambda: Text("NO_CHECK_IN_FOR_CHECK_OUT"),
         }
-        return ConflictError(reasons[action](), code="ATTENDANCE_ACTION_NOT_ALLOWED", details={"allowed": self.actions})
+        reason = reasons[action]()
+        return ConflictError(
+            code="ATTENDANCE_ACTION_NOT_ALLOWED",
+            key=reason.key,
+            params=reason.params,
+            details={"allowed": self.actions},
+        )
 
-    def _no_check_in(self) -> str:
+    def _no_check_in(self) -> Text:
         if self.session is not None:
-            return "Ya tienes una entrada registrada"
+            return Text("ALREADY_CHECKED_IN")
         if self.done is not None:
-            return "Ya registraste este turno"
+            return Text("SHIFT_ALREADY_RECORDED")
         if self.slot is not None:
-            return f"Tu turno terminó a las {_clock(self.slot.occurrence.end)}: ya no puedes registrar tu entrada"
-        return "No tienes un turno en este momento"
+            return Text("SHIFT_ENDED_NO_CHECK_IN", {"time": _clock(self.slot.occurrence.end)})
+        return Text("NO_SHIFT_NOW")
 
-    def _no_break(self) -> str:
+    def _no_break(self) -> Text:
         session = self.session
         if session is None:
-            return "No tienes una entrada registrada"
+            return Text("NOT_CHECKED_IN")
         if self.open_break is not None:
-            return "Ya estás en descanso"
+            return Text("ALREADY_ON_BREAK")
         if self.breaks_used >= session.breaks_allowed:
-            return "Ya tomaste los descansos de este turno"
-        start, end = _clock(session.scheduled_start), _clock(session.scheduled_end)
-        return f"Puedes tomar tu descanso cuando quieras entre las {start} y las {end}"
+            return Text("BREAKS_USED")
+        return Text("BREAK_WINDOW", {"start": _clock(session.scheduled_start), "end": _clock(session.scheduled_end)})
 
 
 @dataclass(frozen=True)
@@ -284,7 +347,7 @@ class AttendanceService:
         for day, assignment in assignments.items():
             shift = shifts[assignment.shift_id]
             if shift.active and works_on(shift, day):
-                slots.append(_Slot(assignment, occurrence_of(shift, day, self.zone)))
+                slots.append(_Slot(assignment, shift, occurrence_of(shift, day, self.zone)))
         return slots
 
     def _state(self, employee_id: int, now: datetime, *, lock: bool = False, calendar: DaysOff | None = None) -> _State:
@@ -352,9 +415,8 @@ class AttendanceService:
             else self._next(employee.id, now, calendar)
         )
         occurrence = checkable.occurrence if checkable else None
-        assignment = self._assignment_of(state, checkable) or (upcoming.slot.assignment if upcoming.slot else None)
-        shift = self.shifts.shifts_by_ids([assignment.shift_id])[assignment.shift_id] if assignment else None
-        sites = self.shifts.sites_of([assignment.id])[assignment.id] if assignment else []
+        shift = self._shift_of(state, checkable) or (upcoming.slot.shift if upcoming.slot else None)
+        sites = [site for site in self.shifts.sites_of_shifts([shift.id])[shift.id] if site.active] if shift else []
         shown = occurrence or (upcoming.slot.occurrence if upcoming.slot else None)
         work_date = state.session.work_date if state.session else shown.work_date if shown else None
         day_off = self._shown_day_off(state, calendar, upcoming, employee.id, today)
@@ -365,12 +427,20 @@ class AttendanceService:
             next_occurrence=self._occurrence(upcoming.slot.occurrence if upcoming.slot else None),
             session=self._read(state.session) if state.session else self._read(state.done) if state.done else None,
             actions=[a.value for a in state.actions],
-            remote_allowed=bool(assignment and work_date and assignment.remote_weekdays & day_bit(work_date)),
-            sites=[site_ref(site) for site in sites if site.active],
+            remote_allowed=bool(shift and work_date and shift.remote_weekdays & day_bit(work_date)),
+            sites=[site_ref(site) for site in sites],
             message=self._explain(state, upcoming, day_off, today),
             day_off=day_off_read(*day_off) if day_off else None,
             break_window=self._break_window(state),
+            site_code=self._asks_site_code(sites),
         )
+
+    def _asks_site_code(self, sites: list[WorkSite]) -> bool:
+        """La app pide el código del sitio antes de la entrada y la salida: algún sitio del turno lo activó y la
+        política lo revisa (antifraude 2b; la política está en la caché de cada proceso: sin consultas)."""
+        if not any(site.presence_code for site in sites):
+            return False
+        return PolicyService(self.db, self.company_id).current().site_codes != SignalMode.OFF
 
     @staticmethod
     def _shown_day_off(
@@ -387,10 +457,12 @@ class AttendanceService:
             return off_today, today
         return upcoming.skipped if upcoming.slot is None else None
 
-    def _assignment_of(self, state: _State, checkable: _Slot | None) -> ShiftAssignment | None:
+    def _shift_of(self, state: _State, checkable: _Slot | None) -> Shift | None:
+        """El turno de la jornada abierta (el de hoy: dónde se checa la salida) o el de la que se puede
+        checar."""
         if state.session is not None:
-            return self.shifts.assignment(state.session.assignment_id)
-        return checkable.assignment if checkable else None
+            return self.shifts.shift_of(state.session.assignment_id)
+        return checkable.shift if checkable else None
 
     @staticmethod
     def _occurrence(occurrence: Occurrence | None) -> OccurrenceRead | None:
@@ -417,31 +489,36 @@ class AttendanceService:
         )
 
     def _explain(self, state: _State, upcoming: _Upcoming, day_off: tuple[DayOff, date] | None, today: date) -> str:
+        """Qué hay ahora, para la persona (en el idioma de la petición)."""
         if state.session is not None:
             if state.open_break is not None:
-                return f"En descanso desde las {_clock(state.open_break.started_at)}."
+                return t("ON_BREAK_SINCE", {"time": _clock(state.open_break.started_at)})
             since, until = _clock(state.session.check_in_at), _clock(state.session.scheduled_end)
-            return f"En turno desde las {since}; tu salida es a las {until}."
+            return t("ON_SHIFT_SINCE", {"since": since, "until": until})
         if state.done is not None:
-            return "Ya registraste este turno."
+            return t("SHIFT_ALREADY_RECORDED_TODAY")
         if day_off is not None:
-            reason = day_off[0].explain(day_off[1], today)
-            return f"{reason}. {self._next_text(upcoming)}".strip()
+            return self._then(Text("SENTENCE", {"text": day_off[0].explain(day_off[1], today)}), upcoming)
         if state.can_check_in:
             occurrence = cast(_Slot, state.slot).occurrence
-            return f"Tu turno es de {_clock(occurrence.start)} a {_clock(occurrence.end)}: registra tu entrada."
+            return t("SHIFT_CHECK_IN_NOW", {"start": _clock(occurrence.start), "end": _clock(occurrence.end)})
         if state.slot is not None:
-            ended = f"Tu turno terminó a las {_clock(state.slot.occurrence.end)} sin registrar tu entrada."
-            return f"{ended} {self._next_text(upcoming)}".strip()
-        return self._next_text(upcoming) or "No tienes un turno asignado: pídeselo a tu empresa."
+            return self._then(Text("SHIFT_ENDED_UNRECORDED", {"time": _clock(state.slot.occurrence.end)}), upcoming)
+        upcoming_text = self._next_text(upcoming)
+        return str(upcoming_text) if upcoming_text else t("NO_SHIFT_ASSIGNED")
 
-    def _next_text(self, upcoming: _Upcoming) -> str:
+    def _then(self, now: Text, upcoming: _Upcoming) -> str:
+        """Lo de ahora y, si hay, la siguiente jornada."""
+        upcoming_text = self._next_text(upcoming)
+        return t("TWO_SENTENCES", {"first": now, "second": upcoming_text}) if upcoming_text else str(now)
+
+    def _next_text(self, upcoming: _Upcoming) -> Text | None:
         if upcoming.slot is None:
-            return ""
+            return None
         occurrence = upcoming.slot.occurrence
-        day = occurrence.start.astimezone(self.zone).strftime("%d/%m")
+        day = DayMonth(occurrence.start.astimezone(self.zone).date())
         start, opens = _clock(occurrence.start), _clock(occurrence.opens)
-        return f"Tu siguiente turno es el {day} a las {start}; puedes checar desde las {opens}."
+        return Text("NEXT_SHIFT", {"day": day, "start": start, "opens": opens})
 
     # ---------- Registrar (empleado) ----------
 
@@ -451,22 +528,38 @@ class AttendanceService:
         user: User,
         action: AttendanceAction,
         location: DeviceLocation,
-        verify: Callable[[], tuple[VerificationResult, VerificationLog | None]],
+        verify: Callable[[], Verified],
+        samples: tuple[LocationSample, ...] = (),
+        site_code: str | None = None,
     ) -> AttendanceActionResult:
-        """Valida el momento y el lugar, verifica el rostro y, solo si pasó, registra."""
+        """Valida el momento y el lugar, verifica el rostro y, solo si pasó, registra. Con riesgo alto el registro se
+        guarda "en revisión": la persona no se queda sin checar y su empresa lo confirma o lo rechaza (decisión D3).
+        `samples`: las lecturas de la ubicación que tomó la app (señales del lugar; la que decide es `location`);
+        `site_code`: el código del kiosco del sitio, escrito o escaneado (antifraude 2b)."""
         now = now_utc()
         policy = PolicyService(self.db, self.company_id).current()
         state = self._state(employee.id, now)
         self._ensure_allowed(state, action)
         place = self._place(state, location, policy)
-        self._ensure_plausible(employee.id, location, now, policy)
-        result, log = verify()  # el rostro (registra su intento en la bitácora y confirma)
+        travel = self._travel(employee.id, location, now, policy)
+        self._ensure_plausible(travel, policy)
+        # Antes de usar el rostro: con el código obligatorio, lo que no vale se rechaza aquí (el reto sigue sin usarse).
+        previous = travel.previous if travel else None
+        presence = site_codes.check(
+            place.site, action, site_code, previous=previous, mode=policy.site_codes, now=now.timestamp()
+        )
+        evidence = self._evidence(location, place, samples, travel, policy, presence.hits)
+        with location_context(evidence):  # las señales del lugar y de la red para el motor de riesgo
+            verified = verify()  # el rostro (registra su intento en la bitácora y confirma)
+        result, log, review, network = verified.result, verified.log, verified.review, verified.network
         if not result.verified:
             return AttendanceActionResult(verified=False, message=result.message, action=action, verification=result)
         EmployeeRepository(self.db, self.company_id).get_by_id(employee.id, lock=True)  # en orden con otros registros
         state = self._state(employee.id, now, lock=True)  # pudo cambiar mientras se verificaba el rostro
         self._ensure_allowed(state, action)
         session = self._apply(state, action, place, now)
+        if result.review:
+            flag_review(session, review)
         self.repo.add(
             AttendanceEvent(
                 employee_id=employee.id,
@@ -481,11 +574,19 @@ class AttendanceService:
                 distance_m=place.distance,
                 verification_log_id=log.id if log else None,
                 actor_id=user.id,
+                under_review=result.review,
+                ip_country=network.country if network else None,
+                ip_asn=network.asn if network else None,
+                presence_window=presence.window,
             )
         )
         self.db.commit()
         return AttendanceActionResult(
-            verified=True, message=ACTION_DONE[action], action=action, verification=result, session=self._read(session)
+            verified=True,
+            message=str(done_text(action, result.review)),
+            action=action,
+            verification=result,
+            session=self._read(session),
         )
 
     def _ensure_allowed(self, state: _State, action: AttendanceAction) -> None:
@@ -493,43 +594,47 @@ class AttendanceService:
             raise state.denial(action, state.now.astimezone(self.zone).date())
 
     def _place(self, state: _State, location: DeviceLocation, policy: PolicySnapshot) -> _Place:
-        """En sitio (dentro de la geocerca de un sitio), remoto (si ese día lo permite) o rechazo."""
+        """En sitio (dentro de la geocerca de un sitio activo de su turno), remoto (si su turno lo permite
+        ese día) o rechazo."""
         accuracy = location.accuracy
         if accuracy is None or accuracy > policy.max_location_accuracy_m:
             raise UnprocessableError(
-                f"Tu ubicación no es precisa (±{format_distance(accuracy or 0)}). Activa la ubicación precisa o el "
-                f"GPS: se necesita ±{format_distance(policy.max_location_accuracy_m)} o mejor.",
                 code="LOCATION_INACCURATE",
+                key="LOCATION_NOT_PRECISE",
+                params={
+                    "accuracy": format_distance(accuracy or 0),
+                    "required": format_distance(policy.max_location_accuracy_m),
+                },
                 details={"accuracy_m": accuracy, "max_accuracy_m": policy.max_location_accuracy_m},
             )
-        assignment, work_date = self._target(state)
-        sites = [site for site in self.shifts.sites_of([assignment.id])[assignment.id] if site.active]
+        shift, work_date = self._target(state)
+        sites = [site for site in self.shifts.sites_of_shifts([shift.id])[shift.id] if site.active]
         measured = [(site, self._distance(site, location)) for site in sites]
         margin = min(accuracy, settings.VALIDATOR_LOCATION_TOLERANCE_M)
         inside = [(site, d) for site, d in measured if d - margin <= site.radius_m]
         if inside:
             site, distance = min(inside, key=lambda pair: pair[1])
             return _Place(WorkMode.ON_SITE, site, distance)
-        if assignment.remote_weekdays & day_bit(work_date):
+        if shift.remote_weekdays & day_bit(work_date):
             return _Place(WorkMode.REMOTE, None, None)
         nearest = min(measured, key=lambda pair: pair[1], default=None)
-        detail = f" Estás a {format_distance(nearest[1])} de {nearest[0].name}." if nearest else ""
         raise PermissionDeniedError(
-            f"Hoy debes registrar en tu sitio de trabajo.{detail}",
             code="LOCATION_OUT_OF_SITE",
+            key="LOCATION_OUT_OF_SITE_NEAREST" if nearest else "LOCATION_OUT_OF_SITE",
+            params={"distance": format_distance(nearest[1]), "site": nearest[0].name} if nearest else None,
             details={
                 "distance_m": round(nearest[1]) if nearest else None,
                 "site": nearest[0].name if nearest else None,
             },
         )
 
-    def _target(self, state: _State) -> tuple[ShiftAssignment, date]:
-        """La asignación y el día de la jornada de la acción (ya permitida: hay jornada abierta o una
-        jornada que se puede checar)."""
+    def _target(self, state: _State) -> tuple[Shift, date]:
+        """El turno y el día de la jornada de la acción (ya permitida: hay jornada abierta o una jornada
+        que se puede checar)."""
         if state.session is not None:
-            return cast(ShiftAssignment, self.shifts.assignment(state.session.assignment_id)), state.session.work_date
+            return cast(Shift, self.shifts.shift_of(state.session.assignment_id)), state.session.work_date
         slot = cast(_Slot, state.slot)
-        return slot.assignment, slot.occurrence.work_date
+        return slot.shift, slot.occurrence.work_date
 
     @staticmethod
     def _distance(site: WorkSite, location: DeviceLocation) -> float:
@@ -538,29 +643,64 @@ class AttendanceService:
             cast(float, site.latitude), cast(float, site.longitude), location.latitude, location.longitude
         )
 
-    def _ensure_plausible(
+    def _travel(
         self, employee_id: int, location: DeviceLocation, now: datetime, policy: PolicySnapshot
-    ) -> None:
-        """Rechaza un registro más lejos de lo que se puede viajar desde el anterior."""
-        if not policy.detect_impossible_travel:
-            return
-        last = self.repo.last_located_event(employee_id)
+    ) -> _Travel | None:
+        """El registro anterior del empleado con ubicación y lo recorrido desde él (UNA lectura: sirve al viaje
+        imposible y a las señales LOCATION_JUMP y NETWORK_JUMP)."""
+        # Más atrás de lo que se recorre a la velocidad máxima en media vuelta al mundo, ningún viaje es imposible:
+        # esa es la ventana (el resultado no cambia y solo se leen sus meses de la bitácora).
+        horizon = timedelta(hours=HALF_EARTH_KM / policy.max_travel_kmh)
+        last = self.repo.last_located_event(employee_id, now - horizon)
         if last is None:
-            return
+            return None
         # Solo se buscan registros con ubicación (y su latitud y longitud van juntas: CHECK).
         meters = distance_m(
             cast(float, last.latitude), cast(float, last.longitude), location.latitude, location.longitude
         )
         uncertainty = (last.accuracy_m or 0) + (location.accuracy or 0)
-        km = max(0.0, meters - uncertainty) / 1000
         hours = max((now - as_utc(last.occurred_at)).total_seconds() / 3600, 1 / 3600)
-        if km > TRAVEL_MIN_KM and km / hours > policy.max_travel_kmh:
+        return _Travel(last, max(0.0, meters - uncertainty) / 1000, hours)
+
+    @staticmethod
+    def _ensure_plausible(travel: _Travel | None, policy: PolicySnapshot) -> None:
+        """Rechaza un registro más lejos de lo que se puede viajar desde el anterior."""
+        if travel is None or not policy.detect_impossible_travel:
+            return
+        if travel.km > TRAVEL_MIN_KM and travel.speed_kmh > policy.max_travel_kmh:
             raise PermissionDeniedError(
-                "Tu ubicación no es creíble: estás demasiado lejos de tu registro anterior para el tiempo "
-                "transcurrido.",
                 code="IMPOSSIBLE_TRAVEL",
-                details={"distance_km": round(km, 1), "minutes": round(hours * 60)},
+                details={"distance_km": round(travel.km, 1), "minutes": round(travel.hours * 60)},
             )
+
+    @staticmethod
+    def _evidence(
+        location: DeviceLocation,
+        place: _Place,
+        samples: tuple[LocationSample, ...],
+        travel: _Travel | None,
+        policy: PolicySnapshot,
+        checks: tuple[Hit, ...] = (),
+    ) -> LocationEvidence:
+        """Lo que el motor de riesgo mide del lugar y de la red del registro (antifraude 1b) y lo que ya se verificó del
+        lugar (el código de sitio, antifraude 2b)."""
+        speed: float | None = None
+        previous: PreviousPunch | None = None
+        if travel is not None:
+            speed = travel.speed_kmh if travel.km > TRAVEL_MIN_KM else None
+            last = travel.previous
+            previous = PreviousPunch(travel.hours * 60, last.ip_country, last.ip_asn)
+        return LocationEvidence(
+            accuracy_m=location.accuracy or 0.0,
+            distance_m=place.distance,
+            radius_m=place.site.radius_m if place.site else None,
+            samples=samples,
+            speed_kmh=speed,
+            jump_kmh=policy.max_travel_kmh * settings.RISK_LOCATION_JUMP_RATIO,
+            site_country=place.site.country_code if place.site else None,
+            previous=previous,
+            checks=checks,
+        )
 
     # ---------- Aplicar la acción ----------
 
@@ -578,8 +718,7 @@ class AttendanceService:
         return session
 
     def _check_in(self, slot: _Slot, place: _Place, now: datetime) -> WorkSession:
-        shift = self.shifts.shifts_by_ids([slot.assignment.shift_id])[slot.assignment.shift_id]
-        session = new_session(slot.assignment, shift, slot.occurrence, now, place.mode)
+        session = new_session(slot.assignment, slot.shift, slot.occurrence, now, place.mode)
         session.check_in_site_id = place.site.id if place.site else None
         self.repo.add(session)
         return session
@@ -592,25 +731,31 @@ class AttendanceService:
 
     # ---------- Validadores ----------
 
-    def from_validator(self, employee: Employee, operator: User, log: VerificationLog | None) -> ValidatorAttendance:
-        """Una identificación exitosa en un validador registra la entrada o la salida (en sitio)."""
+    def from_validator(
+        self, employee: Employee, operator: User, log: VerificationLog | None, *, review: tuple[str, ...] = ()
+    ) -> ValidatorAttendance:
+        """Una identificación exitosa en un validador registra la entrada o la salida (en sitio). Con riesgo alto
+        (`review`: sus motivos de negocio) queda "en revisión"."""
         now = now_utc()
         EmployeeRepository(self.db, self.company_id).get_by_id(employee.id, lock=True)
         state = self._state(employee.id, now, lock=True)
         place = _Place(WorkMode.VALIDATOR, None, None)
         if state.session is not None:
             if minutes_between(as_utc(state.session.check_in_at), now) < VALIDATOR_MIN_SHIFT_MINUTES:
-                return ValidatorAttendance(message=f"Entrada ya registrada a las {_clock(state.session.check_in_at)}.")
+                return ValidatorAttendance(
+                    message=t("CHECK_IN_ALREADY_AT", {"time": _clock(state.session.check_in_at)})
+                )
             action, session = AttendanceAction.CHECK_OUT, state.session
             self._check_out(session, state.open_break, place, now)
         elif state.can_check_in:
             action, session = AttendanceAction.CHECK_IN, self._check_in(cast(_Slot, state.slot), place, now)
         elif state.day_off is not None:
-            return ValidatorAttendance(
-                message=f"Sin registro: {state.day_off_reason(now.astimezone(self.zone).date())}."
-            )
+            reason = state.day_off_reason(now.astimezone(self.zone).date())
+            return ValidatorAttendance(message=t("NOT_RECORDED_REASON", {"reason": reason}))
         else:
-            return ValidatorAttendance(message="Sin turno para registrar en este momento.")
+            return ValidatorAttendance(message=t("NO_SHIFT_TO_RECORD"))
+        if review:
+            flag_review(session, review)
         self.repo.add(
             AttendanceEvent(
                 employee_id=employee.id,
@@ -620,17 +765,22 @@ class AttendanceService:
                 occurred_at=now,
                 verification_log_id=log.id if log else None,
                 actor_id=operator.id,
+                under_review=bool(review),
             )
         )
         self.db.commit()
-        return ValidatorAttendance(action=action, message=f"{ACTION_DONE[action]} a las {_clock(now)}.")
+        done = done_text(action, bool(review))
+        return ValidatorAttendance(action=action, message=t("RECORDED_AT", {"done": done, "time": _clock(now)}))
 
     # ---------- Lectura ----------
 
     def _read(self, session: WorkSession) -> WorkSessionRead:
-        return self.reads([session])[0]
+        """La jornada como la ve el empleado que registra (sin los motivos de una revisión)."""
+        return self.reads([session], reasons=False)[0]
 
-    def reads(self, sessions: list[WorkSession]) -> list[WorkSessionRead]:
+    def reads(self, sessions: list[WorkSession], *, reasons: bool = True) -> list[WorkSessionRead]:
+        """Las jornadas como las ve la empresa; `reasons=False` (el empleado) omite por qué quedó "en revisión"
+        (nunca se le dice qué lo delató)."""
         breaks = self.repo.breaks_of(s.id for s in sessions)
         names = self.repo.site_names(site for s in sessions for site in (s.check_in_site_id, s.check_out_site_id))
         return [
@@ -665,6 +815,10 @@ class AttendanceService:
                 ],
                 edited_at=s.edited_at,
                 edit_reason=s.edit_reason,
+                review_status=s.review_status,
+                review_reasons=[code for code in (s.review_reasons or "").split(",") if code] if reasons else [],
+                reviewed_at=s.reviewed_at,
+                review_note=s.review_note,
             )
             for s in sessions
         ]

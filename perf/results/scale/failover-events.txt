@@ -1,0 +1,2 @@
+05:08:27 docker stop timeclock-scale-backend-3 (apagado ordenado)
+05:08:43 docker kill timeclock-scale-backend-1 (caída abrupta)

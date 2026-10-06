@@ -2,6 +2,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.i18n import LocalizedValueError
 from app.models.enums import ApiKeyStatus
 from app.schemas.common import Page
 
@@ -20,7 +21,7 @@ class ApiKeyCreate(BaseModel):
     def _clean_name(cls, value: str) -> str:
         name = " ".join(value.split())
         if not name:
-            raise ValueError("Escribe un nombre para la llave")
+            raise LocalizedValueError("API_KEY_NAME_REQUIRED")
         return name
 
 

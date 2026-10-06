@@ -1,0 +1,5 @@
+timeclock-scale-backend-1: migraciones aplicadas=69, esperó su turno=0
+timeclock-scale-backend-2: migraciones aplicadas=0, esperó su turno=1
+timeclock-scale-backend-3: migraciones aplicadas=0, esperó su turno=2
+alembic_version: 0072
+migrate: 0 migraciones nuevas (ya estaba al día)

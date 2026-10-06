@@ -11,7 +11,7 @@ Son las mismas que respeta el registro en vivo, aplicadas a horas que la empresa
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, time
 from zoneinfo import ZoneInfo
 
 from app.core.exceptions import UnprocessableError
@@ -27,12 +27,9 @@ class RecordTimes:
     breaks: list[tuple[datetime, datetime]] = field(default_factory=list)
 
 
-def _invalid(message: str, code: str, field_name: str) -> UnprocessableError:
-    return UnprocessableError(message, code=code, field=field_name)
-
-
-def _clock(moment: datetime, zone: ZoneInfo) -> str:
-    return moment.astimezone(zone).strftime("%H:%M")
+def _clock(moment: datetime, zone: ZoneInfo) -> time:
+    """La hora en la zona del negocio (el mensaje la escribe como la acostumbra cada idioma)."""
+    return moment.astimezone(zone).time()
 
 
 def _check_in_problem(times: RecordTimes, occurrence: Occurrence, now: datetime) -> str | None:
@@ -76,19 +73,20 @@ def _breaks_problem(times: RecordTimes, occurrence: Occurrence, now: datetime, a
 def record_problem(
     times: RecordTimes, occurrence: Occurrence, now: datetime, *, breaks_allowed: int, zone: ZoneInfo
 ) -> UnprocessableError | None:
-    """El primer problema de las horas declaradas (con su campo), o None si se pueden registrar."""
+    """El primer problema de las horas declaradas (con su campo), o None si se pueden registrar. El código es
+    también la llave de su mensaje; los datos van como parámetros."""
     opens, end, deadline = (_clock(m, zone) for m in (occurrence.opens, occurrence.end, occurrence.deadline))
     start = _clock(occurrence.start, zone)
-    messages = {
-        "TIME_IN_FUTURE": ("Las horas no pueden ser posteriores a este momento", "check_in"),
-        "CHECK_IN_OUTSIDE_SHIFT": (f"La entrada se registra entre las {opens} y las {end}", "check_in"),
-        "CHECK_OUT_BEFORE_CHECK_IN": ("La salida debe ser posterior a la entrada", "check_out"),
-        "CHECK_OUT_AFTER_DEADLINE": (f"La salida se registra a más tardar a las {deadline}", "check_out"),
-        "BREAKS_EXCEEDED": (f"El turno permite {breaks_allowed} descanso(s)", "breaks"),
-        "BREAK_INVALID": ("Cada descanso termina después de empezar", "breaks"),
-        "BREAK_OUTSIDE_SESSION": ("Los descansos van entre la entrada y la salida", "breaks"),
-        "BREAK_OUTSIDE_WORKING_HOURS": (f"Los descansos empiezan entre las {start} y las {end}", "breaks"),
-        "BREAKS_OVERLAP": ("Los descansos no se pueden encimar", "breaks"),
+    problems: dict[str, tuple[dict[str, object] | None, str]] = {
+        "TIME_IN_FUTURE": (None, "check_in"),
+        "CHECK_IN_OUTSIDE_SHIFT": ({"opens": opens, "end": end}, "check_in"),
+        "CHECK_OUT_BEFORE_CHECK_IN": (None, "check_out"),
+        "CHECK_OUT_AFTER_DEADLINE": ({"deadline": deadline}, "check_out"),
+        "BREAKS_EXCEEDED": ({"count": breaks_allowed}, "breaks"),
+        "BREAK_INVALID": (None, "breaks"),
+        "BREAK_OUTSIDE_SESSION": (None, "breaks"),
+        "BREAK_OUTSIDE_WORKING_HOURS": ({"start": start, "end": end}, "breaks"),
+        "BREAKS_OVERLAP": (None, "breaks"),
     }
     code = (
         _check_in_problem(times, occurrence, now)
@@ -97,7 +95,7 @@ def record_problem(
     )
     if code is None:
         return None
-    message, field_name = messages[code]
+    params, field_name = problems[code]
     if code == "TIME_IN_FUTURE" and times.check_in <= now:
         field_name = "check_out"
-    return _invalid(message, code, field_name)
+    return UnprocessableError(code=code, params=params, field=field_name)

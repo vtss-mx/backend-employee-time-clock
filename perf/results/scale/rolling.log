@@ -1,0 +1,30 @@
+ Container timeclock-scale-k6-run-ada97240c443 Creating 
+ Container timeclock-scale-k6-run-ada97240c443 Created 
+
+
+  █ TOTAL RESULTS 
+
+    CUSTOM
+    ok.............................: 10550  132.996113/s
+    ok_after_retry.................: 1      0.012606/s
+    transient_first_try............: 1      0.012606/s
+
+    HTTP
+    http_req_duration..............: avg=53.71ms  p(50)=8.42ms p(95)=100.47ms p(99)=706.42ms max=19.45s
+      { expected_response:true }...: avg=53.71ms  p(50)=8.42ms p(95)=100.51ms p(99)=706.42ms max=19.45s
+    http_req_failed................: 0.00%  1 out of 10552
+    http_reqs......................: 10552  133.021326/s
+
+    EXECUTION
+    dropped_iterations.............: 3029   38.184382/s
+    iteration_duration.............: avg=139.61ms p(50)=8.51ms p(95)=102.99ms p(99)=714.48ms max=28.43s
+    iterations.....................: 10550  132.996113/s
+    vus............................: 202    min=0          max=202
+    vus_max........................: 202    min=200        max=202
+
+    NETWORK
+    data_received..................: 249 MB 3.1 MB/s
+    data_sent......................: 5.8 MB 73 kB/s
+
+
+

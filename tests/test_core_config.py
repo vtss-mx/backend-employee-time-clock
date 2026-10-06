@@ -34,8 +34,30 @@ def test_database_url_always_uses_the_psycopg_driver(scheme):
 
 
 def test_database_url_is_built_from_postgres_variables_with_escaped_password():
-    config = _settings(DATABASE_URL="", POSTGRES_PASSWORD="p@ss:/word", POSTGRES_HOST="db", POSTGRES_USER="tc")
+    config = _settings(
+        DATABASE_URL="", POSTGRES_PASSWORD="p@ss:/word", POSTGRES_HOST="db", POSTGRES_USER="tc", DB_APP_PASSWORD=""
+    )
     assert config.DATABASE_URL == "postgresql+psycopg://tc:p%40ss%3A/word@db:5432/timeclock"
+
+
+def test_direct_url_is_the_same_database_unless_a_direct_host_is_given():
+    """Sin PgBouncer las migraciones usan la misma URL; con él, la conexión directa a PostgreSQL."""
+    base = {
+        "DATABASE_URL": "",
+        "DATABASE_DIRECT_URL": "",
+        "POSTGRES_PASSWORD": "pw",
+        "POSTGRES_USER": "tc",
+        "DB_APP_PASSWORD": "",
+    }
+    alone = _settings(**base, POSTGRES_HOST="db")
+    assert alone.DATABASE_DIRECT_URL == alone.DATABASE_URL == "postgresql+psycopg://tc:pw@db:5432/timeclock"
+    pooled = _settings(
+        **base, POSTGRES_HOST="pgbouncer", POSTGRES_PORT=6432, DB_POOLER="pgbouncer", POSTGRES_DIRECT_HOST="db"
+    )
+    assert pooled.DATABASE_URL == "postgresql+psycopg://tc:pw@pgbouncer:6432/timeclock"
+    assert pooled.DATABASE_DIRECT_URL == "postgresql+psycopg://tc:pw@db:5432/timeclock"  # el puerto de PostgreSQL
+    explicit = _settings(DATABASE_URL="postgres://u:p@pool:6432/tc", DATABASE_DIRECT_URL="postgres://u:p@pg:5432/tc")
+    assert explicit.DATABASE_DIRECT_URL == "postgresql+psycopg://u:p@pg:5432/tc"  # mismo driver en las dos
 
 
 def test_api_workers_zero_means_automatic(monkeypatch):
@@ -48,13 +70,26 @@ def test_api_workers_zero_means_automatic(monkeypatch):
     ("values", "message"),
     [
         ({"PAGE_SIZE_DEFAULT": 60, "PAGE_SIZE_MAX": 50}, "PAGE_SIZE_DEFAULT"),
-        ({"DATABASE_URL": "", "POSTGRES_PASSWORD": ""}, "POSTGRES_PASSWORD"),
+        ({"DATABASE_URL": "", "POSTGRES_PASSWORD": "", "DB_APP_PASSWORD": ""}, "POSTGRES_PASSWORD"),
         ({"JWT_ALGORITHM": "ES256", "JWT_PRIVATE_KEY": ""}, "JWT_PRIVATE_KEY"),
         ({"JWT_ALGORITHM": "HS256", "JWT_SECRET_KEY": "corto"}, "JWT_SECRET_KEY"),
         ({"DATA_ENCRYPTION_KEY": "no-es-fernet"}, "Fernet"),
         ({"DATA_ENCRYPTION_PREVIOUS_KEYS": "x, y"}, "Fernet"),
+        # Las migraciones a través de PgBouncer romperían su candado de sesión y CREATE INDEX CONCURRENTLY.
+        ({"DB_POOLER": "pgbouncer", "DATABASE_DIRECT_URL": ""}, "POSTGRES_DIRECT_HOST"),
+        # Con varias réplicas cada una contaría por su lado: el límite real se multiplicaría.
+        ({"ENVIRONMENT": "production", "RATE_LIMIT_BACKEND": "memory"}, "RATE_LIMIT_BACKEND"),
     ],
-    ids=["pagina", "sin-base", "es256-sin-llave", "hs256-corto", "fernet", "fernet-anterior"],
+    ids=[
+        "pagina",
+        "sin-base",
+        "es256-sin-llave",
+        "hs256-corto",
+        "fernet",
+        "fernet-anterior",
+        "pgbouncer-sin-directa",
+        "limite-por-proceso-en-produccion",
+    ],
 )
 def test_invalid_configuration_stops_the_start_with_a_clear_message(values, message):
     with pytest.raises(ValueError, match=message):
@@ -125,3 +160,27 @@ def test_available_cpus_respects_the_container_quota(monkeypatch, cpus, cgroup, 
 def test_default_api_workers_leaves_half_the_cores_for_face_recognition(monkeypatch, cpus, workers):
     monkeypatch.setattr(system, "available_cpus", lambda: cpus)
     assert system.default_api_workers() == workers
+
+
+_ROUTES = """Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT
+eth0\t00000000\t010015AC\t0003\t0\t0\t0\t00000000\t0\t0\t0
+eth0\t000015AC\t00000000\t0001\t0\t0\t0\t0000FFFF\t0\t0\t0
+eth1\t0000A8C0\t00000000\t0001\t0\t0\t0\t00FFFFFF\t0\t0\t0
+eth2\t000015AC\t00000000\t0001\t0\t0\t0\t0000FFFF\t0\t0\t0
+lo\t0000007F\t00000000\t0001\t0\t0\t0\t000000FF\t0\t0\t0
+incompleta
+"""
+
+
+def test_trusted_proxies_are_this_host_and_its_directly_connected_networks(tmp_path):
+    """FORWARDED_ALLOW_IPS=auto: solo quien está en la red del contenedor (el gateway) dice la IP del cliente.
+    Sin la ruta por defecto (sería confiar en todo Internet), sin `lo`, sin repetir y sin líneas incompletas."""
+    routes = tmp_path / "route"
+    routes.write_text(_ROUTES)
+    assert system.local_networks(str(routes)) == ["172.21.0.0/16", "192.168.0.0/24"]
+    assert system.trusted_proxies(str(routes)) == "127.0.0.1,172.21.0.0/16,192.168.0.0/24"
+
+
+def test_without_routes_only_this_host_is_trusted(tmp_path):
+    """Fuera de Linux (o sin /proc) no se adivina: solo el mismo equipo."""
+    assert system.trusted_proxies(str(tmp_path / "no-existe")) == "127.0.0.1"

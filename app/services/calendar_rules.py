@@ -14,6 +14,8 @@ from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
+from app.i18n import Text
+
 #: Clase de día libre de un festivo (las ausencias usan el código de su tipo: VACATION, PERMISSION...).
 HOLIDAY = "HOLIDAY"
 #: Primer año de la transmisión del Poder Ejecutivo el 1 de octubre (reforma de 2024); se repite cada 6.
@@ -29,19 +31,20 @@ def nth_weekday(year: int, month: int, weekday: int, n: int) -> date:
 
 
 def official_holidays(year: int) -> list[tuple[date, str]]:
-    """Los días de descanso obligatorio del año (art. 74 de la LFT), en orden."""
+    """Los días de descanso obligatorio del año (art. 74 de la LFT), en orden, con la llave de su nombre (el
+    catálogo de mensajes lo tiene en cada idioma; al agregarlos se guardan en el idioma de quien los agrega)."""
     days = [
-        (date(year, 1, 1), "Año Nuevo"),
-        (nth_weekday(year, 2, MONDAY, 1), "Día de la Constitución"),
-        (nth_weekday(year, 3, MONDAY, 3), "Natalicio de Benito Juárez"),
-        (date(year, 5, 1), "Día del Trabajo"),
-        (date(year, 9, 16), "Día de la Independencia"),
-        (nth_weekday(year, 11, MONDAY, 3), "Día de la Revolución"),
-        (date(year, 12, 25), "Navidad"),
+        (date(year, 1, 1), "HOLIDAY_NEW_YEAR"),
+        (nth_weekday(year, 2, MONDAY, 1), "HOLIDAY_CONSTITUTION"),
+        (nth_weekday(year, 3, MONDAY, 3), "HOLIDAY_BENITO_JUAREZ"),
+        (date(year, 5, 1), "HOLIDAY_LABOR_DAY"),
+        (date(year, 9, 16), "HOLIDAY_INDEPENDENCE"),
+        (nth_weekday(year, 11, MONDAY, 3), "HOLIDAY_REVOLUTION"),
+        (date(year, 12, 25), "HOLIDAY_CHRISTMAS"),
     ]
     if (year - TRANSMISSION_YEAR) % TRANSMISSION_EVERY == 0:
         handover = date(year, 10, 1) if year >= TRANSMISSION_YEAR else date(year, 12, 1)
-        days.append((handover, "Transmisión del Poder Ejecutivo Federal"))
+        days.append((handover, "HOLIDAY_TRANSMISSION"))
     return sorted(days)
 
 
@@ -63,17 +66,19 @@ class DayOff:
     name: str
     starts_on: date
     ends_on: date
-    #: Cómo se le dice al empleado ("Estás de vacaciones"); los festivos usan su propio texto.
+    #: Cómo se le dice al empleado ("Estás de vacaciones", del catálogo en el idioma de la petición); los festivos
+    #: usan su propio texto.
     phrase: str = ""
 
-    def explain(self, work_date: date, today: date) -> str:
+    def explain(self, work_date: date, today: date) -> Text:
         """El motivo para el empleado: "Hoy es día festivo: Navidad", "Estás de vacaciones del ... al ..."."""
         if self.kind == HOLIDAY:
-            when = "Hoy" if work_date == today else f"El {work_date:%d/%m/%Y}"
-            return f"{when} es día festivo: {self.name}"
+            if work_date == today:
+                return Text("HOLIDAY_TODAY", {"name": self.name})
+            return Text("HOLIDAY_ON", {"date": work_date, "name": self.name})
         if self.starts_on == self.ends_on:
-            return f"{self.phrase} el {self.starts_on:%d/%m/%Y}"
-        return f"{self.phrase} del {self.starts_on:%d/%m/%Y} al {self.ends_on:%d/%m/%Y}"
+            return Text("DAY_OFF_ON", {"phrase": self.phrase, "date": self.starts_on})
+        return Text("DAY_OFF_RANGE", {"phrase": self.phrase, "start": self.starts_on, "end": self.ends_on})
 
 
 @dataclass(frozen=True)

@@ -1,5 +1,6 @@
 """Auto-registro facial, validación por COMPANY, accesorios, prueba de vida y verificación."""
 
+from app.services.catalog_service import get_catalogs
 from tests.conftest import (
     approved_employee,
     create_company,
@@ -18,6 +19,11 @@ def _verify(client, headers, *, frontal=(b"face:juan", b"face:juan"), turn_perso
     return client.post(
         "/api/verification/face", data={"challenge_id": challenge["challenge_id"]}, files=files, headers=headers
     )
+
+
+def face_message(code: str) -> str:
+    """El mensaje del catálogo `face_errors` de un código (en español, el idioma de las pruebas)."""
+    return get_catalogs().face_error_message(code)
 
 
 # ---------------- Flujo de registro y validación ----------------
@@ -141,9 +147,10 @@ def test_enrollment_rejects_glasses_inconsistency_and_bad_liveness(client, compa
     response = submit_enrollment(client, headers, frontal=(b"glasses:juan", b"face:juan", b"glasses:juan"))
     assert response.status_code == 422 and response.json()["code"] == "ACCESSORIES_DETECTED"
     assert response.json()["message"] == "Quítate los lentes para continuar"
-    response = submit_enrollment(client, headers, frontal=(b"face:juan", b"noface"))
-    assert response.json()["code"] == "NO_FACE" and response.json()["message"].startswith("Foto 2:")
-    response = submit_enrollment(client, headers, frontal=(b"face:juan", b"face:otra"))
+    # Con muchas fotos, una mala se descarta; con menos útiles que FACE_ENROLL_MIN_USABLE, el motivo más frecuente.
+    response = submit_enrollment(client, headers, frontal=(b"face:juan", b"noface", b"noface"))
+    assert response.json()["code"] == "NO_FACE" and response.json()["message"] == face_message("NO_FACE")
+    response = submit_enrollment(client, headers, frontal=(b"face:juan", b"face:juan", b"face:otra"))
     assert response.json()["code"] == "ENROLL_INCONSISTENT"
     response = submit_enrollment(client, headers, turn_person="otra")
     assert response.json()["code"] == "LIVENESS_MISMATCH"
@@ -153,7 +160,7 @@ def test_enrollment_rejects_glasses_inconsistency_and_bad_liveness(client, compa
 def test_headwear_exemption(client, company_headers):
     create_employee(client, company_headers, headwear_exempt=True)
     headers = login(client, "juan@empresa.com", "Empleado123")
-    assert submit_enrollment(client, headers, frontal=(b"hat:juan",)).status_code == 201
+    assert submit_enrollment(client, headers, frontal=(b"hat:juan",) * 3).status_code == 201
 
 
 # ---------------- Verificación ----------------

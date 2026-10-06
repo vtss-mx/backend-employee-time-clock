@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.models.enums import VerificationMethod
 from app.schemas.common import Page
@@ -19,7 +19,17 @@ class IntegrationCompanyRead(BaseModel):
     id: int
     name: str
     legal_name: str | None
-    rfc: str | None
+    #: Identificador fiscal (migración 0074): país (ISO 3166-1 alfa-2), tipo (`catalog.tax_id_types`, p. ej. `MX_RFC`,
+    #: `US_EIN`) y número normalizado (mayúsculas, sin espacios, guiones, puntos ni diagonales); null = sin capturar.
+    tax_country: str | None = None
+    tax_id_type: str | None = None
+    tax_id: str | None = None
+    rfc: str | None = Field(
+        default=None,
+        description="Obsoleto (se conserva por compatibilidad): usa `tax_id`. El número si el tipo es `MX_RFC`; si "
+        "no, null",
+        json_schema_extra={"deprecated": True},
+    )
     #: Zona horaria del negocio: las fechas viajan en UTC (ISO 8601); los días se cuentan en esta zona.
     timezone: str
     key: IntegrationKeyInfo

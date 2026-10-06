@@ -94,7 +94,7 @@ class FaceLearning:
         if candidate is None:
             return False
         self._make_room(current, closest, now)
-        self.faces.store(employee.id, [candidate], learned=True)
+        self.faces.store(employee, [candidate], learned=True)
         logger.info("Rostro del empleado %s: muestra aprendida de una identificación segura", employee.id)
         return True
 

@@ -7,7 +7,8 @@ from sqlalchemy.exc import IntegrityError
 
 from app.core.database import SessionLocal
 from app.core.devices import classify_device
-from app.models import EmployeeQr
+from app.i18n import use_locale
+from app.models import Employee, EmployeeQr
 from app.schemas.validators import curp_check_digit, normalize_rfc, rfc_matches_birth_date
 from app.schemas.validators import normalize_curp as normalize_curp_value
 from tests.conftest import (
@@ -93,7 +94,6 @@ def test_normalize_rfc(raw, normalized):
 @pytest.mark.parametrize(
     ("raw", "message"),
     [
-        ("", "obligatorio"),
         ("XAXX010101000", "genérico"),
         ("PEG900515AB1", "13 caracteres"),  # 12: persona moral
         ("PEGJ9005ABAB1", "formato"),
@@ -116,13 +116,19 @@ def test_birth_date_mismatch_says_which_date_each_document_has():
     from app.schemas.validators import curp_birth_date_error, rfc_birth_date_error
 
     assert rfc_birth_date_error("TARS030901AB1", date(2003, 9, 1)) is None
-    assert rfc_birth_date_error("TARS030901AB1", date(2003, 9, 3)) == (
+    assert str(rfc_birth_date_error("TARS030901AB1", date(2003, 9, 3))) == (
         "El RFC indica nacimiento el 01/09/2003, pero la fecha de nacimiento es 03/09/2003"
     )
-    assert curp_birth_date_error("HEGG560427MVZRRL04", date(1956, 4, 28)) == (
+    assert str(curp_birth_date_error("HEGG560427MVZRRL04", date(1956, 4, 28))) == (
         "La CURP indica nacimiento el 27/04/1956, pero la fecha de nacimiento es 28/04/1956"
     )
-    assert "siglo" in (curp_birth_date_error("HEGG560427MVZRRL04", date(2056, 4, 27)) or "")
+    assert "siglo" in str(curp_birth_date_error("HEGG560427MVZRRL04", date(2056, 4, 27)))
+    # Un 29 de febrero que no existe con el siglo de la fecha capturada se dice tal cual (no hay fecha que escribir).
+    assert "29/02/1900" in str(rfc_birth_date_error("TARS000229AB1", date(1900, 3, 1)))
+    with use_locale("en-US"):
+        assert str(rfc_birth_date_error("TARS030901AB1", date(2003, 9, 3))) == (
+            "The RFC shows a birth date of 09/01/2003, but the date of birth is 09/03/2003"
+        )
     with pytest.raises(ValueError, match="se escribieron 17"):
         normalize_curp_value("TARS030901HSRNZB1")
 
@@ -177,7 +183,9 @@ def test_rfc_availability(client, company_headers):
     assert check(rfc_for("EMP-001"), exclude_id=employee_id)["code"] == "AVAILABLE"
     assert check("PEGJ900515AB1")["code"] == "AVAILABLE"
     assert check("PEGJ")["code"] == "INVALID_FORMAT"
-    assert check(" ")["code"] == "EMPTY"
+    # Opcional: vacío no se consulta y no impide guardar.
+    empty = check(" ")
+    assert (empty["code"], empty["valid"], empty["available"]) == ("EMPTY", True, True)
 
 
 # ---------------------------------------------------------------- búsqueda e índices
@@ -203,12 +211,13 @@ def test_database_allows_a_single_active_qr_per_employee(client, company_headers
     employee_id = create_employee(client, company_headers).json()["data"]["id"]
     qr_content(employee_id)  # su QR vigente
     with SessionLocal() as db:
-        db.add(EmployeeQr(employee_id=employee_id, token_hash="f" * 64, active=True))
+        company_id = db.get(Employee, employee_id).company_id
+        db.add(EmployeeQr(employee_id=employee_id, company_id=company_id, token_hash="f" * 64, active=True))
         with pytest.raises(IntegrityError):
             db.commit()
         db.rollback()
         # Inactivos (revocados) puede haber los que sean.
-        db.add(EmployeeQr(employee_id=employee_id, token_hash="e" * 64, active=False))
+        db.add(EmployeeQr(employee_id=employee_id, company_id=company_id, token_hash="e" * 64, active=False))
         db.commit()
 
     # Emitir otro sigue funcionando: apaga el vigente y crea uno nuevo en la misma transacción.
@@ -223,7 +232,6 @@ def test_curp_validation():
 
     assert normalize_curp(" hegg-560427-mvzrrl04 ") == "HEGG560427MVZRRL04"  # ejemplo oficial de RENAPO
     for bad, message in [
-        ("", "obligatoria"),
         ("HEGG560427MVZRRL0", "18 caracteres"),
         ("HEGG560427MXXRRL04", "formato"),  # entidad inexistente
         ("HEGG561327MVZRRL04", "fecha"),
@@ -284,7 +292,8 @@ def test_employee_requires_unique_curp_nss_matching_birth_date(client, company_h
     assert mismatch.status_code == 422 and mismatch.json()["code"] == "CURP_BIRTH_DATE_MISMATCH"
     missing = client.post("/api/employees", json={"first_name": "Ana"}, headers=company_headers)
     fields = {e["field"] for e in missing.json()["errors"]}
-    assert {"curp", "nss", "phone", "rfc"} <= fields
+    # RFC, CURP y NSS son opcionales: faltar no es un error (sí la fecha de nacimiento y el teléfono).
+    assert {"birth_date", "phone"} <= fields and not {"curp", "nss", "rfc"} & fields
     assert create().status_code == 201
 
 
@@ -318,4 +327,4 @@ def test_company_requests_identity_reverification_with_reason(client, company_he
     # Sin motivo: se usa uno genérico.
     client.post(f"/api/employees/{employee_id}/face/reset", headers=company_headers)
     me = client.get("/api/users/me", headers=headers).json()["data"]["employee"]
-    assert me["face_rejection_reason"] == "Tu empresa solicitó que verifiques nuevamente tu identidad."
+    assert me["face_rejection_reason"] == "Tu empresa pidió que verifiques tu identidad de nuevo"

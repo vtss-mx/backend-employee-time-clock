@@ -24,6 +24,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, model_validator
 
 from app.core.request_context import request_id_var
+from app.i18n import Params, t
 
 
 def new_trace_id() -> str:
@@ -73,13 +74,20 @@ class ApiResponse[T](BaseModel):
 
 def ok(
     data: Any = None,
-    message: str = "Operación exitosa",
+    message: str | None = None,
     *,
     code: str = "OK",
+    key: str | None = None,
+    params: Params | None = None,
     status_code: int = http_status.HTTP_200_OK,
 ) -> ApiResponse:
-    """Respuesta exitosa. `status_code` debe coincidir con el del decorador de la ruta."""
-    return ApiResponse(statusCode=status_code, code=code, message=message, data=data)
+    """Respuesta exitosa. `status_code` debe coincidir con el del decorador de la ruta.
+
+    El mensaje es el del catálogo para `code` (o `key`, si el código comparte su frase con otro sentido) con sus datos
+    en `params` (`{"count": result.total}` elige el plural), en el idioma de la petición. `message` (un texto ya
+    escrito) solo lo usan los módulos que todavía no se migran al catálogo."""
+    text = message if message is not None else t(key or code, params)
+    return ApiResponse(statusCode=status_code, code=code, message=text, data=data)
 
 
 def envelope_body(

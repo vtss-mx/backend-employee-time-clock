@@ -32,7 +32,9 @@ class AuthSession(Base):
             postgresql_where=text("revoked_at IS NULL"),
             sqlite_where=text("revoked_at IS NULL"),
         ),
-        {"schema": AUTH},
+        # Espacio libre por página: renovar la sesión (último uso, rotación del token) no toca columnas indexadas
+        # y cabe en la misma página (actualización HOT; migración 0055).
+        {"schema": AUTH, "postgresql_with": {"fillfactor": 90}},
     )
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
@@ -58,6 +60,10 @@ class AuthSession(Base):
     company_id: Mapped[int | None] = mapped_column(
         ForeignKey(f"{TENANCY}.companies.id", ondelete="CASCADE"), index=True
     )
+    #: Validador (antifraude 2b, migración 0070): SHA-256 de la llave del dispositivo con que se inició la sesión (o
+    #: la primera que firmó una identificación). Cada identificación debe venir firmada por esa llave: el token solo
+    #: no sirve en otro equipo (`request_signing`). None: aún sin llave (o no es un validador).
+    device_key_hash: Mapped[str | None] = mapped_column(String(64))
 
     # joined: validar la sesión y cargar el usuario es UNA sola consulta por petición.
     user: Mapped[User] = relationship(lazy="joined", innerjoin=True)
@@ -67,7 +73,11 @@ class RateLimitCounter(Base):
     """Contador de ventana fija compartido por todos los procesos (RATE_LIMIT_BACKEND=database)."""
 
     __tablename__ = "rate_limit_counters"
-    __table_args__ = (CheckConstraint("count >= 0", name="count_not_negative"), {"schema": AUTH})
+    __table_args__ = (
+        CheckConstraint("count >= 0", name="count_not_negative"),
+        # Cada petición limitada suma al contador: espacio libre para actualizarlo en su página (HOT; 0055).
+        {"schema": AUTH, "postgresql_with": {"fillfactor": 70}},
+    )
 
     key: Mapped[str] = mapped_column(String(255), primary_key=True)
     count: Mapped[int] = mapped_column(nullable=False, default=0)

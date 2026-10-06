@@ -6,8 +6,27 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.core.config import settings
 from app.core.exceptions import BodyTooLargeError, error_response
+from app.i18n import Megabytes, Text, t
 
 _DOCS_PATHS = ("/docs", "/redoc", "/openapi.json")
+
+
+def max_request_bytes() -> int:
+    """Límite general del cuerpo de una petición: cinco imágenes del tamaño máximo (MAX_IMAGE_SIZE_MB) más 256 KB para
+    los campos del formulario. Cabe con holgura el registro facial más grande (decisión del dueño, 2026-10-06): 36 fotos
+    de 640 px a calidad 92 (≈ 50 KB cada una, ≈ 1.8 MB) más la prueba de vida (destello, movimientos y la ráfaga:
+    ≈ 1 MB) son ≈ 3 MB, diez veces menos que el límite. Una sola imagen más grande que MAX_IMAGE_SIZE_MB la rechaza su
+    lectura (413 IMAGE_FILE_TOO_LARGE) y más fotos de FACE_ENROLL_MAX_PHOTOS, 422 TOO_MANY_IMAGES. Un documento de la
+    empresa (`COMPANY_DOCUMENT_MAX_MB`, 20 MB) cabe en el mismo límite; si se configurara más grande, el límite crece
+    con él (su lectura lo rechaza con 413 DOCUMENT_TOO_LARGE y el gateway corta antes, en su client_max_body_size)."""
+    document = int(settings.COMPANY_DOCUMENT_MAX_MB * 1024 * 1024)
+    return max(settings.max_image_bytes * 5, document) + 256 * 1024
+
+
+def _too_large(limit: int) -> Text:
+    """El mensaje del cuerpo que pasa del límite general, con ESE límite (se traduce al responder, en el idioma de la
+    petición)."""
+    return Text("REQUEST_TOO_LARGE", {"size": Megabytes(limit)})
 
 
 class SecurityMiddleware:
@@ -25,15 +44,13 @@ class SecurityMiddleware:
             try:
                 too_large = int(content_length) > self.max_body
             except ValueError:
-                await error_response(status.HTTP_400_BAD_REQUEST, "BAD_REQUEST", "Content-Length inválido")(
+                await error_response(status.HTTP_400_BAD_REQUEST, "BAD_REQUEST", t("CONTENT_LENGTH_INVALID"))(
                     scope, receive, send
                 )
                 return
             if too_large:
                 response = error_response(
-                    status.HTTP_413_CONTENT_TOO_LARGE,
-                    "PAYLOAD_TOO_LARGE",
-                    f"La solicitud excede el tamaño máximo ({settings.MAX_IMAGE_SIZE_MB} MB)",
+                    status.HTTP_413_CONTENT_TOO_LARGE, "PAYLOAD_TOO_LARGE", str(_too_large(self.max_body))
                 )
                 await response(scope, receive, send)
                 return
@@ -48,7 +65,7 @@ class SecurityMiddleware:
             if message["type"] == "http.request":
                 received += len(message.get("body", b""))
                 if received > self.max_body:
-                    raise BodyTooLargeError(f"La solicitud excede el tamaño máximo ({settings.MAX_IMAGE_SIZE_MB} MB)")
+                    raise BodyTooLargeError(_too_large(self.max_body))
             return message
 
         is_api = not scope["path"].startswith(_DOCS_PATHS)
@@ -72,5 +89,4 @@ class SecurityMiddleware:
 
 
 def register_security_middlewares(app: FastAPI) -> None:
-    # Hasta 5 imágenes por solicitud (registro) + margen para campos multipart.
-    app.add_middleware(SecurityMiddleware, max_body=settings.max_image_bytes * 5 + 256 * 1024)
+    app.add_middleware(SecurityMiddleware, max_body=max_request_bytes())

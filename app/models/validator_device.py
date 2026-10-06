@@ -6,6 +6,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.core.database import Base
 from app.core.db_schemas import AUTH, CATALOG, TENANCY, WORKFORCE
 from app.models.enums import DeviceStatus
+from app.models.mixins import company_fk
 
 
 class ValidatorDevice(Base):
@@ -29,13 +30,14 @@ class ValidatorDevice(Base):
             postgresql_where=text("reviewed_by_id IS NOT NULL"),
             sqlite_where=text("reviewed_by_id IS NOT NULL"),
         ),
-        {"schema": WORKFORCE},
+        # El validador es de la MISMA empresa del dispositivo (FK compuesta).
+        company_fk("validator_devices", "validator_id", f"{WORKFORCE}.validators"),
+        # Cada inicio de sesión anota el último uso: espacio libre para hacerlo en su página (HOT; 0055).
+        {"schema": WORKFORCE, "postgresql_with": {"fillfactor": 90}},
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    validator_id: Mapped[int] = mapped_column(
-        ForeignKey(f"{WORKFORCE}.validators.id", ondelete="CASCADE"), nullable=False
-    )  # su índice es el único (validator_id, key_hash)
+    validator_id: Mapped[int] = mapped_column(nullable=False)  # su índice es el único (validator_id, key_hash)
     company_id: Mapped[int] = mapped_column(ForeignKey(f"{TENANCY}.companies.id", ondelete="CASCADE"), nullable=False)
     #: SHA-256 de la llave pública (identifica al dispositivo sin comparar llaves completas).
     key_hash: Mapped[str] = mapped_column(String(64), nullable=False)

@@ -2,12 +2,15 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
+from app.i18n import t
+
 
 class FaceCheckResponse(BaseModel):
     """Resultado de la validación previa de una imagen (sin comparar identidad)."""
 
     ok: bool = True
-    message: str = "Imagen válida"
+    #: En el idioma de la petición (se arma al crear la respuesta).
+    message: str = Field(default_factory=lambda: t("IMAGE_VALID"))
     detection_score: float
     quality_score: float
     yaw_ratio: float | None = None

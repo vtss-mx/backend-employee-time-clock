@@ -35,7 +35,8 @@ def test_invalid_content_length_is_rejected_with_the_envelope():
     sent = _asgi_call(SecurityMiddleware(_unreachable_app, max_body=1024), [(b"content-length", b"diez")], [])
     assert sent[0]["status"] == 400
     body = json.loads(sent[1]["body"])
-    assert (body["code"], body["success"], body["message"]) == ("BAD_REQUEST", False, "Content-Length inválido")
+    assert (body["code"], body["success"]) == ("BAD_REQUEST", False)
+    assert body["message"] == "El encabezado `Content-Length` no es válido"
 
 
 def test_a_client_disconnect_is_forwarded_and_not_counted_as_body():
