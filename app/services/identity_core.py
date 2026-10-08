@@ -74,9 +74,11 @@ from app.services.liveness_service import (
     Challenge,
     ChallengeOwner,
     LivenessResponse,
+    challenge_actions,
     challenge_store,
     enrollment_actions,
     user_of,
+    verification_pool,
 )
 from app.services.policy_service import PolicySnapshot
 from app.services.risk_engine import RiskOutcome
@@ -225,9 +227,9 @@ def issue_challenge(
     `step_up` (riesgo medio del motor de riesgo, decisión D3): el reto de "un paso más": el máximo de movimientos
     y el destello OBLIGATORIO para ese intento aunque la empresa solo lo mida.
 
-    `enrollment` (decisión del dueño, 2026-10-07): el reto del REGISTRO facial pide SIEMPRE los cuatro movimientos
-    (`enrollment_actions`: derecha, izquierda, arriba y abajo, en orden al azar), sin importar `liveness_steps` ni el
-    refuerzo por ataques; el registro rechaza cualquier otro reto (`is_enrollment_challenge`).
+    `enrollment` (decisión del dueño, 2026-10-08, reemplaza la del 2026-10-07): el reto del REGISTRO facial pide TODOS
+    los movimientos de cabeza que la empresa habilitó (`enrollment_actions`, por omisión solo los giros; en orden al
+    azar), sin importar `liveness_steps` ni el refuerzo; el registro rechaza otro reto (`is_enrollment_challenge`).
 
     `device` (el empleado se captura a sí mismo, decisión D2): con el reto va otro que firma la llave de su
     dispositivo (`device_nonce`, el mismo de los validadores: ligado a la cuenta y con vencimiento), también sin prueba
@@ -243,9 +245,16 @@ def issue_challenge(
         return FaceChallengeResponse(liveness_required=False, device_nonce=nonce)
     reinforced = under_attack(db, company_id, datetime.now(UTC))
     steps = MAX_STEPS if reinforced or step_up else policy.liveness_steps
-    # Decisión del dueño (2026-10-06): OFF es OFF también en «un paso más» (el destello se retiró de la experiencia).
+    # Destello dictado por el servidor (decisión del dueño, 2026-10-08): el ADMIN lo enciende con `flash_paced` y sus
+    # colores se dictan uno por uno; también enciende el destello el modo de color `flash_liveness`. Un dispositivo de
+    # la API nunca lo recibe (no hay pantalla que pintar).
     api = isinstance(owner, ApiDevice)
-    flash = settings.FACE_FLASH_COLORS if policy.flash_liveness != FlashMode.OFF and not api else 0
+    wants_flash = policy.flash_liveness != FlashMode.OFF or policy.flash_paced
+    flash = settings.FACE_FLASH_COLORS if wants_flash and not api else 0
+    # El REGISTRO pide los movimientos que la empresa habilitó (todos, en orden al azar); la verificación elige
+    # `liveness_steps` del mismo repertorio (acotado a cuántos hay, para no repetir).
+    pool = verification_pool(policy)
+    actions = enrollment_actions(policy) if enrollment else challenge_actions(pool, max(1, min(steps, len(pool))))
     challenge = challenge_store.issue(
         db,
         owner,
@@ -255,7 +264,7 @@ def issue_challenge(
         step_up=step_up,
         reinforced=reinforced,
         paced=policy.flash_paced,
-        actions=enrollment_actions() if enrollment else None,
+        actions=actions,
     )
     pace = (
         FlashPace(

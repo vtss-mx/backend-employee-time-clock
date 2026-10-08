@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from sqlalchemy import (
+    JSON,
     BigInteger,
     Boolean,
     DateTime,
@@ -12,6 +13,7 @@ from sqlalchemy import (
     String,
     func,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -97,6 +99,10 @@ class FaceAttemptMetric(Base):
     #: DESKTOP u OTHER (`app/core/devices.py`, `platform_of`). Una categoría gruesa, nunca el User-Agent ni la persona;
     #: None en los intentos anteriores a la migración.
     platform: Mapped[str | None] = mapped_column(String(20))
+    #: PAD de frontera (migración 0090): los 7 números por familia del intento (`facial_recognition/pad.py`,
+    #: `{familia: 0-1}`); nunca los más de 1000 rasgos crudos ni imagen alguna (regla 13). None si no se midió. Lo lee
+    #: la autocalibración de cada familia (`face_security.SIGNALS`); el patrón JSON es el de `verification_policy`.
+    pad: Mapped[dict[str, float] | None] = mapped_column(JSON().with_variant(JSONB(), "postgresql"), nullable=True)
 
 
 class SecurityThreshold(Base):

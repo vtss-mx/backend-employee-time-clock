@@ -182,8 +182,19 @@ class AttemptSignals:
             flash_ratio=flash.face_ratio if flash else None,
             quality_mean=_mean([f.quality_score for f in self.frontal]),
             brightness_mean=_mean([f.brightness for f in self.frontal]),
+            pad=self._pad_scores(),
             **self._protocol(),
         )
+
+    def _pad_scores(self) -> dict[str, float] | None:
+        """PAD de frontera (antifraude de frontera): el peor caso (el máximo) de cada familia entre las frontales que se
+        pudieron medir. Solo los números por familia; los más de 1000 rasgos crudos ya se descartaron (regla 13). None
+        si ninguna frontal se midió."""
+        scores: dict[str, float] = {}
+        for frontal in self.frontal:
+            for family, value in (frontal.pad or {}).items():
+                scores[family] = max(scores.get(family, value), value)
+        return {family: round(value, 6) for family, value in scores.items()} or None
 
     def _protocol(self) -> dict[str, float | int | None]:
         """Los números del protocolo de captura (antifraude 2a): la ráfaga, las señales físicas de las frontales (el

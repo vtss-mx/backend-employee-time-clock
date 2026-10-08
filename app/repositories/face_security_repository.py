@@ -10,6 +10,16 @@ from app.models import Company, FaceAttemptMetric, SecurityThreshold
 FRAUD_LABEL = "FRAUD"
 GENUINE_LABEL = "GENUINE"
 
+#: De dónde sale el valor medido de una señal autocalibrada: una columna numérica (moiré, giro...) o una clave del JSON
+#: de las familias PAD (`FaceAttemptMetric.pad["texture"].as_float()`). Las dos se seleccionan y se filtran igual.
+type MetricColumn = InstrumentedAttribute[float | None] | ColumnElement[float | None]
+
+
+def pad_metric_column(family: str) -> ColumnElement[float | None]:
+    """El valor de una familia PAD dentro del JSON `ops.face_attempt_metrics.pad` como número (misma lectura que una
+    columna numérica; `family` sale SIEMPRE de `pad.FAMILIES`, nunca de la petición)."""
+    return FaceAttemptMetric.pad[family].as_float()
+
 
 class FaceSecurityRepository:
     """Métricas de los intentos faciales y umbrales autocalibrados (toda la plataforma).
@@ -27,7 +37,7 @@ class FaceSecurityRepository:
 
     def success_values(
         self,
-        column: InstrumentedAttribute[float | None],
+        column: MetricColumn,
         since: datetime,
         limit: int,
         *conditions: ColumnElement[bool],

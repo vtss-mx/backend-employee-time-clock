@@ -33,14 +33,14 @@ from datetime import datetime, timedelta
 
 import numpy as np
 from sqlalchemy import ColumnElement
-from sqlalchemy.orm import InstrumentedAttribute, Session
+from sqlalchemy.orm import Session
 
 from app.core.clock import as_utc
 from app.core.config import settings
 from app.core.ip_intel import ip_intel
 from app.i18n import t
 from app.models import FaceAttemptMetric
-from app.repositories.face_security_repository import FaceSecurityRepository
+from app.repositories.face_security_repository import FaceSecurityRepository, MetricColumn, pad_metric_column
 from app.schemas.face_security import (
     AttackedCompany,
     CaptureProtocolObservation,
@@ -73,7 +73,7 @@ class Signal:
     key: str
     #: Llave de su nombre en el catálogo de mensajes (el ADMIN lo lee en su idioma).
     name: str
-    column: InstrumentedAttribute[float | None]
+    column: MetricColumn
     floor: Callable[[], float]
     cap: Callable[[], float]
     #: Escalas (acercarse): el margen se aplica a lo que crece (1 + (v − 1) × margen), no al valor.
@@ -184,6 +184,65 @@ SIGNALS = (
         lambda: settings.FACE_MOIRE_MAX_DB,
         upper=True,
     ),
+    # --- PAD de frontera (migración 0090): una por familia de rasgos (`facial_recognition/pad.py`). Un MÁXIMO (lo
+    # sospechoso es ALTO): parte de su tope por familia y la autocalibración lo endurece BAJÁNDOLO hacia el piso común
+    # (nunca por debajo). Lee su valor del JSON `pad` de los intentos exitosos (`pad_metric_column`). ---
+    Signal(
+        "PAD_TEXTURE",
+        "FACE_SIGNAL_PAD_TEXTURE",
+        pad_metric_column("texture"),
+        lambda: settings.FACE_PAD_TIGHTEST,
+        lambda: settings.FACE_PAD_TEXTURE_MAX,
+        upper=True,
+    ),
+    Signal(
+        "PAD_FREQUENCY",
+        "FACE_SIGNAL_PAD_FREQUENCY",
+        pad_metric_column("frequency"),
+        lambda: settings.FACE_PAD_TIGHTEST,
+        lambda: settings.FACE_PAD_FREQUENCY_MAX,
+        upper=True,
+    ),
+    Signal(
+        "PAD_COLOR",
+        "FACE_SIGNAL_PAD_COLOR",
+        pad_metric_column("color"),
+        lambda: settings.FACE_PAD_TIGHTEST,
+        lambda: settings.FACE_PAD_COLOR_MAX,
+        upper=True,
+    ),
+    Signal(
+        "PAD_NOISE",
+        "FACE_SIGNAL_PAD_NOISE",
+        pad_metric_column("noise"),
+        lambda: settings.FACE_PAD_TIGHTEST,
+        lambda: settings.FACE_PAD_NOISE_MAX,
+        upper=True,
+    ),
+    Signal(
+        "PAD_SPECULAR",
+        "FACE_SIGNAL_PAD_SPECULAR",
+        pad_metric_column("specular"),
+        lambda: settings.FACE_PAD_TIGHTEST,
+        lambda: settings.FACE_PAD_SPECULAR_MAX,
+        upper=True,
+    ),
+    Signal(
+        "PAD_SHARPNESS",
+        "FACE_SIGNAL_PAD_SHARPNESS",
+        pad_metric_column("sharpness"),
+        lambda: settings.FACE_PAD_TIGHTEST,
+        lambda: settings.FACE_PAD_SHARPNESS_MAX,
+        upper=True,
+    ),
+    Signal(
+        "PAD_CHROMA",
+        "FACE_SIGNAL_PAD_CHROMA",
+        pad_metric_column("chroma"),
+        lambda: settings.FACE_PAD_TIGHTEST,
+        lambda: settings.FACE_PAD_CHROMA_MAX,
+        upper=True,
+    ),
 )
 SIGNAL_BY_KEY = {s.key: s for s in SIGNALS}
 
@@ -206,6 +265,15 @@ class SecurityThresholds:
     min_parallax: float
     min_noise_ratio: float
     max_moire: float
+    #: PAD de frontera (migración 0090): el máximo autocalibrado de cada familia de rasgos (`pad.FAMILIES`); por encima,
+    #: su señal se dispara (en «Solo medir»: nunca niega sola).
+    pad_texture: float
+    pad_frequency: float
+    pad_color: float
+    pad_noise: float
+    pad_specular: float
+    pad_sharpness: float
+    pad_chroma: float
 
 
 #: El campo de `SecurityThresholds` de cada señal autocalibrada (una sola fuente para leerlos y mostrarlos).
@@ -220,6 +288,13 @@ THRESHOLD_FIELDS = {
     "PARALLAX": "min_parallax",
     "NOISE_RATIO": "min_noise_ratio",
     "MOIRE": "max_moire",
+    "PAD_TEXTURE": "pad_texture",
+    "PAD_FREQUENCY": "pad_frequency",
+    "PAD_COLOR": "pad_color",
+    "PAD_NOISE": "pad_noise",
+    "PAD_SPECULAR": "pad_specular",
+    "PAD_SHARPNESS": "pad_sharpness",
+    "PAD_CHROMA": "pad_chroma",
 }
 
 

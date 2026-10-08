@@ -1,10 +1,10 @@
-"""Prueba de vida completa del registro y lentes permitidos (decisiones del dueño del producto, 2026-10-07).
+"""Movimientos de la prueba de vida configurables y lentes permitidos (decisiones del dueño del producto, 2026-10-08).
 
-- El reto del registro (`POST /face/challenge?purpose=ENROLLMENT`) pide SIEMPRE los cuatro movimientos de la cabeza
-  (derecha, izquierda, arriba, abajo) en orden al azar, sin «acercarse», sin importar `liveness_steps` ni el refuerzo
-  por ataques; la verificación sigue con los de la política.
-- El registro (propio y en persona) rechaza un reto de verificación (`LIVENESS_REQUIRED`) y acepta el suyo; las
-  métricas del intento guardan los cuatro pasos; un validador nunca recibe el reto del registro.
+- El reto del registro (`POST /face/challenge?purpose=ENROLLMENT`) pide los movimientos de cabeza que la empresa
+  habilitó (por omisión solo los giros; decisión 2026-10-08, reemplaza «siempre los cuatro»), en orden al azar, sin
+  «acercarse», sin importar `liveness_steps` ni el refuerzo; la verificación elige los suyos de ese mismo repertorio.
+- El registro (propio y en persona) rechaza un reto de verificación incompleto (`LIVENESS_REQUIRED`) y acepta el suyo;
+  un validador nunca recibe el reto del registro.
 - Los lentes están apagados por omisión (la migración `0082` deja `block_glasses` en `false`): un rostro con lentes se
   registra y se verifica, y la validación previa los informa (`accessories`) para la insignia de la app; con la regla
   encendida por el ADMIN, el servidor vuelve a rechazarlos como cualquier otro accesorio.
@@ -12,13 +12,14 @@
 
 from app.facial_recognition import LivenessAction
 from app.services.liveness_service import (
-    ENROLLMENT_ACTIONS,
+    HEAD_ACTIONS,
     MAX_CHALLENGE_STEPS,
     Challenge,
     challenge_store,
     enrollment_actions,
     is_enrollment_challenge,
 )
+from app.services.policy_service import PolicySnapshot
 from tests.conftest import (
     SessionLocal,
     approved_employee,
@@ -33,7 +34,12 @@ from tests.conftest import (
 from tests.test_policy import set_policy
 from tests.test_validators import approved, identify_face, validator_headers
 
-FOUR = {a.value for a in ENROLLMENT_ACTIONS}
+#: Todos los movimientos de cabeza posibles, y los dos de un registro por omisión (solo giros, decisión 2026-10-08).
+FOUR = {action.value for action, _ in HEAD_ACTIONS}
+TWO = {"TURN_RIGHT", "TURN_LEFT"}
+#: Una empresa por omisión (solo giros) y una que habilitó los cuatro movimientos.
+DEFAULT_POLICY = PolicySnapshot()
+ALL_MOVES_POLICY = PolicySnapshot(enable_look_up=True, enable_look_down=True)
 
 
 def _employee(client, company_headers, email: str = "juan@empresa.com", number: str = "EMP-001") -> dict[str, str]:
@@ -53,31 +59,40 @@ def _enroll_with(client, headers, challenge: dict, person: str = "juan"):
 # ---------------------------------------------------------------- reglas puras
 
 
-def test_the_enrollment_actions_are_the_four_head_movements_in_a_random_order():
+def test_the_enrollment_actions_are_the_enabled_head_movements_in_a_random_order():
     assert {"TURN_RIGHT", "TURN_LEFT", "LOOK_UP", "LOOK_DOWN"} == FOUR and MAX_CHALLENGE_STEPS == 4
-    orders = {enrollment_actions() for _ in range(40)}
-    assert all(set(order) == set(ENROLLMENT_ACTIONS) and len(order) == 4 for order in orders)
-    assert len(orders) > 1  # el orden cambia (24 posibles): un video grabado no conoce la secuencia
+    # Por omisión solo los giros (decisión del dueño, 2026-10-08).
+    giros = {LivenessAction.TURN_RIGHT, LivenessAction.TURN_LEFT}
+    assert all(set(enrollment_actions(DEFAULT_POLICY)) == giros for _ in range(20))
+    # Una empresa que los habilitó todos los recibe todos, en orden al azar.
+    four = {enrollment_actions(ALL_MOVES_POLICY) for _ in range(40)}
+    assert all(set(order) == FOUR and len(order) == 4 for order in four) and len(four) > 1
 
 
-def test_only_a_challenge_with_the_four_movements_is_an_enrollment_challenge():
+def test_only_a_challenge_with_the_enabled_movements_is_an_enrollment_challenge():
     def challenge(*actions: LivenessAction) -> Challenge:
         from datetime import UTC, datetime
 
         now = datetime.now(UTC)
         return Challenge(id="c", user_id=1, actions=actions, issued_at=now, expires_at=now)
 
-    assert is_enrollment_challenge(challenge(*ENROLLMENT_ACTIONS))
-    assert is_enrollment_challenge(challenge(*reversed(ENROLLMENT_ACTIONS)))
-    assert not is_enrollment_challenge(challenge(LivenessAction.TURN_LEFT, LivenessAction.TURN_RIGHT))
-    assert not is_enrollment_challenge(challenge(*ENROLLMENT_ACTIONS[:3], LivenessAction.MOVE_CLOSER))
-    assert not is_enrollment_challenge(challenge(*ENROLLMENT_ACTIONS[:3], LivenessAction.TURN_RIGHT))
+    # Por omisión, el registro pide exactamente los dos giros (en cualquier orden).
+    assert is_enrollment_challenge(challenge(LivenessAction.TURN_RIGHT, LivenessAction.TURN_LEFT), DEFAULT_POLICY)
+    assert is_enrollment_challenge(challenge(LivenessAction.TURN_LEFT, LivenessAction.TURN_RIGHT), DEFAULT_POLICY)
+    # Un reto con menos, con «acercarse» o con un movimiento que no se habilitó no es el del registro.
+    assert not is_enrollment_challenge(challenge(LivenessAction.TURN_RIGHT), DEFAULT_POLICY)
+    assert not is_enrollment_challenge(challenge(LivenessAction.TURN_RIGHT, LivenessAction.MOVE_CLOSER), DEFAULT_POLICY)
+    assert not is_enrollment_challenge(challenge(LivenessAction.TURN_RIGHT, LivenessAction.LOOK_UP), DEFAULT_POLICY)
+    # Una empresa que habilitó los cuatro exige los cuatro (los dos giros ya no bastan).
+    four = (LivenessAction.TURN_RIGHT, LivenessAction.TURN_LEFT, LivenessAction.LOOK_UP, LivenessAction.LOOK_DOWN)
+    assert is_enrollment_challenge(challenge(*four), ALL_MOVES_POLICY)
+    assert not is_enrollment_challenge(challenge(LivenessAction.TURN_RIGHT, LivenessAction.TURN_LEFT), ALL_MOVES_POLICY)
 
 
 # ---------------------------------------------------------------- el reto por la API
 
 
-def test_the_enrollment_challenge_always_brings_the_four_movements(client, company_headers):
+def test_the_enrollment_challenge_brings_the_enabled_movements(client, company_headers):
     headers = _employee(client, company_headers)
     set_policy(client, company_headers, liveness_steps=1)
     verification = client.post("/api/face/challenge", headers=headers).json()["data"]
@@ -85,21 +100,26 @@ def test_the_enrollment_challenge_always_brings_the_four_movements(client, compa
     seen = set()
     for _ in range(8):
         challenge = enrollment_challenge(client, headers)
-        assert set(challenge["actions"]) == FOUR and len(challenge["actions"]) == 4
-        assert challenge["action"] == challenge["actions"][0] and len(challenge["instructions"]) == 4
+        assert set(challenge["actions"]) == TWO and len(challenge["actions"]) == 2  # por omisión, solo los giros
+        assert challenge["action"] == challenge["actions"][0] and len(challenge["instructions"]) == 2
         assert challenge["instruction"] == challenge["instructions"][0]
         seen.add(tuple(challenge["actions"]))
-    assert len(seen) > 1
-    # El reto se guarda y se consume con sus cuatro movimientos.
+    assert len(seen) > 1  # el orden cambia
+    # Con los cuatro habilitados, el registro los pide todos.
+    set_policy(client, company_headers, enable_look_up=True, enable_look_down=True)
+    four = enrollment_challenge(client, headers)
+    assert set(four["actions"]) == FOUR and len(four["actions"]) == 4
+    # El reto se guarda y se consume con sus movimientos.
     with SessionLocal() as db:
-        issued = challenge_store.issue(db, 1, steps=2, lifetime_seconds=60, actions=enrollment_actions())
+        issued = challenge_store.issue(db, 1, steps=2, lifetime_seconds=60, actions=enrollment_actions(DEFAULT_POLICY))
         consumed = challenge_store.consume(db, issued.id, 1)
-    assert consumed is not None and consumed.actions == issued.actions and len(consumed.actions) == 4
+    assert consumed is not None and consumed.actions == issued.actions and len(consumed.actions) == 2
 
 
 def test_an_enrollment_needs_its_own_challenge(client, company_headers):
     headers = _employee(client, company_headers)
-    # Un reto de verificación (dos movimientos) no sirve para registrarse: falta la prueba de vida completa.
+    # Un reto de verificación (un solo movimiento) no sirve para registrarse: faltan movimientos de la prueba de vida.
+    set_policy(client, company_headers, liveness_steps=1)
     verification = client.post("/api/face/challenge", headers=headers).json()["data"]
     refused = _enroll_with(client, headers, verification)
     assert refused.status_code == 422 and refused.json()["code"] == "LIVENESS_REQUIRED"
@@ -111,8 +131,9 @@ def test_an_enrollment_needs_its_own_challenge(client, company_headers):
     assert client.get("/api/users/me", headers=headers).json()["data"]["employee"]["face_status"] == "PENDING_REVIEW"
 
 
-def test_the_in_person_enrollment_also_needs_the_four_movements(client, company_headers):
+def test_the_in_person_enrollment_also_needs_its_own_challenge(client, company_headers):
     employee = create_employee(client, company_headers).json()["data"]
+    set_policy(client, company_headers, liveness_steps=1)  # la verificación trae un solo movimiento
     verification = client.post("/api/face/challenge", headers=company_headers).json()["data"]
     files = [("images", (f"f{i}.jpg", b"face:juan", "image/jpeg")) for i in range(3)] + turn_files(verification)
     refused = client.post(

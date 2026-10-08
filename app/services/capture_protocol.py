@@ -59,6 +59,18 @@ PACE_SIGNALS = {
     PaceVerdict.TIMING: RiskSignal.FLASH_PACE_TIMING,
     PaceVerdict.MISMATCH: RiskSignal.FLASH_PACE_MISMATCH,
 }
+#: PAD de frontera (migración 0090): cada familia de rasgos de `facial_recognition/pad.py` con su señal del motor de
+#: riesgo y el campo de su umbral máximo en `SecurityThresholds` (autocalibrado, «solo endurece»). El puntaje de una
+#: familia es «sospechoso» cuando es ALTO: se dispara por encima de su umbral. Nace en «Solo medir» y nunca niega sola.
+PAD_SIGNALS: dict[str, tuple[RiskSignal, str]] = {
+    "texture": (RiskSignal.PAD_TEXTURE_ANOMALY, "pad_texture"),
+    "frequency": (RiskSignal.PAD_FREQUENCY_ANOMALY, "pad_frequency"),
+    "color": (RiskSignal.PAD_COLOR_ANOMALY, "pad_color"),
+    "noise": (RiskSignal.PAD_NOISE_ANOMALY, "pad_noise"),
+    "specular": (RiskSignal.PAD_SPECULAR_ANOMALY, "pad_specular"),
+    "sharpness": (RiskSignal.PAD_SHARPNESS_ANOMALY, "pad_sharpness"),
+    "chroma": (RiskSignal.PAD_CHROMA_ANOMALY, "pad_chroma"),
+}
 
 
 def burst_spec() -> BurstSpec:
@@ -242,9 +254,27 @@ def _pace_hits(pace: PaceOutcome) -> list[Hit]:
     return [] if signal is None else [Hit(signal, pace.value, pace.threshold)]
 
 
+def pad_hits(signals: AttemptSignals, limits: SecurityThresholds) -> list[Hit]:
+    """PAD de frontera (migración 0090): una señal por familia que se dispara cuando su peor puntaje entre las frontales
+    pasa el umbral máximo autocalibrado de la familia. Regla pura sobre lo ya medido; nace en «Solo medir» y nunca niega
+    sola (`risk_rules.CALIBRATING_SIGNALS`)."""
+    worst: dict[str, float] = {}
+    for frontal in signals.frontal:
+        for family, value in (frontal.pad or {}).items():
+            worst[family] = max(worst.get(family, value), value)
+    hits: list[Hit] = []
+    for family, (code, field) in PAD_SIGNALS.items():
+        score = worst.get(family)
+        threshold = getattr(limits, field)
+        if score is not None and score > threshold:
+            hits.append(Hit(code, round(score, 4), threshold))
+    return hits
+
+
 def protocol_hits(signals: AttemptSignals, limits: SecurityThresholds) -> list[Hit]:
     """Las señales del protocolo de captura de un intento (reglas puras sobre lo ya medido; sin consultas)."""
     hits = _physical_hits(signals, limits)
+    hits.extend(pad_hits(signals, limits))
     if signals.burst is not None:
         hits.extend(_burst_hits(signals.burst, limits))
     if signals.pace is not None:

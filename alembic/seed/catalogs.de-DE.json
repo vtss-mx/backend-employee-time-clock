@@ -2211,6 +2211,34 @@
     "SITE_CODE_INVALID": {
       "name": "Ungültiger Standortcode",
       "description": "Der Code ist nicht der aktuelle des Standorts: Er ist abgelaufen, gehört zu einem anderen Standort oder wurde bereits verwendet. Deutet meist auf einen Code hin, den jemand vom Standort weitergegeben hat."
+    },
+    "PAD_TEXTURE_ANOMALY": {
+      "name": "Texturanomalie",
+      "description": "Die feine Textur des Gesichts ähnelt kaum echter Haut, wie bei Druck oder Bildschirm."
+    },
+    "PAD_FREQUENCY_ANOMALY": {
+      "name": "Frequenzanomalie",
+      "description": "Das Gesicht zeigt das Frequenzmuster eines abfotografierten Bildschirms."
+    },
+    "PAD_COLOR_ANOMALY": {
+      "name": "Farbanomalie",
+      "description": "Die Gesichtsfarbe weicht von der einer Live-Aufnahme ab."
+    },
+    "PAD_NOISE_ANOMALY": {
+      "name": "Sensorrauschanomalie",
+      "description": "Das Gesicht weist weniger Sensorrauschen als erwartet auf: eingefügtes, erzeugtes oder neu aufgenommenes Gesicht."
+    },
+    "PAD_SPECULAR_ANOMALY": {
+      "name": "Spiegelreflexe",
+      "description": "Das Gesicht zeigt sehr helle Reflexe wie die eines Bildschirms oder Papiers."
+    },
+    "PAD_SHARPNESS_ANOMALY": {
+      "name": "Schärfeanomalie",
+      "description": "Die feine Schärfe des Gesichts entspricht nicht der einer Live-Aufnahme."
+    },
+    "PAD_CHROMA_ANOMALY": {
+      "name": "Sättigungsanomalie",
+      "description": "Die Sättigung des Gesichts weicht von der einer Live-Aufnahme ab."
     }
   },
   "risk_tiers": {

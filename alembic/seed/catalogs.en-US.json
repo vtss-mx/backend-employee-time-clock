@@ -2211,6 +2211,34 @@
     "SITE_CODE_INVALID": {
       "name": "Invalid site code",
       "description": "The code isn't the site's current one: it expired, belongs to another site, or was already used. It often means someone passed it on from the site."
+    },
+    "PAD_TEXTURE_ANOMALY": {
+      "name": "Texture anomaly",
+      "description": "The face's fine texture barely matches real skin, as in a print or screen."
+    },
+    "PAD_FREQUENCY_ANOMALY": {
+      "name": "Frequency anomaly",
+      "description": "The face shows the frequency pattern of a photographed screen."
+    },
+    "PAD_COLOR_ANOMALY": {
+      "name": "Color anomaly",
+      "description": "The face color drifts from what a live capture is expected to show."
+    },
+    "PAD_NOISE_ANOMALY": {
+      "name": "Sensor noise anomaly",
+      "description": "The face carries less sensor noise than expected: a pasted, generated, or recaptured face."
+    },
+    "PAD_SPECULAR_ANOMALY": {
+      "name": "Specular highlights",
+      "description": "The face shows very bright highlights, like those of a screen or paper."
+    },
+    "PAD_SHARPNESS_ANOMALY": {
+      "name": "Sharpness anomaly",
+      "description": "The fine sharpness of the face is not that of a live capture."
+    },
+    "PAD_CHROMA_ANOMALY": {
+      "name": "Chroma anomaly",
+      "description": "The face chroma drifts from what a live capture is expected to show."
     }
   },
   "risk_tiers": {

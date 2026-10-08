@@ -86,6 +86,16 @@ CALIBRATING_SIGNALS = frozenset(
         RiskSignal.VALIDATOR_OUT_OF_ZONE,
         RiskSignal.SITE_CODE_MISSING,
         RiskSignal.SITE_CODE_INVALID,
+        # PAD de frontera (migración 0090): una señal por familia de rasgos de las capturas (`facial_recognition/pad.py`
+        # y `capture_protocol.pad_hits`). Lo nuevo nunca niega: nacen en «Solo medir» y como mucho piden más hasta que
+        # el dueño las calibre con datos reales (docs/rd/pad-frontera-2026-10-08.md §4).
+        RiskSignal.PAD_TEXTURE_ANOMALY,
+        RiskSignal.PAD_FREQUENCY_ANOMALY,
+        RiskSignal.PAD_COLOR_ANOMALY,
+        RiskSignal.PAD_NOISE_ANOMALY,
+        RiskSignal.PAD_SPECULAR_ANOMALY,
+        RiskSignal.PAD_SHARPNESS_ANOMALY,
+        RiskSignal.PAD_CHROMA_ANOMALY,
     }
 )
 #: Señales que como mucho piden más (un paso más o "en revisión"): nunca son la razón de negar un intento.

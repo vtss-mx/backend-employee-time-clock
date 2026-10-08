@@ -394,6 +394,15 @@ class RiskSignal(StrEnum):
     VALIDATOR_OUT_OF_ZONE = "VALIDATOR_OUT_OF_ZONE"
     SITE_CODE_MISSING = "SITE_CODE_MISSING"
     SITE_CODE_INVALID = "SITE_CODE_INVALID"
+    # --- PAD de frontera (migración 0090): una señal por familia de rasgos (`facial_recognition/pad.py`); todas nacen
+    # en «Solo medir» y NUNCA niegan por sí solas hasta calibrarlas (`risk_rules.CALIBRATING_SIGNALS`). ---
+    PAD_TEXTURE_ANOMALY = "PAD_TEXTURE_ANOMALY"
+    PAD_FREQUENCY_ANOMALY = "PAD_FREQUENCY_ANOMALY"
+    PAD_COLOR_ANOMALY = "PAD_COLOR_ANOMALY"
+    PAD_NOISE_ANOMALY = "PAD_NOISE_ANOMALY"
+    PAD_SPECULAR_ANOMALY = "PAD_SPECULAR_ANOMALY"
+    PAD_SHARPNESS_ANOMALY = "PAD_SHARPNESS_ANOMALY"
+    PAD_CHROMA_ANOMALY = "PAD_CHROMA_ANOMALY"
 
 
 class RiskTier(StrEnum):

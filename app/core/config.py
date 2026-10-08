@@ -532,6 +532,17 @@ class Settings(BaseSettings):
     # en distancias entre ojos; prototipo: un rostro real 0.10-0.19, una foto plana ≤ 0.02).
     FACE_PARALLAX_MIN: float = Field(default=0.05, ge=0, le=1)
     FACE_PARALLAX_MAX: float = Field(default=0.10, ge=0, le=1)
+    # PAD de frontera (migración 0090; `facial_recognition/pad.py`, docs/rd/pad-frontera-2026-10-08.md): el máximo de
+    # partida de cada familia de rasgos (0-1; el puntaje sospechoso es ALTO) y el piso común a que la autocalibración
+    # puede llevarlas (solo endurece bajando). Cada familia es una señal que nace en «Solo medir» y NUNCA niega sola.
+    FACE_PAD_TIGHTEST: float = Field(default=0.50, ge=0, le=1)
+    FACE_PAD_TEXTURE_MAX: float = Field(default=0.95, ge=0, le=1)
+    FACE_PAD_FREQUENCY_MAX: float = Field(default=0.95, ge=0, le=1)
+    FACE_PAD_COLOR_MAX: float = Field(default=0.98, ge=0, le=1)
+    FACE_PAD_NOISE_MAX: float = Field(default=0.95, ge=0, le=1)
+    FACE_PAD_SPECULAR_MAX: float = Field(default=0.90, ge=0, le=1)
+    FACE_PAD_SHARPNESS_MAX: float = Field(default=0.97, ge=0, le=1)
+    FACE_PAD_CHROMA_MAX: float = Field(default=0.98, ge=0, le=1)
     # Destello dictado por el servidor (por el canal en vivo): ventana para responder cada color (ms, desde que el
     # servidor lo revela hasta que llega la huella de su captura) y lo mínimo creíble (la app espera ≥ 340 ms con cada
     # color, WCAG 2.3.1: nunca más de 3 destellos por segundo).
@@ -1293,6 +1304,14 @@ _ORDERED_PAIRS = (
     ("FACE_NOISE_MIN_RATIO", "FACE_NOISE_MAX_RATIO"),
     ("FACE_PARALLAX_MIN", "FACE_PARALLAX_MAX"),
     ("FACE_MOIRE_TIGHTEST_DB", "FACE_MOIRE_MAX_DB"),
+    # PAD de frontera: el piso común nunca queda por encima del tope de ninguna familia (dejaría su rango vacío).
+    ("FACE_PAD_TIGHTEST", "FACE_PAD_TEXTURE_MAX"),
+    ("FACE_PAD_TIGHTEST", "FACE_PAD_FREQUENCY_MAX"),
+    ("FACE_PAD_TIGHTEST", "FACE_PAD_COLOR_MAX"),
+    ("FACE_PAD_TIGHTEST", "FACE_PAD_NOISE_MAX"),
+    ("FACE_PAD_TIGHTEST", "FACE_PAD_SPECULAR_MAX"),
+    ("FACE_PAD_TIGHTEST", "FACE_PAD_SHARPNESS_MAX"),
+    ("FACE_PAD_TIGHTEST", "FACE_PAD_CHROMA_MAX"),
     ("FACE_PULSE_MIN_HZ", "FACE_PULSE_MAX_HZ"),
     ("FACE_FLASH_PACE_MIN_MS", "FACE_FLASH_PACE_WINDOW_MS"),
     # Un registro que pide más fotos útiles de las que acepta nunca podría completarse; las fotos válidas que reúne la

@@ -106,6 +106,7 @@ from app.facial_recognition import (  # noqa: E402
     phash,
 )
 from app.facial_recognition.burst import BurstLayout, BurstMalformed, Pulse  # noqa: E402
+from app.facial_recognition.pad import FAMILIES as PAD_FAMILIES  # noqa: E402
 from app.facial_recognition.photometry import FLASH_PALETTE, FlashSample, emitted_chroma  # noqa: E402
 from app.facial_recognition.pipeline import (  # noqa: E402
     DEFAULT_POLICY,
@@ -188,6 +189,12 @@ def _analysis(name: str) -> FaceAnalysis:
     )
 
 
+def _fake_pad(kind: str) -> dict[str, float] | None:
+    """PAD de frontera simulado (migración 0090): b"pad:<persona>" dispara TODAS las familias (anomalía alta, para
+    probar que se miden en «Solo medir» sin negar); cualquier otra frontal no lo mide."""
+    return dict.fromkeys(PAD_FAMILIES, 0.99) if kind == "pad" else None
+
+
 def _parse(image_bytes: bytes) -> tuple[str, str]:
     """(tipo, persona) de una imagen simulada; lo que sigue a "#" identifica el fotograma y lo que sigue a "@" su
     aspecto (huellas perceptuales)."""
@@ -246,6 +253,8 @@ class FakePipeline:
     b"burst:<persona>" hoja de la ráfaga de una persona real ("burst-frozen", "burst-loop", "burst-cut",
     "burst-faceless", "burst-nopulse"; "burst-broken" mal formada, "burst-crash" el motor falla); sus recortes quietos
     son de <persona> (el consenso de identidad).
+    PAD de frontera (0090): b"pad:<persona>" es una frontal válida cuyas 7 familias de rasgos dan anomalía alta (se
+    miden en «Solo medir», nunca niegan); cualquier otra frontal no mide PAD.
     `accessories_of` (CLIP de las referencias del registro) ve los mismos accesorios que `analyze_frontal`.
     """
 
@@ -283,6 +292,7 @@ class FakePipeline:
             landmarks=FRONTAL_POINTS,
             moire=30.0 if kind == "screen" else 10.0,
             noise_ratio=0.2 if kind == "smooth" else 1.0,
+            pad=_fake_pad(kind),
             **_traits(image_bytes, kind),
         )
 
@@ -766,8 +776,9 @@ def _flash_part(index: int, content: str) -> tuple:
 
 
 def enrollment_challenge(client, headers) -> dict:
-    """El reto del REGISTRO facial como lo pide la app (`purpose=ENROLLMENT`): siempre los cuatro movimientos de la
-    cabeza (decisión del dueño, 2026-10-07); un reto de verificación no sirve para registrarse."""
+    """El reto del REGISTRO facial como lo pide la app (`purpose=ENROLLMENT`): todos los movimientos de cabeza que la
+    empresa dejó activos (por omisión los dos giros; decisión del dueño, 2026-10-08), en orden al azar; un reto de
+    verificación no sirve para registrarse."""
     return client.post("/api/face/challenge", params={"purpose": "ENROLLMENT"}, headers=headers).json()["data"]
 
 

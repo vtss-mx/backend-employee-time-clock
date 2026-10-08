@@ -142,6 +142,7 @@ MESSAGES: Messages = {
     "INVALID_SIGNAL_MODE": "Wählen Sie einen der Modi des Signals",
     "INVALID_SINCE_UNTIL": "`since` muss vor `until` liegen",
     "INVALID_VOICE_PROFILE": "Wählen Sie eine der verfügbaren Stimmen",
+    "LIVENESS_MOVES_MIN": "Die Lebenderkennung braucht mindestens zwei aktivierte Kopfbewegungen",
     "PERFORMANCE_METRICS": {
         "one": "{count} Element",
         "other": "{count} Elemente",

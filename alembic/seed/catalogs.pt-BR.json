@@ -2211,6 +2211,34 @@
     "SITE_CODE_INVALID": {
       "name": "Código do local inválido",
       "description": "O código não é o vigente do local: expirou, é de outro local ou já foi usado. Costuma indicar um código que alguém repassou do local."
+    },
+    "PAD_TEXTURE_ANOMALY": {
+      "name": "Textura anômala",
+      "description": "A textura fina do rosto pouco se parece com a pele real, como em impressão ou tela."
+    },
+    "PAD_FREQUENCY_ANOMALY": {
+      "name": "Frequência anômala",
+      "description": "O rosto mostra o padrão de frequências de uma tela fotografada."
+    },
+    "PAD_COLOR_ANOMALY": {
+      "name": "Cor anômala",
+      "description": "A cor do rosto se afasta do esperado em uma captura ao vivo."
+    },
+    "PAD_NOISE_ANOMALY": {
+      "name": "Ruído do sensor anômalo",
+      "description": "O rosto traz menos ruído do sensor que o esperado: rosto colado, gerado ou recapturado."
+    },
+    "PAD_SPECULAR_ANOMALY": {
+      "name": "Reflexos especulares",
+      "description": "O rosto mostra reflexos muito brilhantes, como os de uma tela ou do papel."
+    },
+    "PAD_SHARPNESS_ANOMALY": {
+      "name": "Nitidez anômala",
+      "description": "A nitidez fina do rosto não é a de uma captura ao vivo."
+    },
+    "PAD_CHROMA_ANOMALY": {
+      "name": "Croma anômalo",
+      "description": "O croma do rosto se afasta do esperado em uma captura ao vivo."
     }
   },
   "risk_tiers": {

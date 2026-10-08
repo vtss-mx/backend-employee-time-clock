@@ -51,6 +51,8 @@ from app.facial_recognition.engine import DetectedFace, FaceEngine, FaceLandmark
 from app.facial_recognition.errors import FaceValidationError
 from app.facial_recognition.image_utils import decode_image
 from app.facial_recognition.occlusion import lower_face_skin_ratio
+from app.facial_recognition.pad import extract as pad_extract
+from app.facial_recognition.pad import families as pad_families
 from app.facial_recognition.phash import phash
 from app.facial_recognition.photometry import FlashSample, flash_sample
 from app.facial_recognition.pose import HeadPose, LivenessAction, StepTarget, estimate_pose, step_measure
@@ -181,6 +183,9 @@ class FaceAnalysis:
     #: rostro entre el del fondo (None si no se pudo medir).
     moire: float | None = None
     noise_ratio: float | None = None
+    #: PAD de frontera (migración 0090): un número por familia de rasgos de la frontal (`facial_recognition/pad.py`,
+    #: más de 1000 rasgos agregados a 7 familias). None si el rostro no fue medible; los rasgos crudos se descartan.
+    pad: dict[str, float] | None = None
 
 
 @dataclass(frozen=True)
@@ -323,7 +328,8 @@ class FacePipeline:
             raise FaceValidationError("LOW_QUALITY", {"quality": quality, "required": policy.min_quality})
         real = self._real_probability(image, face, policy)
         traits = capture_traits(image, aligned)
-        screen, noise = self._physical(image, (face.x, face.y, face.width, face.height))
+        box = (face.x, face.y, face.width, face.height)
+        screen, noise = self._physical(image, box)
 
         return FaceAnalysis(
             embedding=self._represent(image, face, aligned),
@@ -346,6 +352,7 @@ class FacePipeline:
             landmarks=points_of(face.landmarks),
             moire=screen,
             noise_ratio=noise,
+            pad=self._pad(image, box),
         )
 
     # ------------------------------------------------------------------ liveness
@@ -474,6 +481,14 @@ class FacePipeline:
     def _physical(self, image: np.ndarray, box: tuple[int, int, int, int]) -> tuple[float | None, float | None]:
         """Señales físicas de una frontal a resolución completa (antifraude 2a): moiré y ruido rostro/fondo."""
         return moire(image, box), noise_ratio(image, box, min_background=self.t.noise_min_background)
+
+    @observed("face.pad")
+    def _pad(self, image: np.ndarray, box: tuple[int, int, int, int]) -> dict[str, float]:
+        """PAD de frontera (migración 0090): los 7 números por familia del recorte del rostro (más de 1000 rasgos ya
+        agregados; los crudos se descartan). `{}` si el rostro no fue medible («no medible», nunca sospechoso)."""
+        x, y, width, height = box
+        face = image[max(0, y) : y + height, max(0, x) : x + width]
+        return pad_families(pad_extract([face]))
 
     @observed("face.align")
     def _align(self, image: np.ndarray, face: DetectedFace) -> np.ndarray:

@@ -132,23 +132,25 @@ def test_the_attempt_signals_keep_numbers_only():
 
 
 def test_a_challenge_brings_up_to_three_steps_the_flash_and_the_live_thresholds(client, company_headers):
-    # El destello se retiró (2026-10-06): aquí se enciende a propósito para probar el mecanismo que se conserva.
-    set_policy(client, company_headers, flash_liveness="OBSERVE", flash_paced=True)
+    # Destello dictado por el servidor (decisión del dueño, 2026-10-08): un interruptor propio del ADMIN, apagado por
+    # omisión; encenderlo activa el mecanismo aunque la medición del destello siga en OFF (es anti-reenvío: el cliente
+    # refleja colores que no podía conocer). Los colores NO viajan con el reto; los dicta el canal en vivo (su token).
+    set_policy(client, company_headers, flash_paced=True)
     headers = approved_employee(client, company_headers)
     challenge = client.post("/api/face/challenge", headers=headers).json()["data"]
-    # Antifraude 2a: los colores no viajan con el reto; los dicta el servidor por el canal en vivo (su token).
     assert len(challenge["actions"]) == 2 and challenge["flash"] == []
     assert challenge["flash_pace"]["total"] == settings.FACE_FLASH_COLORS and challenge["flash_pace"]["token"]
     assert challenge["flash_required"] is False and challenge["expires_in"] == 60
     assert challenge["min_yaw_ratio"] == settings.FACE_LIVENESS_MIN_YAW_RATIO
     assert challenge["min_pitch_delta"] == settings.FACE_LIVENESS_MIN_PITCH_DELTA
     assert challenge["min_closer_scale"] == settings.FACE_LIVENESS_MIN_CLOSER_SCALE
-    set_policy(client, company_headers, liveness_steps=3, liveness_timeout_seconds=30, flash_liveness="OFF")
+    # Apagado el interruptor, no hay destello que dictar (el estado del switch activa/desactiva la funcionalidad).
+    set_policy(client, company_headers, liveness_steps=3, liveness_timeout_seconds=30, flash_paced=False)
     challenge = client.post("/api/face/challenge", headers=headers).json()["data"]
     assert len(challenge["actions"]) == 3 and challenge["flash"] == [] and challenge["expires_in"] == 30
-    assert challenge["flash_pace"] is None  # sin destello no hay nada que dictar
+    assert challenge["flash_pace"] is None  # interruptor apagado: nada que dictar
     assert len(challenge["instructions"]) == 3
-    # Cada movimiento se cumple (también mirar arriba/abajo y acercarse) y el intento se mide.
+    # Cada movimiento se cumple (también "acercarse", siempre presente con el repertorio de tres) y el intento se mide.
     for _ in range(4):
         assert attempt(client, headers, flash=None).json()["data"]["verified"] is True
     assert all(m.success and m.steps == 3 and m.flash_mode == "OFF" for m in metrics()[-4:])
@@ -263,7 +265,7 @@ def test_autocalibration_only_tightens_within_floor_and_cap(client, company_head
     monkeypatch.setattr(settings, "FACE_AUTOCALIBRATION_MIN_SAMPLES", 20)
     now = datetime.now(UTC)
     with SessionLocal() as db:
-        assert face_security.recalibrate(db, now) == 10  # primera vez: los diez quedan en su valor de partida
+        assert face_security.recalibrate(db, now) == 17  # primera vez: los diecisiete quedan en su valor de partida
         assert face_security.thresholds(db).min_yaw_ratio == settings.FACE_LIVENESS_MIN_YAW_RATIO
     add_metrics(
         30,
@@ -294,7 +296,7 @@ def test_recalibration_runs_from_maintenance_only_when_due(client, company_heade
     approved_employee(client, company_headers)
     now = datetime.now(UTC)
     with SessionLocal() as db:
-        assert face_security.recalibrate_if_due(db, now) == 10
+        assert face_security.recalibrate_if_due(db, now) == 17
         assert face_security.recalibrate_if_due(db, now + timedelta(hours=1)) == 0  # aún vigente
         assert maintenance_service.purge_expired(db, now=now + timedelta(days=1))["umbrales recalibrados"] == 0
         monkeypatch.setattr(settings, "FACE_AUTOCALIBRATION_ENABLED", False)

@@ -2211,6 +2211,34 @@
     "SITE_CODE_INVALID": {
       "name": "Codice della sede non valido",
       "description": "Il codice non è quello attuale della sede: è scaduto, è di un'altra sede o è già stato usato. Di solito indica un codice che qualcuno ha passato dalla sede."
+    },
+    "PAD_TEXTURE_ANOMALY": {
+      "name": "Trama anomala",
+      "description": "La trama fine del volto somiglia poco alla pelle reale, come in una stampa o uno schermo."
+    },
+    "PAD_FREQUENCY_ANOMALY": {
+      "name": "Frequenza anomala",
+      "description": "Il volto mostra lo schema di frequenze di uno schermo fotografato."
+    },
+    "PAD_COLOR_ANOMALY": {
+      "name": "Colore anomalo",
+      "description": "Il colore del volto si allontana da quello atteso in una ripresa dal vivo."
+    },
+    "PAD_NOISE_ANOMALY": {
+      "name": "Rumore del sensore anomalo",
+      "description": "Il volto presenta meno rumore del sensore del previsto: volto incollato, generato o ricatturato."
+    },
+    "PAD_SPECULAR_ANOMALY": {
+      "name": "Riflessi speculari",
+      "description": "Il volto mostra riflessi molto luminosi, come quelli di uno schermo o della carta."
+    },
+    "PAD_SHARPNESS_ANOMALY": {
+      "name": "Nitidezza anomala",
+      "description": "La nitidezza fine del volto non è quella di una ripresa dal vivo."
+    },
+    "PAD_CHROMA_ANOMALY": {
+      "name": "Croma anomalo",
+      "description": "Il croma del volto si allontana da quello atteso in una ripresa dal vivo."
     }
   },
   "risk_tiers": {

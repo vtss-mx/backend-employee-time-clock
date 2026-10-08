@@ -134,6 +134,7 @@ MESSAGES: Messages = {
     "INVALID_SIGNAL_MODE": "Elige uno de los modos de la señal",
     "INVALID_SINCE_UNTIL": "`since` debe ser anterior a `until`",
     "INVALID_VOICE_PROFILE": "Elige una de las voces disponibles",
+    "LIVENESS_MOVES_MIN": "La prueba de vida necesita al menos dos movimientos de cabeza activos",
     "PERFORMANCE_METRICS": {
         "one": "{count} elemento",
         "other": "{count} elementos",

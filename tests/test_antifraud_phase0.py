@@ -9,9 +9,8 @@ from sqlalchemy import select, update
 from app.core.config import settings
 from app.core.database import SessionLocal
 from app.facial_recognition import LivenessAction
-from app.models import CatalogLivenessAction, Company, FaceAttemptMetric
+from app.models import Company, FaceAttemptMetric
 from app.services import face_security
-from app.services.catalog_service import clear_catalog_cache
 from app.services.liveness_service import challenge_actions
 from tests.conftest import approved_employee, create_employee, login, qr_content, submit_enrollment
 from tests.test_attendance import clock, worker  # noqa: F401 (fixtures)
@@ -30,18 +29,14 @@ def test_moving_closer_is_never_the_only_step():
 
 
 def test_a_one_step_challenge_from_the_api_is_never_only_closer(client, company_headers):
+    # Fase 0: con un solo movimiento, "acercarse" nunca es el único (una foto plana crece igual que un rostro). El
+    # repertorio de la verificación sale de la política (los giros por omisión, decisión del dueño 2026-10-08) más
+    # "acercarse" del catálogo, así que un reto de un paso siempre es un giro de cabeza.
     headers = approved_employee(client, company_headers)
     set_policy(client, company_headers, liveness_steps=1)
-    with SessionLocal() as db:  # solo quedan "acercarse" y girar a la izquierda
-        db.execute(
-            update(CatalogLivenessAction)
-            .where(CatalogLivenessAction.code.not_in(["MOVE_CLOSER", "TURN_LEFT"]))
-            .values(active=False)
-        )
-        db.commit()
-    clear_catalog_cache()
     for _ in range(10):
-        assert client.post("/api/face/challenge", headers=headers).json()["data"]["actions"] == ["TURN_LEFT"]
+        actions = client.post("/api/face/challenge", headers=headers).json()["data"]["actions"]
+        assert actions in (["TURN_RIGHT"], ["TURN_LEFT"])  # un giro, nunca solo "acercarse"
 
 
 def test_a_new_company_does_not_record_attendance_with_the_qr_alone(client, company_headers, worker, clock):  # noqa: F811

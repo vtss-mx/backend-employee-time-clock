@@ -2211,6 +2211,34 @@
     "SITE_CODE_INVALID": {
       "name": "Code du site non valide",
       "description": "Le code n'est pas le code actuel du site: il a expiré, appartient à un autre site ou a déjà été utilisé. Cela indique souvent un code transmis depuis le site par quelqu'un."
+    },
+    "PAD_TEXTURE_ANOMALY": {
+      "name": "Texture anormale",
+      "description": "La texture fine du visage ressemble peu à de la peau réelle, comme sur une impression ou un écran."
+    },
+    "PAD_FREQUENCY_ANOMALY": {
+      "name": "Fréquence anormale",
+      "description": "Le visage montre le motif de fréquences d'un écran photographié."
+    },
+    "PAD_COLOR_ANOMALY": {
+      "name": "Couleur anormale",
+      "description": "La couleur du visage s'écarte de celle attendue lors d'une prise en direct."
+    },
+    "PAD_NOISE_ANOMALY": {
+      "name": "Bruit du capteur anormal",
+      "description": "Le visage présente moins de bruit du capteur que prévu : visage collé, généré ou recapturé."
+    },
+    "PAD_SPECULAR_ANOMALY": {
+      "name": "Reflets spéculaires",
+      "description": "Le visage montre des reflets très brillants, comme ceux d'un écran ou du papier."
+    },
+    "PAD_SHARPNESS_ANOMALY": {
+      "name": "Netteté anormale",
+      "description": "La netteté fine du visage n'est pas celle d'une prise en direct."
+    },
+    "PAD_CHROMA_ANOMALY": {
+      "name": "Chroma anormal",
+      "description": "Le chroma du visage s'écarte de celui attendu lors d'une prise en direct."
     }
   },
   "risk_tiers": {

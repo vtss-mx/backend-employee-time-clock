@@ -25,6 +25,12 @@ SAFER_WHEN_ON = frozenset(
         "block_headwear",
         "block_mask",
         "liveness_challenge",
+        # Movimientos de la prueba de vida (decisión del dueño, 2026-10-08): apagar uno achica el repertorio del reto
+        # (un poco más fácil para un video grabado), así que encender es más seguro.
+        "enable_turn_right",
+        "enable_turn_left",
+        "enable_look_up",
+        "enable_look_down",
         "anti_spoofing",
         "validator_mobile_only",
         "detect_impossible_travel",
@@ -144,6 +150,12 @@ def flatten_signals(signals: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
 
 _COMMON: dict[str, Any] = {
     "liveness_challenge": True,
+    # Los tres niveles piden los cuatro movimientos de cabeza (2026-10-08): más movimientos, más difícil un video
+    # grabado. El valor por omisión de una empresa nueva sigue siendo solo los giros (decisión de usabilidad).
+    "enable_turn_right": True,
+    "enable_turn_left": True,
+    "enable_look_up": True,
+    "enable_look_down": True,
     "anti_spoofing": True,
     "block_virtual_cameras": True,
     "reject_foreign_images": True,

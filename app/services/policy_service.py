@@ -30,6 +30,12 @@ from app.services.face_security import thresholds
 @dataclass(frozen=True)
 class PolicySnapshot:
     block_glasses: bool = False  # apagado por omisión (decisión del dueño, 2026-10-07); el ADMIN lo enciende
+    #: Movimientos de la prueba de vida habilitados (decisión del dueño, 2026-10-08): por omisión solo los giros
+    #: (derecha e izquierda); mirar arriba/abajo nacen apagados. Siempre al menos dos (CHECK liveness_moves_min).
+    enable_turn_right: bool = True
+    enable_turn_left: bool = True
+    enable_look_up: bool = False
+    enable_look_down: bool = False
     block_headwear: bool = True
     block_mask: bool = True
     liveness_challenge: bool = True

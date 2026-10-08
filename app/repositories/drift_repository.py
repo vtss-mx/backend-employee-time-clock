@@ -7,7 +7,7 @@ from datetime import date, datetime
 from typing import Any
 
 from sqlalchemy import Row, delete, func, or_, select
-from sqlalchemy.orm import InstrumentedAttribute, Session
+from sqlalchemy.orm import Session
 
 from app.core.soft_delete import with_deleted
 from app.models import (
@@ -22,7 +22,7 @@ from app.models import (
 )
 from app.models.drift import DRIFT_ALERT, DRIFT_INSUFFICIENT
 from app.repositories.aggregates import affected_rows, insert_many, paginate
-from app.repositories.face_security_repository import FRAUD_LABEL
+from app.repositories.face_security_repository import FRAUD_LABEL, MetricColumn
 from app.repositories.search import contains_text, search_term
 
 #: Las revisiones que la empresa ya decidió (las pendientes no dicen nada de cómo revisa).
@@ -37,7 +37,7 @@ class DriftRepository:
 
     def platform_samples(
         self,
-        columns: Sequence[InstrumentedAttribute[float | None]],
+        columns: Sequence[MetricColumn],
         platform: str,
         start: datetime,
         end: datetime,

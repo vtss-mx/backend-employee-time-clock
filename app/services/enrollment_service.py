@@ -401,9 +401,9 @@ class EnrollmentService:
         útiles (`others`), no solo las de las referencias: ninguna sirve después en otro registro.
         """
         issued = take_challenge(self.db, actor.id, challenge, camera_label, policy, frontal_images)
-        # Decisión del dueño (2026-10-07): la prueba de vida del registro es completa (los cuatro movimientos). Un reto
-        # de verificación (1 a 3 pasos) no sirve para registrarse: falta algún movimiento.
-        if issued is not None and not is_enrollment_challenge(issued):
+        # Decisión del dueño (2026-10-08): la prueba de vida del registro pide TODOS los movimientos de cabeza que la
+        # empresa habilitó. Un reto de verificación (menos movimientos o con «acercarse») no sirve para registrarse.
+        if issued is not None and not is_enrollment_challenge(issued, policy):
             raise face_rejection("LIVENESS_REQUIRED")
         face_policy = policy.face_policy(employee)
         selection = select_references(pipeline, frontal_images, face_policy)

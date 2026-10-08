@@ -260,6 +260,83 @@ def test_each_protocol_signal_fires_from_what_was_measured():
     assert protocol_hits(AttemptSignals(pace=PaceOutcome(PaceVerdict.PACED)), limits()) == []
 
 
+def test_each_pad_family_is_one_calibrating_signal():
+    from app.facial_recognition.pad import FAMILIES
+    from app.services import risk_rules
+
+    assert set(capture_protocol.PAD_SIGNALS) == set(FAMILIES)  # una señal por familia de rasgos
+    assert {code for code, _ in capture_protocol.PAD_SIGNALS.values()} <= risk_rules.CALIBRATING_SIGNALS
+    # Cada familia tiene su umbral máximo en los límites autocalibrados.
+    assert all(hasattr(limits(), field) for _, field in capture_protocol.PAD_SIGNALS.values())
+
+
+def test_pad_signals_fire_from_the_worst_family_score_among_frontals():
+    from dataclasses import replace
+
+    high = dict.fromkeys(capture_protocol.PAD_SIGNALS, 0.99)
+    signals = AttemptSignals(frontal=[replace(_analysis("juan"), pad=high)])
+    codes = {hit.code for hit in protocol_hits(signals, limits())}
+    assert codes == {code for code, _ in capture_protocol.PAD_SIGNALS.values()}  # las 7 familias
+    # Es el PEOR caso (el máximo) entre las frontales: una benigna no apaga a una anómala.
+    worst = AttemptSignals(
+        frontal=[replace(_analysis("juan"), pad=dict.fromkeys(high, 0.1)), replace(_analysis("juan"), pad=high)]
+    )
+    assert {hit.code for hit in capture_protocol.pad_hits(worst, limits())} == codes
+    # Puntajes por debajo del umbral no disparan nada; una frontal sin PAD tampoco.
+    calm = AttemptSignals(frontal=[replace(_analysis("juan"), pad=dict.fromkeys(high, 0.1))])
+    assert capture_protocol.pad_hits(calm, limits()) == []
+    assert capture_protocol.pad_hits(AttemptSignals(frontal=[_analysis("juan")]), limits()) == []
+
+
+def test_pad_signals_never_deny_on_their_own_even_when_all_fire():
+    """Invariante «lo nuevo nunca niega»: con las 7 familias Obligatorias y 100 puntos, a lo más deja «en revisión»."""
+    settings_by_code = {
+        code: SignalSetting(code=code, kind="PRESENTATION", points=100, mode="ENFORCE")
+        for code, _ in capture_protocol.PAD_SIGNALS.values()
+    }
+    config = RiskConfig(
+        enabled=True,
+        medium=30,
+        high=60,
+        critical=80,
+        medium_action="STEP_UP",
+        high_action="REVIEW",
+        critical_action="DENY",
+        fallback="ALLOW",
+        family_cap=100,
+        signals=settings_by_code,
+    )
+    hits = [Hit(code, 0.99, 0.95) for code in settings_by_code]
+    decision = decide(hits, config)
+    assert decision.tier == "CRITICAL" and decision.action == "REVIEW"  # habría negado, pero PAD solo pide revisión
+
+
+def test_pad_families_are_measured_in_observe_without_rejecting_anyone(client, company_headers):
+    headers = approved_employee(client, company_headers)
+    answer, _ = verify_with(client, headers, frontal=b"pad:juan")
+    assert answer.json()["data"]["verified"] is True  # anomalía alta en las 7 familias y aun así pasa
+    reasons = last_reasons()
+    for code, _ in capture_protocol.PAD_SIGNALS.values():
+        assert reasons[code]["mode"] == "OBSERVE"
+    # Solo los 7 números por familia se guardan (nunca los más de 1000 rasgos crudos ni imagen alguna).
+    stored = metric().pad
+    assert stored is not None and set(stored) == set(capture_protocol.PAD_SIGNALS)
+    assert all(value == pytest.approx(0.99) for value in stored.values())
+
+
+def test_pad_thresholds_autocalibrate_only_tightening(client, company_headers, admin_headers, monkeypatch):
+    approved_employee(client, company_headers)
+    monkeypatch.setattr(settings, "FACE_AUTOCALIBRATION_MIN_SAMPLES", 20)
+    add_metrics(25, success=True, pad=dict.fromkeys(capture_protocol.PAD_SIGNALS, 0.3))
+    with SessionLocal() as db:
+        face_security.recalibrate(db, datetime.now(UTC))
+    thresholds = {t["key"]: t for t in client.get(ADMIN_URL, headers=admin_headers).json()["data"]["thresholds"]}
+    texture = thresholds["PAD_TEXTURE"]
+    # Un máximo se endurece BAJANDO: con genuinos bajos (0.30) queda en su piso común, nunca por debajo.
+    assert texture["upper"] is True and texture["raised"] is True
+    assert texture["value"] == settings.FACE_PAD_TIGHTEST and texture["floor"] == settings.FACE_PAD_TIGHTEST
+
+
 def test_the_pulse_is_measured_only_and_never_decides():
     setting = SignalSetting(code="PULSE_ABSENT", kind="PRESENTATION", points=90, mode="ENFORCE")
     config = RiskConfig(

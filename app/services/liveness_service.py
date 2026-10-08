@@ -25,10 +25,13 @@ Uno vigente por dueño: el reto nuevo de una cuenta reemplaza el anterior de esa
 ese dispositivo (muchos teléfonos comparten la llave de la empresa: ninguno invalida el reto de otro).
 """
 
+from __future__ import annotations
+
 import secrets
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
 
 from sqlalchemy.orm import Session
 
@@ -40,20 +43,24 @@ from app.repositories.challenge_repository import FaceChallengeRepository
 from app.services.catalog_service import get_catalogs
 from app.services.face_service import face_rejection
 
+if TYPE_CHECKING:
+    from app.services.policy_service import PolicySnapshot
+
 #: Movimientos que puede pedir el reto de una VERIFICACIÓN (verification_policy.liveness_steps, 1 a 3).
 MAX_STEPS = 3
-#: Los movimientos del reto del REGISTRO facial (decisión del dueño, 2026-10-07): siempre los cuatro, en orden al azar
-#: (24 órdenes posibles: un video grabado de antemano no conoce la secuencia). Es una constante del servidor, aparte de
-#: `liveness_steps`, que sigue mandando en la verificación.
-ENROLLMENT_ACTIONS: tuple[LivenessAction, ...] = (
-    LivenessAction.TURN_RIGHT,
-    LivenessAction.TURN_LEFT,
-    LivenessAction.LOOK_UP,
-    LivenessAction.LOOK_DOWN,
+#: Los movimientos de cabeza y su interruptor en la política (decisión del dueño, 2026-10-08: cada empresa elige
+#: cuáles pide; voltear arriba/abajo se le dificulta a algunas personas). El REGISTRO pide TODOS los que la empresa
+#: dejó activos, en orden al azar; la verificación elige `liveness_steps` de ese repertorio.
+#: Reemplaza la decisión del 2026-10-07 («siempre los cuatro»).
+HEAD_ACTIONS: tuple[tuple[LivenessAction, str], ...] = (
+    (LivenessAction.TURN_RIGHT, "enable_turn_right"),
+    (LivenessAction.TURN_LEFT, "enable_turn_left"),
+    (LivenessAction.LOOK_UP, "enable_look_up"),
+    (LivenessAction.LOOK_DOWN, "enable_look_down"),
 )
-#: Movimientos que caben en un reto (los cuatro del registro): columnas de `face_challenges` y capturas que se aceptan.
-MAX_CHALLENGE_STEPS = max(MAX_STEPS, len(ENROLLMENT_ACTIONS))
-#: Sin movimientos activos en el catálogo (configuración rota) se piden los giros.
+#: Movimientos que caben en un reto (los cuatro de cabeza): columnas de `face_challenges` y capturas que se aceptan.
+MAX_CHALLENGE_STEPS = max(MAX_STEPS, len(HEAD_ACTIONS))
+#: Sin movimientos activos (configuración rota) se piden los giros.
 FALLBACK_ACTIONS = (LivenessAction.TURN_LEFT, LivenessAction.TURN_RIGHT)
 
 
@@ -140,16 +147,34 @@ def active_actions() -> tuple[LivenessAction, ...]:
     return tuple(a for a in LivenessAction if catalogs.is_active("liveness_actions", a.value)) or FALLBACK_ACTIONS
 
 
-def enrollment_actions() -> tuple[LivenessAction, ...]:
-    """Los cuatro movimientos del registro en un orden al azar (criptográfico): todos aparecen siempre, nunca se
-    repite uno y el orden cambia en cada reto."""
-    return tuple(secrets.SystemRandom().sample(ENROLLMENT_ACTIONS, len(ENROLLMENT_ACTIONS)))
+def enabled_head_actions(policy: PolicySnapshot) -> tuple[LivenessAction, ...]:
+    """Los movimientos de cabeza que la empresa dejó activos (decisión del dueño, 2026-10-08). Siempre quedan al menos
+    dos (CHECK `liveness_moves_min`); si una configuración vieja dejara menos, se usan los giros de respaldo para no
+    quedarse sin repertorio."""
+    actions = tuple(action for action, field in HEAD_ACTIONS if getattr(policy, field))
+    return actions if len(actions) >= 2 else FALLBACK_ACTIONS
 
 
-def is_enrollment_challenge(challenge: Challenge) -> bool:
-    """¿El reto pidió los cuatro movimientos del registro? Un registro con un reto de verificación (1 a 3 pasos) se
-    rechaza: la prueba de vida del registro es completa o no es."""
-    return len(challenge.actions) == len(ENROLLMENT_ACTIONS) and set(challenge.actions) == set(ENROLLMENT_ACTIONS)
+def verification_pool(policy: PolicySnapshot) -> tuple[LivenessAction, ...]:
+    """El repertorio de una VERIFICACIÓN: los movimientos de cabeza que la empresa dejó activos más «acercarse» si el
+    catálogo lo tiene activo (es de la plataforma, no de la empresa)."""
+    has_closer = get_catalogs().is_active("liveness_actions", LivenessAction.MOVE_CLOSER.value)
+    closer = (LivenessAction.MOVE_CLOSER,) if has_closer else ()
+    return enabled_head_actions(policy) + closer
+
+
+def enrollment_actions(policy: PolicySnapshot) -> tuple[LivenessAction, ...]:
+    """Los movimientos de cabeza que la empresa dejó activos, en orden al azar (criptográfico): todos aparecen, nunca se
+    repite uno y el orden cambia en cada reto (un video grabado de antemano no conoce la secuencia)."""
+    actions = enabled_head_actions(policy)
+    return tuple(secrets.SystemRandom().sample(actions, len(actions)))
+
+
+def is_enrollment_challenge(challenge: Challenge, policy: PolicySnapshot) -> bool:
+    """¿El reto pidió exactamente los movimientos de cabeza que la empresa habilitó? Un reto de verificación incompleto
+    (menos movimientos o con «acercarse») no sirve para registrarse: la prueba de vida del registro es completa."""
+    enabled = set(enabled_head_actions(policy))
+    return len(challenge.actions) == len(enabled) and set(challenge.actions) == enabled
 
 
 def challenge_actions(options: Sequence[LivenessAction], count: int) -> tuple[LivenessAction, ...]:

@@ -32,6 +32,7 @@ from app.core.clock import business_day_bounds, business_today
 from app.core.config import settings
 from app.core.devices import PLATFORMS
 from app.core.observability import observed
+from app.facial_recognition.pad import FAMILIES as PAD_FAMILIES
 from app.i18n import t
 from app.models import CompanyFraudWeekly, SignalDrift
 from app.models.drift import DRIFT_ALERT, DRIFT_INSUFFICIENT, DRIFT_OK
@@ -44,8 +45,10 @@ from app.services.face_security import SIGNAL_BY_KEY, SIGNALS, Signal
 
 logger = logging.getLogger(__name__)
 
-#: El destello se retiró de la experiencia (0080): no es una señal viva.
-EXCLUDED_SIGNALS = frozenset({"FLASH_SCORE", "FLASH_RATIO"})
+#: El destello se retiró de la experiencia (0080): no es una señal viva. Las familias PAD (migración 0090) tampoco se
+#: vigilan aún: nacen en «Solo medir» y se calibran con datos reales antes de promoverlas; su deriva se añadirá al
+#: promoverlas (docs/rd/pad-frontera-2026-10-08.md §4).
+EXCLUDED_SIGNALS = frozenset({"FLASH_SCORE", "FLASH_RATIO"}) | {f"PAD_{family.upper()}" for family in PAD_FAMILIES}
 #: Las señales que se vigilan, en el orden de `face_security.SIGNALS`.
 DRIFT_SIGNALS: tuple[Signal, ...] = tuple(signal for signal in SIGNALS if signal.key not in EXCLUDED_SIGNALS)
 #: Ventanas que se listan en la pantalla (≈ 60 semanas) y cambios de versión recientes que se muestran.

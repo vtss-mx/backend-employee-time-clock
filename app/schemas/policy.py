@@ -55,6 +55,11 @@ class VerificationPolicyRead(BaseModel):
         default=2,
         description="Movimientos aleatorios de la prueba de vida (1 a 3: girar, mirar arriba o abajo, acercarse)",
     )
+    #: Movimientos de cabeza habilitados (decisión del dueño, 2026-10-08): por omisión solo los giros.
+    enable_turn_right: bool = Field(default=True, description="La prueba de vida puede pedir girar a la derecha")
+    enable_turn_left: bool = Field(default=True, description="La prueba de vida puede pedir girar a la izquierda")
+    enable_look_up: bool = Field(default=False, description="La prueba de vida puede pedir mirar hacia arriba")
+    enable_look_down: bool = Field(default=False, description="La prueba de vida puede pedir mirar hacia abajo")
     liveness_timeout_seconds: int = Field(default=60, description="Segundos para responder el reto completo")
     flash_liveness: str = Field(
         default="OFF",
@@ -201,6 +206,11 @@ class VerificationPolicyUpdate(BaseModel):
     #: Uno de los niveles activos de catalog.antispoof_levels (lo valida el servicio).
     anti_spoofing_level: str | None = Field(default=None, max_length=30)
     liveness_steps: int | None = Field(default=None, ge=1, le=3)
+    #: Movimientos de cabeza habilitados (2026-10-08); siempre al menos dos (422 LIVENESS_MOVES_MIN).
+    enable_turn_right: bool | None = None
+    enable_turn_left: bool | None = None
+    enable_look_up: bool | None = None
+    enable_look_down: bool | None = None
     liveness_timeout_seconds: int | None = Field(default=None, ge=20, le=180)
     #: Uno de los modos activos de catalog.flash_modes (lo valida el servicio).
     flash_liveness: str | None = Field(default=None, max_length=20)

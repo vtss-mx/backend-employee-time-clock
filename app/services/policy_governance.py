@@ -246,6 +246,14 @@ class PolicyGovernance:
                 field="risk_high_score",
             )
 
+    @staticmethod
+    def _ensure_liveness_moves(target: dict[str, Any]) -> None:
+        """La prueba de vida necesita al menos dos movimientos de cabeza de dónde elegir (sin repetir); un 422 estable
+        en vez del choque del CHECK `liveness_moves_min` de la base."""
+        fields = ("enable_turn_right", "enable_turn_left", "enable_look_up", "enable_look_down")
+        if sum(bool(target[field]) for field in fields) < 2:
+            raise UnprocessableError(code="LIVENESS_MOVES_MIN", field="enable_turn_right")
+
     def _submit(
         self,
         wanted: dict[str, Any],
@@ -266,6 +274,7 @@ class PolicyGovernance:
             new_signals = effective_signals(risk_simulation.merge_signals(minimal_overrides(now_signals), asked))
         target = {**current, **wanted}
         self._ensure_scores(target["risk_medium_score"], target["risk_high_score"], target["risk_critical_score"])
+        self._ensure_liveness_moves(target)
         changes = diff(current, wanted, _rank) + diff(flatten_signals(now_signals), flatten_signals(new_signals), _rank)
         if not changes and (preset is None or current["preset"] == preset):
             self.db.rollback()  # suelta el candado: no hay nada que guardar

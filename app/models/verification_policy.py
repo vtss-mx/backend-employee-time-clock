@@ -39,6 +39,12 @@ class VerificationPolicy(Base):
             sqlite_where=text("updated_by_id IS NOT NULL"),
         ),
         CheckConstraint("liveness_steps BETWEEN 1 AND 3", name="liveness_steps"),
+        # La prueba de vida necesita al menos dos movimientos de cabeza de dónde elegir (para no repetir el mismo).
+        CheckConstraint(
+            "(CAST(enable_turn_right AS INTEGER) + CAST(enable_turn_left AS INTEGER) "
+            "+ CAST(enable_look_up AS INTEGER) + CAST(enable_look_down AS INTEGER)) >= 2",
+            name="liveness_moves_min",
+        ),
         CheckConstraint("liveness_timeout_seconds BETWEEN 20 AND 180", name="liveness_timeout_seconds"),
         CheckConstraint("lockout_max_failures BETWEEN 3 AND 20", name="lockout_max_failures"),
         CheckConstraint("lockout_minutes BETWEEN 1 AND 1440", name="lockout_minutes"),
@@ -118,6 +124,14 @@ class VerificationPolicy(Base):
     #: Movimientos aleatorios de la prueba de vida (1 a 3): con más, un video grabado o generado de
     #: antemano tiene que acertar una secuencia más larga.
     liveness_steps: Mapped[int] = mapped_column(SmallInteger, default=2, server_default=text("2"), nullable=False)
+    #: Qué movimientos de cabeza puede pedir la prueba de vida (decisión del dueño, 2026-10-08: voltear arriba/abajo
+    #: se le dificulta a algunas personas; cada empresa elige). Por omisión solo los giros; arriba y abajo nacen
+    #: apagados. Siempre quedan AL MENOS DOS activos (CHECK `liveness_moves_min`), para que el reto elija sin repetir.
+    #: Los configura el ADMIN; apagar uno relaja (regla de dos personas).
+    enable_turn_right: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true(), nullable=False)
+    enable_turn_left: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true(), nullable=False)
+    enable_look_up: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false(), nullable=False)
+    enable_look_down: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false(), nullable=False)
     #: Segundos para responder el reto completo: menos tiempo deja menos margen para fabricar la respuesta.
     liveness_timeout_seconds: Mapped[int] = mapped_column(
         SmallInteger, default=60, server_default=text("60"), nullable=False
