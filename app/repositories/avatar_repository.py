@@ -8,7 +8,7 @@ recorrer nada (§3.1). Quién puede ver a quién lo decide `AvatarService`; aqu�
 from sqlalchemy import ColumnElement, delete, exists, or_, select
 from sqlalchemy.orm import Session
 
-from app.models import Employee, User, UserAvatar, UserRole
+from app.models import Employee, User, UserAvatar
 from app.repositories.aggregates import affected_rows
 
 
@@ -39,22 +39,24 @@ class AvatarRepository:
         return affected_rows(self.db, delete(UserAvatar).where(condition))
 
     def visible(
-        self, user_id: int, size_px: int, *, company_id: int | None = None, staff_only: bool = False
+        self, user_id: int, size_px: int, *, company_id: int | None = None, platform: bool = False
     ) -> UserAvatar | None:
-        """Un tamaño de la foto de `user_id` si quien pregunta puede verla, en UNA consulta:
+        """Un tamaño de la foto de `user_id` si quien pregunta puede verla, en UNA consulta (decisión del dueño,
+        2026-10-06: «las empresas pueden ver las fotos de los empleados y los admin de todos»):
 
         - sin condiciones: la propia;
-        - `company_id`: la persona es empleado ACTIVO de esa empresa o una cuenta activa de ella (administrador o
-          validador); de otra empresa no existe (404);
-        - `staff_only` (la plataforma): solo cuentas que no son de empleados (regla 13: el ADMIN nunca ve fotos
-          de los empleados)."""
+        - `company_id`: la persona es empleado de esa empresa (activo o inactivo) o una cuenta de ella (administrador
+          o validador); de otra empresa no existe (404);
+        - `platform` (el ADMIN): cualquier cuenta vigente.
+
+        Lo que está en «Eliminados» nunca: la condición de lo vigente viaja sola en cada subconsulta
+        (`app/core/soft_delete.py`), así que un empleo eliminado no le da la foto a esa empresa aunque la persona
+        siga trabajando en otra (y la cuenta eliminada ya no tiene foto: se borró de verdad)."""
         stmt = select(UserAvatar).where(UserAvatar.user_id == user_id, UserAvatar.size_px == size_px)
         if company_id is not None:
-            employee = select(Employee.id).where(
-                Employee.company_id == company_id, Employee.user_id == user_id, Employee.active.is_(True)
-            )
-            account = select(User.id).where(User.id == user_id, User.company_id == company_id, User.active.is_(True))
+            employee = select(Employee.id).where(Employee.company_id == company_id, Employee.user_id == user_id)
+            account = select(User.id).where(User.id == user_id, User.company_id == company_id)
             stmt = stmt.where(or_(exists(employee), exists(account)))
-        elif staff_only:
-            stmt = stmt.where(exists(select(User.id).where(User.id == user_id, User.role != UserRole.EMPLOYEE)))
+        elif platform:
+            stmt = stmt.where(exists(select(User.id).where(User.id == user_id)))
         return self.db.scalar(stmt)

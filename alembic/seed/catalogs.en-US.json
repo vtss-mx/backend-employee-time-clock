@@ -29,6 +29,10 @@
     "QR_FACE": {
       "name": "QR + face",
       "description": "Scans their QR and confirms the face belongs to its owner"
+    },
+    "API_FACE": {
+      "name": "Face (mobile app)",
+      "description": "Verification or identification from the company's mobile app, with its API key"
     }
   },
   "validator_modes": {
@@ -115,6 +119,10 @@
     "VALIDATORS_READ": {
       "name": "Validators",
       "description": "Read the identity validators (GET /validators): name, mode, address, and status."
+    },
+    "VERIFICATION": {
+      "name": "Verification",
+      "description": "Verify or identify an employee's face from the company's mobile app (POST /verification/*). It only verifies: it doesn't read employees or identifications."
     }
   },
   "api_key_statuses": {
@@ -1376,7 +1384,7 @@
     },
     "ACCESSORIES_DETECTED": {
       "name": "Accessories",
-      "description": "{accessories} is built from the phrases (phrase) in the accessories catalog.",
+      "description": "{accessories} is built from the phrases in the accessories catalog.",
       "message": "Remove {accessories} to continue"
     },
     "SPOOF_DETECTED": {
@@ -1397,12 +1405,12 @@
     },
     "LIVENESS_FAILED": {
       "name": "Liveness check failed",
-      "description": "During face enrollment (identification uses catalog.verification_reasons).",
+      "description": "During face enrollment (identification uses the verification reasons).",
       "message": "The requested movement wasn't detected. Try again."
     },
     "LIVENESS_MISMATCH": {
       "name": "Another person in the challenge",
-      "description": "During face enrollment (identification uses catalog.verification_reasons).",
+      "description": "During face enrollment (identification uses the verification reasons).",
       "message": "The captures don't belong to the same person. Try again."
     },
     "FACE_NOT_REGISTERED": {
@@ -1517,6 +1525,14 @@
     "POSSIBLE_DUPLICATE": {
       "name": "Resembles another employee",
       "description": "At the company's suspicion level, the face resembles another approved employee's: review the closest matches before approving."
+    },
+    "VOICE_RETRIES": {
+      "name": "Repeated answers in the video",
+      "description": "Some question of the voice check took more than one try: review the video before accepting."
+    },
+    "VIDEO_FACE_MISMATCH": {
+      "name": "Different face in a video",
+      "description": "In some try of the voice check the face in the video didn't match the enrollment photos: review the video before accepting."
     }
   },
   "error_statuses": {
@@ -1847,6 +1863,28 @@
     "OTHER": {
       "name": "Other",
       "description": "Any other company document."
+    }
+  },
+  "employee_document_types": {
+    "PASSPORT": {
+      "name": "Passport",
+      "description": "International travel document with a photo."
+    },
+    "NATIONAL_ID": {
+      "name": "Voter ID card (INE)",
+      "description": "Official photo ID."
+    },
+    "DRIVER_LICENSE": {
+      "name": "Driver's license",
+      "description": "Driving license with a photo."
+    },
+    "OTHER_OFFICIAL_ID": {
+      "name": "Other official ID",
+      "description": "Any official photo ID."
+    },
+    "PROOF_OF_ADDRESS": {
+      "name": "Proof of address",
+      "description": "Recent electricity, water, or phone bill."
     }
   },
   "currencies": {
@@ -2204,7 +2242,7 @@
     },
     "STEP_UP": {
       "name": "One more step",
-      "description": "A tougher challenge (three movements and a required flash) is requested on the spot, without repeating the scan."
+      "description": "A tougher challenge (three movements) is requested on the spot, without repeating the scan."
     },
     "REVIEW": {
       "name": "Under review",
@@ -2250,15 +2288,15 @@
   "policy_presets": {
     "STANDARD": {
       "name": "Standard",
-      "description": "For most companies: two movements in 60 s, Standard anti-spoofing, and risk cutoffs 30/60/80. The flash (until calibrated), the employee's device, the capture protocol, and validator presence stay in Measure only."
+      "description": "For most companies: two movements in 60 s, Standard anti-spoofing, and risk cutoffs 30/60/80. The employee's device, the capture burst, and validator presence stay in Measure only."
     },
     "HIGH": {
       "name": "High",
-      "description": "Stricter: three movements in 45 s, required flash, High anti-spoofing, required perceptual resubmission check, one more step on a new device, and cutoffs 25/50/75. The capture protocol and validator presence stay in Measure only."
+      "description": "Stricter: three movements in 45 s, High anti-spoofing, required perceptual resubmission check, one more step on a new device, and cutoffs 25/50/75. The capture burst and validator presence stay in Measure only."
     },
     "MAXIMUM": {
       "name": "Maximum",
-      "description": "For confirmed fraud: three movements in 30 s, Maximum anti-spoofing, required hard rules, the company approves each device, and high risk is denied. Requires the paced flash and burst (if missing, one more step), validator signing and location, and site codes. More retries in low light."
+      "description": "For confirmed fraud: three movements in 30 s, Maximum anti-spoofing, required hard rules, the company approves each device, and high risk is denied. Requires the capture burst (if missing, one more step), validator signing and location, and site codes. More retries in low light."
     }
   },
   "policy_change_statuses": {
@@ -2413,6 +2451,11 @@
       "name": "Performance",
       "description": "Response times for APIs, key functions, the database, and screens; slow request alerts."
     },
+    "ADMIN_DRIFT": {
+      "name": "Signal drift",
+      "description": "Weekly drift of the face engine signals by platform and, per company, cases and reviews approved without looking.",
+      "short_name": "Drift"
+    },
     "COMPANY_DASHBOARD": {
       "name": "Dashboard",
       "description": "Company summary: employees and pending validations.",
@@ -2436,6 +2479,10 @@
       "name": "Daily board",
       "description": "Who's on shift, on break, or already checked out; workday history with its evidence.",
       "short_name": "Board"
+    },
+    "COMPANY_VERIFICATIONS": {
+      "name": "Verifications",
+      "description": "Where and when your people's identity was verified, on the map."
     },
     "COMPANY_SHIFTS": {
       "name": "Shifts",
@@ -2502,6 +2549,91 @@
       "name": "My profile",
       "description": "Account, password, and open sessions.",
       "short_name": "Profile"
+    },
+    "EMPLOYEE_DOCUMENTS": {
+      "name": "Documents",
+      "description": "Proof of address and official ID required by the company.",
+      "short_name": "My documents"
+    }
+  },
+  "voice_questions": {
+    "FULL_NAME": {
+      "name": "What is your full name?",
+      "description": "Compared with the employee's registered first and last names."
+    },
+    "BIRTH_DATE": {
+      "name": "What is your date of birth?",
+      "description": "Compared with the registered date of birth (day, month, and year)."
+    },
+    "COMPANY_NAME": {
+      "name": "What is the name of the company you work for?",
+      "description": "Compared with the company name."
+    },
+    "EMPLOYEE_NUMBER": {
+      "name": "What is your employee number?",
+      "description": "Compared with the registered employee number; asked only if they have one."
+    },
+    "DEPARTMENT": {
+      "name": "Which department do you work in?",
+      "description": "Compared with the assigned department; asked only if they have one."
+    },
+    "WORK_SITE": {
+      "name": "Which site or branch do you work at?",
+      "description": "Compared with the work site of their shift; asked only if the shift has one."
+    },
+    "FIRST_NAME": {
+      "name": "What is your first name (without last names)?",
+      "description": "Compared with the employee's registered first name, without the last names."
+    },
+    "SURNAMES": {
+      "name": "What are your last names?",
+      "description": "Compared with the employee's registered last names."
+    },
+    "FIRST_SURNAME": {
+      "name": "What is your first last name?",
+      "description": "Compared with the first last name; asked only if the last names are two words."
+    },
+    "SECOND_SURNAME": {
+      "name": "What is your second last name?",
+      "description": "Compared with the second last name; asked only if the last names are two words."
+    },
+    "BIRTH_MONTH": {
+      "name": "In what month were you born?",
+      "description": "Compared with the month of the date of birth, by name or number."
+    },
+    "BIRTH_YEAR": {
+      "name": "In what year were you born?",
+      "description": "Compared with the year of the date of birth, full or its last two digits."
+    },
+    "BIRTH_DAY": {
+      "name": "On what day of the month were you born?",
+      "description": "Compared with the day of the date of birth."
+    },
+    "ARITHMETIC_SUM": {
+      "name": "What do the two numbers we show you add up to?",
+      "description": "Attention check: the total of two random numbers; it changes on each attempt."
+    }
+  },
+  "voice_profiles": {
+    "FEMALE_WARM": {
+      "name": "Warm female",
+      "description": "A warm-toned female voice"
+    },
+    "FEMALE_CLEAR": {
+      "name": "Clear female",
+      "description": "A crisp, unhurried female voice"
+    },
+    "MALE_CALM": {
+      "name": "Calm male",
+      "description": "A calm male voice"
+    },
+    "MALE_DEEP": {
+      "name": "Deep male",
+      "description": "A low-toned male voice"
+    },
+    "NEUTRAL": {
+      "name": "System default",
+      "description": "The device's default voice"
     }
   }
 }

@@ -24,6 +24,8 @@ def test_lists_are_read_from_comma_separated_text():
     config = _settings(CORS_ORIGINS=" https://a.mx , ,https://b.mx", FACE_BLOCKED_CAMERAS="OBS Virtual, ,ManyCam ")
     assert config.CORS_ORIGINS == ["https://a.mx", "https://b.mx"]
     assert config.FACE_BLOCKED_CAMERAS == ["obs virtual", "manycam"]  # se comparan en minúsculas
+    accented = _settings(FACE_BLOCKED_CAMERAS="Câmera Virtual, Caméra virtuelle")
+    assert accented.FACE_BLOCKED_CAMERAS == ["câmera virtual", "caméra virtuelle"]  # se pliegan al comparar (D-C4)
     assert _settings(CORS_ORIGINS=["https://c.mx"]).CORS_ORIGINS == ["https://c.mx"]  # una lista llega igual
 
 
@@ -77,6 +79,9 @@ def test_api_workers_zero_means_automatic(monkeypatch):
         ({"DATA_ENCRYPTION_PREVIOUS_KEYS": "x, y"}, "Fernet"),
         # Las migraciones a través de PgBouncer romperían su candado de sesión y CREATE INDEX CONCURRENTLY.
         ({"DB_POOLER": "pgbouncer", "DATABASE_DIRECT_URL": ""}, "POSTGRES_DIRECT_HOST"),
+        # Los límites de peticiones en Redis necesitan un Redis; el prefijo de llaves es una sola palabra.
+        ({"RATE_LIMIT_BACKEND": "redis", "REDIS_HOST": "", "REDIS_URL": ""}, "REDIS_HOST"),
+        ({"REDIS_KEY_PREFIX": "Mal Prefijo"}, "REDIS_KEY_PREFIX"),
         # Con varias réplicas cada una contaría por su lado: el límite real se multiplicaría.
         ({"ENVIRONMENT": "production", "RATE_LIMIT_BACKEND": "memory"}, "RATE_LIMIT_BACKEND"),
     ],
@@ -88,6 +93,8 @@ def test_api_workers_zero_means_automatic(monkeypatch):
         "fernet",
         "fernet-anterior",
         "pgbouncer-sin-directa",
+        "redis-sin-host",
+        "redis-prefijo",
         "limite-por-proceso-en-produccion",
     ],
 )

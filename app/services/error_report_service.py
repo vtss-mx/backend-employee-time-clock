@@ -17,6 +17,7 @@ from app.models import ErrorReport, ErrorStatus, User, UserRole
 from app.repositories.company_repository import CompanyRepository
 from app.repositories.error_report_repository import ErrorReportRepository
 from app.repositories.user_repository import UserRepository
+from app.schemas.avatar import avatar_path
 from app.schemas.common import PageParams
 from app.schemas.error_report import (
     ErrorBulkResolve,
@@ -63,6 +64,7 @@ class ErrorReportService:
                     trace_id=o.trace_id,
                     message=o.message,
                     user_label=self._account_label(o.user_id, accounts),
+                    user_avatar=self._account_avatar(o.user_id, accounts),
                     company_name=companies.get(o.company_id) if o.company_id else None,
                     context=json.loads(o.context) if o.context else None,
                 )
@@ -121,14 +123,20 @@ class ErrorReportService:
         return report
 
     @staticmethod
-    def _account_label(user_id: int | None, accounts: dict[int, tuple[str, UserRole]]) -> str | None:
+    def _account_avatar(user_id: int | None, accounts: dict[int, tuple[str, UserRole, str | None]]) -> str | None:
+        """Su foto de perfil (el ADMIN ve la de toda cuenta vigente): sin cuenta o sin foto, None (las iniciales)."""
+        account = None if user_id is None else accounts.get(user_id)
+        return None if user_id is None or account is None else avatar_path(user_id, account[2])
+
+    @staticmethod
+    def _account_label(user_id: int | None, accounts: dict[int, tuple[str, UserRole, str | None]]) -> str | None:
         """Quién fue, tal cual: «correo (Rol)»; si la cuenta ya no existe, su número."""
         if user_id is None:
             return None
         account = accounts.get(user_id)
         if account is None:
             return t("ACCOUNT_DELETED_LABEL", {"id": user_id})
-        email, role = account
+        email, role, _ = account
         return t("ACCOUNT_LABEL", {"email": email, "role": get_catalogs().name("roles", role)})
 
     @staticmethod

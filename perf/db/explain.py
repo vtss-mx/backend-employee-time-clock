@@ -42,8 +42,10 @@ from app.repositories.calendar_repository import CalendarRepository
 from app.repositories.company_document_repository import CompanyDocumentRepository
 from app.repositories.company_repository import CompanyRepository
 from app.repositories.department_repository import DepartmentRepository
+from app.repositories.drift_repository import DriftRepository
 from app.repositories.employee_device_repository import EmployeeDeviceRepository
 from app.repositories.employee_repository import EmployeeRepository
+from app.repositories.enrollment_draft_repository import FaceEnrollmentDraftRepository
 from app.repositories.enrollment_repository import FaceEnrollmentRepository
 from app.repositories.error_report_repository import ErrorReportRepository
 from app.repositories.face_repository import FaceEmbeddingRepository
@@ -51,6 +53,7 @@ from app.repositories.face_security_repository import FaceSecurityRepository
 from app.repositories.fraud_repository import FraudCaseRepository
 from app.repositories.kiosk_repository import KioskLookup, KioskRepository
 from app.repositories.maintenance_repository import delete_batch
+from app.repositories.passkey_repository import PasskeyRepository
 from app.repositories.performance_repository import DAYS, HOURS, MINUTES, PerformanceRepository
 from app.repositories.qr_repository import EmployeeQrRepository
 from app.repositories.risk_repository import (
@@ -68,9 +71,10 @@ from app.repositories.user_repository import UserRepository
 from app.repositories.validator_device_repository import ValidatorDeviceRepository
 from app.repositories.validator_repository import ValidatorRepository
 from app.repositories.verification_repository import VerificationLogRepository
+from app.services import drift_service
 from app.services.attempt_guard import FACE_METHODS, MATCH_FAILURES
 from app.services.face_service import SECURITY_REASONS
-from app.services.image_storage import COMPANY_DOCUMENTS, FACE_ENROLLMENT_PHOTOS, PAYMENT_RECEIPTS, USER_AVATARS
+from app.services.image_storage import STORED_IMAGES
 from app.services.maintenance_service import PURGES, SOFT_DELETE_PURGES
 
 #: Empresa grande (20 000 empleados, ids 1..20000) y una de 400 (seed.sql).
@@ -115,6 +119,7 @@ BIG_TABLES = (
     "fraud_case_events",
     "fraud_evidence",
     "employee_devices",
+    "enrollment_voice_answers",
 )
 
 type Case = tuple[str, Callable[[Session], object]]
@@ -166,7 +171,7 @@ def employee_cases() -> list[Case]:
         ("employees.ids", lambda db: big(db, BIG).ids(search=None, active=True, department_id=None, limit=500)),
         ("employees.shared_accounts", lambda db: big(db, BIG).shared_accounts(set(range(1, 51)))),
         ("employees.count", lambda db: big(db, BIG).count()),
-        ("employees.number_exists", lambda db: big(db, BIG).number_exists("E0004242")),
+        ("employees.number_exists", lambda db: big(db, BIG).unique_exists("employee_number", "E0004242")),
         ("employees.lock_many.500", lambda db: big(db, BIG).lock_many(ids(BIG, 500))),
         ("employees.by_ids.50", lambda db: big(db, BIG).by_ids(set(ids(BIG, 50)))),
         ("employees.request_reenrollment.small", lambda db: big(db, SMALL).request_reenrollment("x")),
@@ -273,11 +278,19 @@ def log_cases() -> list[Case]:
         options = {"until": None, "employee_id": None, "success": None}
         return logs(db).feed_for_company(BIG, after_id=after_id, settled_before=NOW, **options, limit=500)
 
-    def failures(db: Session, *, employee_id: int | None, actor_id: int | None, window: timedelta) -> object:
+    def failures(
+        db: Session,
+        *,
+        employee_id: int | None,
+        actor_id: int | None,
+        window: timedelta,
+        device_hash: str | None = None,
+    ) -> object:
         reasons = MATCH_FAILURES if employee_id else SECURITY_REASONS
         return logs(db).recent_failures(
             employee_id=employee_id,
             actor_id=actor_id,
+            device_hash=device_hash,
             methods=FACE_METHODS,
             reasons=reasons,
             since=NOW - window,
@@ -302,6 +315,14 @@ def log_cases() -> list[Case]:
         (
             "logs.recent_failures.validator",
             lambda db: failures(db, employee_id=None, actor_id=110001, window=timedelta(days=2)),
+        ),
+        (
+            # El bloqueo del 1:N de la API pública por dispositivo
+            # (índice parcial `ix_verification_logs_device_created`).
+            "logs.recent_failures.device",
+            lambda db: failures(
+                db, employee_id=None, actor_id=None, window=timedelta(minutes=15), device_hash="a" * 64
+            ),
         ),
         (
             "logs.validator_successes",
@@ -540,14 +561,12 @@ def storage_cases() -> list[Case]:
     """Bucket de imágenes: la cola de borrado del mantenimiento, liberar las fotos de un empleado al
     borrarlo y los conteos con tope del estado del ADMIN."""
     storage = StorageRepository
-    face, receipts = FACE_ENROLLMENT_PHOTOS, PAYMENT_RECEIPTS
     return [
         ("storage.deletions", lambda db: storage(db).deletions("", 200)),
         ("storage.count_deletions", lambda db: storage(db).count_deletions(10_000)),
         ("storage.status", lambda db: storage(db).status("delete")),
-        ("storage.count_stored.face", lambda db: storage(db).count_stored(face, 10_000)),
-        ("storage.count_stored.receipts", lambda db: storage(db).count_stored(receipts, 10_000)),
-        ("storage.count_stored.avatars", lambda db: storage(db).count_stored(USER_AVATARS, 10_000)),
+        # Los conteos con tope de TODOS los tipos de `STORED_IMAGES` en una sola consulta (un subconteo por tipo).
+        ("storage.count_stored", lambda db: storage(db).count_stored(STORED_IMAGES, 10_000)),
         (
             "enrollments.reject_pending.employee",
             lambda db: FaceEnrollmentRepository(db, BIG).reject_pending("x", 4241),
@@ -663,6 +682,66 @@ def antifraud_cases() -> list[Case]:
     ]
 
 
+def drift_cases() -> list[Case]:
+    """Deriva de las señales (antifraude fase 3): lo que lee el mantenimiento al cerrar una ventana (los valores
+    genuinos por señal y plataforma, los intentos y casos por empresa, las revisiones decididas), lo que lista el ADMIN
+    (una ventana: señales, empresas, conteos, ventanas) y la bitácora de versiones."""
+    week = date(2026, 9, 28)
+    start, end = NOW - timedelta(days=14), NOW - timedelta(days=7)
+    drift = DriftRepository
+
+    return [
+        (
+            "drift.platform_samples",
+            lambda db: drift(db).platform_samples(
+                [signal.column for signal in drift_service.DRIFT_SIGNALS],
+                "IOS_SAFARI",
+                start,
+                end,
+                settings.DRIFT_MAX_SAMPLES,
+            ),
+        ),
+        ("drift.attempts_by_company", lambda db: drift(db).attempts_by_company(start, end)),
+        ("drift.cases_by_company", lambda db: drift(db).cases_by_company(start, end)),
+        ("drift.reviews", lambda db: drift(db).reviews(start, end, 50_000)),
+        ("drift.company_names", lambda db: drift(db).company_names(range(1, 60))),
+        ("drift.weeks", lambda db: drift(db).weeks(60)),
+        ("drift.has_week", lambda db: drift(db).has_week(week)),
+        (
+            "drift.signals_page",
+            lambda db: drift(db).signals_page(week, platform=None, status=None, offset=0, limit=10),
+        ),
+        (
+            "drift.signals_page.filtered",
+            lambda db: drift(db).signals_page(week, platform="DESKTOP", status="ALERT", offset=0, limit=10),
+        ),
+        ("drift.companies_page", lambda db: drift(db).companies_page(week, search=None, offset=0, limit=10)),
+        (
+            "drift.companies_page.search",
+            lambda db: drift(db).companies_page(week, search="presa 1", offset=0, limit=10),
+        ),
+        ("drift.counts", lambda db: drift(db).counts(week)),
+        ("drift.computed_at", lambda db: drift(db).computed_at(week)),
+        ("drift.latest_version", lambda db: drift(db).latest_version("risk_engine")),
+        ("drift.versions", lambda db: drift(db).versions(20)),
+        ("drift.changed_within", lambda db: drift(db).changed_within(("risk_engine", "face_models"), start, end)),
+    ]
+
+
+def passkey_cases() -> list[Case]:
+    """Llaves de acceso (WebAuthn): entrar con una (la llave por su credencial, con la cuenta y sus empleos), las de
+    la cuenta (Mi perfil y el tope) y el reto usado (inserción atómica)."""
+    passkeys = PasskeyRepository
+
+    return [
+        ("passkeys.by_credential", lambda db: passkeys(db).by_credential("0" * 43)),
+        ("passkeys.page", lambda db: passkeys(db).page(120001, offset=0, limit=10)),
+        ("passkeys.for_user", lambda db: passkeys(db).for_user(120001, settings.PASSKEYS_MAX_PER_USER)),
+        ("passkeys.claim_challenge", lambda db: passkeys(db).claim_challenge("f" * 64, NOW)),
+        ("passkeys.touch", lambda db: passkeys(db).touch(1, 2, NOW)),
+    ]
+
+
 def device_key(seed: str) -> str:
     """El hash de llave que siembra seed.sql (`md5('dev-' || e) || md5(e || '-dev')`)."""
     prefix, suffix = (hashlib.md5(part.encode(), usedforsecurity=False).hexdigest() for part in seed.split(":"))
@@ -720,8 +799,34 @@ def document_cases() -> list[Case]:
         ("documents.trash", lambda db: documents(db, BIG).page(offset=0, limit=10, deleted=True)),
         ("documents.get", lambda db: documents(db, BIG).get(1500)),
         ("documents.get.lock", lambda db: documents(db, BIG).get(1500, include_deleted=True, lock=True)),
-        ("storage.count_stored.documents", lambda db: StorageRepository(db).count_stored(COMPANY_DOCUMENTS, 10_000)),
         ("usage.document_bytes", lambda db: UsageRepository(db).document_bytes()),
+    ]
+
+
+def voice_cases() -> list[Case]:
+    """Verificación por voz y video del registro facial (migración 0079): el registro sin terminar con que trabaja la
+    verificación (`get_any`) y el terminado bloqueado para decidirlo (`get`), sus respuestas en orden y una por id
+    (reproducir el video), el intento fallido (una sentencia atómica), liberar los clips de un registro que se rechaza
+    o reemplazar el que un empleado dejó a medias, la foto inicial de los tres pasos del registro (0083) y los bytes de
+    la foto diaria del almacenamiento (el conteo con tope del estado del bucket está en `storage_cases`, con todos los
+    tipos en una consulta). Sus depuraciones (videos vencidos, registros sin terminar) están en `purge_cases`. La
+    marca para el revisor (`add_flag`) y lo que sale del bucket al eliminar a la persona (`release_employee_images`)
+    son solo `INSERT`s (la cola del bucket lee por el índice `(company_id, employee_id)`), que este banco no mide."""
+    enrollments = FaceEnrollmentRepository
+    return [
+        ("enrollments.get_any.unfinished", lambda db: enrollments(db, BIG).get_any(1007)),
+        ("enrollments.get.lock", lambda db: enrollments(db, BIG).get(42, for_update=True)),
+        ("enrollments.voice_answers", lambda db: enrollments(db, BIG).voice_answers(42)),
+        ("enrollments.voice_answer", lambda db: enrollments(db, BIG).voice_answer(42, 1)),
+        ("enrollments.count_failed_attempt", lambda db: enrollments(db, BIG).count_failed_attempt(1007)),
+        ("enrollments.release_voice_clips", lambda db: enrollments(db, BIG).release_voice_clips(42)),
+        ("enrollments.delete_unfinished", lambda db: enrollments(db, BIG).delete_unfinished(1007)),
+        # Los tres pasos independientes del registro (migración 0083): la foto inicial del empleado (índice único
+        # `(company_id, employee_id)`), «Repetir foto» (su objeto a la cola y la fila fuera) y el paso 2 que la toma.
+        ("enrollment_drafts.of_employee", lambda db: FaceEnrollmentDraftRepository(db, BIG).of_employee(10)),
+        ("enrollment_drafts.discard", lambda db: FaceEnrollmentDraftRepository(db, BIG).discard(20, NOW)),
+        ("enrollment_drafts.take", lambda db: FaceEnrollmentDraftRepository(db, BIG).take(3)),
+        ("usage.voice_clip_bytes", lambda db: UsageRepository(db).voice_clip_bytes()),
     ]
 
 
@@ -743,6 +848,9 @@ CASES: list[Case] = [
     *device_cases(),
     *presence_cases(),
     *document_cases(),
+    *voice_cases(),
+    *drift_cases(),
+    *passkey_cases(),
     *trash_cases(),
     *purge_cases(),
 ]
@@ -771,6 +879,10 @@ PLATFORM_CASES = (
     "antifraud.signatures.",
     "antifraud.cases.",
     "kiosks.lookup.",
+    # Deriva de señales y llaves de acceso: datos de la plataforma (el mantenimiento y las lecturas del ADMIN; la
+    # cuenta de una persona).
+    "drift.",
+    "passkeys.",
 )
 #: Casos de la empresa chica (los demás son de la grande).
 SMALL_CASES = ("logs.page_for_company.employee",)

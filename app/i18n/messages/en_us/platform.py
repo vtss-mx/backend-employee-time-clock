@@ -9,6 +9,10 @@ from app.i18n.messages.base import Messages
 MESSAGES: Messages = {
     "ACCOUNT_DELETED_LABEL": "Account #{id} (no longer exists)",
     "ACCOUNT_LABEL": "{email} ({role})",
+    "API_DEVICE_KEY_INVALID": "The device key isn't valid",
+    "API_DEVICE_PROOF_INVALID": "Couldn't verify the device. Request a new challenge.",
+    "API_DEVICE_PROOF_REQUIRED": "The device proof is missing: its key, the challenge, and the signature",
+    "API_EMPLOYEE_REFERENCE_INVALID": "Send the employee's ID or number, only one of them",
     "API_KEYS_LISTED": {
         "one": "{count} key",
         "other": "{count} keys",
@@ -62,6 +66,21 @@ MESSAGES: Messages = {
     "COMPANY_RESTORED": "Company restored",
     "COMPANY_UPDATED": "Company updated",
     "COMPANY_USAGE": "Company usage",
+    "DRIFT_COMPANIES": {
+        "one": "{count} company",
+        "other": "{count} companies",
+    },
+    "DRIFT_COMPUTED": {
+        "zero": "Drift computed: no attempts in the window",
+        "one": "Drift computed ({count} row)",
+        "other": "Drift computed ({count} rows)",
+    },
+    "DRIFT_DISABLED": "Drift monitoring is turned off in the server configuration",
+    "DRIFT_SIGNALS": {
+        "one": "{count} signal",
+        "other": "{count} signals",
+    },
+    "DRIFT_SUMMARY": "Signal drift summary",
     "ERRORS_RESOLVED": {
         "one": "{count} error resolved",
         "other": "{count} errors resolved",
@@ -114,6 +133,7 @@ MESSAGES: Messages = {
     "INVALID_RISK_SIGNAL": "That risk signal doesn't exist",
     "INVALID_SIGNAL_MODE": "Choose one of the signal's modes",
     "INVALID_SINCE_UNTIL": "`since` must be before `until`",
+    "INVALID_VOICE_PROFILE": "Choose one of the available voices",
     "PERFORMANCE_METRICS": {
         "one": "{count} item",
         "other": "{count} items",
@@ -164,6 +184,20 @@ MESSAGES: Messages = {
     "SLOW_ALERT_FOUND": "Alert found",
     "SLOW_ALERT_NOT_FOUND": "Alert not found",
     "SLOW_ALERT_STATUS_UPDATED": "Follow-up updated",
+    "STORAGE_CLIENT_FAILED": "couldn't create the Google Cloud Storage client",
+    "STORAGE_COMPANY_DOCUMENTS": "Company documents",
+    "STORAGE_EMPLOYEE_DOCUMENTS": "Employee identity documents",
+    "STORAGE_ENROLLMENT_VOICE_CLIPS": "Face enrollment voice check videos",
+    "STORAGE_FACE_ENROLLMENT_DRAFT_PHOTOS": "Face enrollment first photos (drafts)",
+    "STORAGE_FACE_ENROLLMENT_PHOTOS": "Face enrollment reference photos",
+    "STORAGE_FRAUD_EVIDENCE": "Fraud case evidence frames",
+    "STORAGE_KEY_INVALID": "the service account key isn't valid",
+    "STORAGE_KEY_NOT_MOUNTED": "the service account key isn't mounted yet (empty file)",
+    "STORAGE_KEY_UNREADABLE": "couldn't read the service account key ({error})",
+    "STORAGE_NOT_CONFIGURED": "GCS_BUCKET or GCS_CREDENTIALS_FILE is missing from the configuration",
+    "STORAGE_PAYMENT_RECEIPTS": "Payment receipts",
+    "STORAGE_PENDING_DELETIONS": "Objects pending deletion from the bucket",
+    "STORAGE_USER_AVATARS": "Profile photos (one object per size)",
     "THRESHOLDS_RECALIBRATED": {
         "zero": "Thresholds recalculated: no changes",
         "one": "Thresholds recalculated ({count} changed)",

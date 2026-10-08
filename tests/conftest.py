@@ -121,6 +121,7 @@ from app.main import app  # noqa: E402
 from app.middleware.rate_limit import limiter  # noqa: E402
 from app.models import DeviceStatus, Employee, ValidatorDevice  # noqa: E402
 from app.models.catalog_seed import create_schema  # noqa: E402
+from app.ocr import use_backend as use_ocr_backend  # noqa: E402
 from app.services import flash_pacing  # noqa: E402
 from app.services.attack_signatures import signature_cache  # noqa: E402
 from app.services.bootstrap import create_admin_user, create_company_user  # noqa: E402
@@ -132,6 +133,9 @@ from app.services.face_service import clear_migration_blocks  # noqa: E402
 from app.services.policy_service import clear_policy_cache  # noqa: E402
 from app.services.qr_service import QrService  # noqa: E402
 from app.services.usage_meter import usage_meter  # noqa: E402
+from app.speech import use_backend  # noqa: E402
+from tests.ocr_support import FakeOcr  # noqa: E402
+from tests.speech_support import FakeSpeech, voice_clip  # noqa: E402
 from tests.storage_support import FakeStorage  # noqa: E402
 
 # Un texto que el catálogo de mensajes no tiene (o un parámetro que falta) hace fallar la prueba que lo provoca: en
@@ -259,7 +263,10 @@ class FakePipeline:
         if kind == "exif" and policy.reject_foreign_images:
             raise FaceValidationError("IMAGE_NOT_FROM_CAMERA")
         detected = {"glasses": Accessory.GLASSES, "mask": Accessory.MASK, "hat": Accessory.HEADWEAR}.get(kind)
-        found = (detected,) if detected is not None and policy.blocks(detected) else ()
+        # Como el motor real: lo detectado se informa si CLIP corre (alguna regla encendida o `report_accessories`) y
+        # solo lo que la empresa bloquea rechaza.
+        seen = (detected,) if detected is not None and policy.any_accessory else ()
+        found = tuple(a for a in seen if policy.blocks(a))
         if found and enforce_accessories:
             raise accessories_error(found)
         quality = 0.45 if kind == "dim" else 0.9
@@ -271,6 +278,7 @@ class FakePipeline:
             _analysis(name),
             quality_score=quality,
             accessories_found=found,
+            accessories_detected=seen,
             real_probability=real,
             landmarks=FRONTAL_POINTS,
             moire=30.0 if kind == "screen" else 10.0,
@@ -330,6 +338,19 @@ class FakePipeline:
         kind, _ = _parse(image_bytes)
         detected = {"glasses": Accessory.GLASSES, "mask": Accessory.MASK, "hat": Accessory.HEADWEAR}.get(kind)
         return None, None, (detected,) if detected is not None and policy.blocks(detected) else ()
+
+    def identity_of(self, image_bytes: bytes) -> np.ndarray | None:
+        """Un fotograma del video de la verificación por voz: su vector, None sin rostro (o con varios); `crash` es una
+        falla del motor y `broken` una imagen que OpenCV no puede leer."""
+        text = image_bytes.decode(errors="ignore")
+        if text in ("noface", "multi"):
+            return None
+        if text == "crash":
+            raise RuntimeError("el motor se cayó")
+        if text == "broken":
+            raise cv2.error("imagen ilegible")
+        _, name = _parse(image_bytes)
+        return face_vector(name)
 
     def analyze_burst(self, data: bytes, layout: BurstLayout, rules: BurstRules) -> BurstAnalysis:
         kind, name = _parse(data)
@@ -497,6 +518,10 @@ def _db():
     ip_intel.close()
     # Bucket de imágenes falso en memoria: ninguna prueba toca el real (las imágenes nunca van a la BD).
     use_storage(FakeStorage())
+    # Motor de voz falso: ninguna prueba decodifica video ni carga el modelo (tests/speech_support.py).
+    use_backend(FakeSpeech())
+    # Motor de OCR falso: ninguna prueba ejecuta Tesseract (tests/ocr_support.py).
+    use_ocr_backend(FakeOcr())
     with SessionLocal() as db:
         company = create_company_user(db, COMPANY_EMAIL, COMPANY_PASSWORD).company
         create_admin_user(db, ADMIN_EMAIL, ADMIN_PASSWORD)
@@ -526,6 +551,26 @@ def bucket():
     storage = get_storage()
     assert isinstance(storage, FakeStorage)
     return storage
+
+
+@pytest.fixture
+def speech() -> FakeSpeech:
+    """El motor de voz falso de la prueba: para ver qué oyó o provocar sus fallas."""
+    from app.speech import backend
+
+    engine = backend()
+    assert isinstance(engine, FakeSpeech)
+    return engine
+
+
+@pytest.fixture
+def ocr() -> FakeOcr:
+    """El motor de OCR falso de la prueba: para configurar lo que «lee» de un documento o provocar sus fallas."""
+    from app.ocr import backend
+
+    engine = backend()
+    assert isinstance(engine, FakeOcr)
+    return engine
 
 
 @pytest.fixture
@@ -720,13 +765,51 @@ def _flash_part(index: int, content: str) -> tuple:
     return ("flash_image", (f"c{index}.jpg", content.encode(), "image/jpeg"))
 
 
-def submit_enrollment(client, headers, *, frontal=(b"face:juan", b"face:juan", b"face:juan"), turn_person="juan"):
-    challenge = client.post("/api/face/challenge", headers=headers).json()["data"]
+def enrollment_challenge(client, headers) -> dict:
+    """El reto del REGISTRO facial como lo pide la app (`purpose=ENROLLMENT`): siempre los cuatro movimientos de la
+    cabeza (decisión del dueño, 2026-10-07); un reto de verificación no sirve para registrarse."""
+    return client.post("/api/face/challenge", params={"purpose": "ENROLLMENT"}, headers=headers).json()["data"]
+
+
+def initial_photo(client, headers, image: bytes = b"face:juan"):
+    """El paso 1 del registro facial como lo hace la app (`POST /enrollment/photo`, decisión del dueño, 2026-10-07): la
+    foto inicial aceptada queda guardada como borrador; sin ella, las capturas (paso 2) responden 409."""
+    return client.post("/api/enrollment/photo", files={"images": ("p.jpg", image, "image/jpeg")}, headers=headers)
+
+
+def _person_of(frontal, fallback: str) -> str:
+    """La persona de la primera captura con rostro de una toma simulada (`face:juan`, `mask:juan` → juan)."""
+    named = [image.decode(errors="ignore").partition(":")[2] for image in frontal if b":" in image]
+    return named[0] if named else fallback
+
+
+def submit_enrollment(
+    client,
+    headers,
+    *,
+    frontal=(b"face:juan", b"face:juan", b"face:juan"),
+    turn_person="juan",
+    voice=True,
+    photo: bytes | None = None,
+):
+    """El registro facial como lo hace la app: la foto inicial (paso 1; `photo`, por omisión un rostro limpio de la
+    persona de las capturas), las fotos con la prueba de vida completa (paso 2) y, si las acepta y la política lo
+    exige, las preguntas en video (paso 3, `complete_voice`, con la misma persona de la toma): el registro queda listo
+    para la revisión. `voice=False` deja la sesión de voz abierta (las pruebas de la verificación por voz la recorren a
+    mano). Devuelve la respuesta de las fotos o, si la foto inicial no pasó (409 de un registro ya enviado o aprobado,
+    503 sin bucket), la de la foto: el mismo código que daría el envío."""
+    taken = initial_photo(client, headers, photo or f"face:{_person_of(frontal, turn_person)}".encode())
+    if taken.status_code != 201:
+        return taken
+    challenge = enrollment_challenge(client, headers)
     files = [("images", (f"f{i}.jpg", f, "image/jpeg")) for i, f in enumerate(frontal)]
     files += turn_files(challenge, turn_person)
-    return client.post(
+    response = client.post(
         "/api/enrollment/face", data={"challenge_id": challenge["challenge_id"]}, files=files, headers=headers
     )
+    if voice and response.status_code == 201:
+        complete_voice(client, headers, response.json()["data"], person=turn_person)
+    return response
 
 
 def qr_content(employee_id: int, lifetime_seconds: int = 30) -> str:
@@ -739,8 +822,37 @@ def qr_content(employee_id: int, lifetime_seconds: int = 30) -> str:
         return content
 
 
+def complete_voice(client, headers, submitted: dict, person: str = "juan"):
+    """Responde las preguntas en video de un registro recién enviado como lo haría la persona (con la verdad): la
+    respuesta esperada sale del token sellado de la sesión (solo las pruebas lo abren). Devuelve la última respuesta
+    (o None si el registro no llevó verificación por voz)."""
+    from app.services.voice_questions import _open
+
+    voice = submitted.get("voice")
+    if voice is None:
+        return None
+    response = None
+    token = voice["token"]
+    for question in voice["questions"]:
+        session = _open(token)
+        assert session is not None
+        expected = session.questions[question["position"]].answer.split("\n")[0]
+        response = answer_voice(client, headers, token, question["position"], voice_clip(person, expected))
+        assert response.status_code == 200, response.text
+        token = response.json()["data"]["token"]
+    return response
+
+
+def answer_voice(client, headers, token: str, position: int, clip: bytes):
+    """Una respuesta en video a la pregunta `position` de la sesión `token`."""
+    files = [("clip", ("answer.webm", clip, "video/webm"))]
+    data = {"token": token, "position": str(position)}
+    return client.post("/api/enrollment/voice/answer", data=data, files=files, headers=headers)
+
+
 def approved_employee(client, company_headers, **kwargs) -> dict[str, str]:
-    """Crea un empleado, registra su rostro y COMPANY lo aprueba. Devuelve headers del empleado."""
+    """Crea un empleado, registra su rostro (fotos y, con la política, las preguntas en video) y COMPANY lo aprueba.
+    Devuelve headers del empleado."""
     assert create_employee(client, company_headers, **kwargs).status_code == 201
     headers = login(client, kwargs.get("email", "juan@empresa.com"), "Empleado123")
     enrollment = submit_enrollment(client, headers)

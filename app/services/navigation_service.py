@@ -36,9 +36,19 @@ def _in_company(user: User) -> bool:
     return user.employee is not None
 
 
+def _requires_documents(user: User) -> bool:
+    """La empresa del empleado exige documentos de onboarding (comprobante de domicilio e identificación oficial)."""
+    employee = user.employee
+    return employee is not None and employee.company.require_employee_documents
+
+
 #: Pantallas que dependen del estado del usuario; las demás aplican siempre que el rol las tenga.
 AVAILABILITY: dict[Screen, Callable[[User], bool]] = {
     Screen.EMPLOYEE_ENROLL: lambda user: _in_company(user) and _face_status(user) in _ENROLLMENT,
+    # Documentos del onboarding (decisión del dueño, 2026-10-07): solo si la empresa los exige
+    # (`companies.require_employee_documents`, que decide el ADMIN). La empresa del empleado ya viene cargada
+    # (`Employee.company`, lazy="joined"): sin consultas de más.
+    Screen.EMPLOYEE_DOCUMENTS: lambda user: _requires_documents(user),
     Screen.EMPLOYEE_PENDING: lambda user: _face_status(user) == FaceStatus.PENDING_REVIEW,
     # IDENTITY_SCREENS: verificarse, la asistencia (cada registro se confirma con su rostro) y el QR.
     **dict.fromkeys(IDENTITY_SCREENS, lambda user: _face_status(user) == FaceStatus.APPROVED),

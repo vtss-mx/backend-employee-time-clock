@@ -5,7 +5,8 @@ se señala el conflicto antes de escribir código; no se "rodean".
 
 Stack: Python 3.14 · FastAPI · SQLAlchemy 2 · PostgreSQL (Alembic) · pytest. Idioma del código:
 identificadores en inglés; docstrings, comentarios y documentación en **español**. Lo que lee una persona (mensajes y
-textos de los catálogos) existe en **es-MX y en-US** y se responde en el idioma de la petición (§11).
+textos de los catálogos) existe en **los siete idiomas de la plataforma** (es-MX por omisión, en-US, pt-BR, fr-FR, de-DE,
+it-IT y es-ES; regla 16 de la raíz) y se responde en el idioma de la petición (§11).
 
 ## 1. El backend es la única fuente de verdad
 
@@ -39,6 +40,21 @@ textos de los catálogos) existe en **es-MX y en-US** y se responde en el idioma
   cada endpoint exige su permiso (`require_api_scope`, catálogo `api_scopes`). La empresa sale de la
   llave (`client.company_id`) y se consulta con los repositorios aislados por empresa; nunca datos
   biométricos. Un endpoint nuevo ahí lleva su permiso de lectura y su prueba de aislamiento.
+  - **API pública de verificación facial** (SDK móviles, migración `0084`; contrato `docs/sdk/contrato-verificacion.md`
+    de la raíz, que se sube de versión con cada cambio): `app/routers/integration_verification.py`
+    (`/integrations/v1/verification/challenge|verify|identify`) con el permiso `VERIFICATION` y su propio límite por llave
+    (`VerificationClient` → `get_api_client_for_verification`: su nombre empieza por `get_api_client` para que la prueba
+    de autorización la trate como API de integración). Reglas que no se rodean: (1) ningún motor aparte: el 1:1 es
+    `VerificationService.verify_employee_face(actor=ApiDevice, method=API_FACE)` y el 1:N es
+    `face_identification.GallerySearch` (el mismo del validador); (2) quien opera la cámara es un `ApiDevice` (llave de
+    la API + huella de la llave P-256 del teléfono, `liveness_service.ChallengeOwner`): sus retos son por dispositivo y
+    su prueba (`api_verification_service.prove_device`, firma de `{device_nonce}.{acción}.{SHA-256 de la primera
+    frontal}` con el reto de `device_service.issue_api_nonce`) es OBLIGATORIA y se revisa antes del motor y del reto;
+    (3) todo intento responde 200 con su decisión (`ApiVerificationResult`: el `STEP_UP_REQUIRED` y los
+    `SuspiciousCapture` se vuelven `STEP_UP` y `DENY`), y la referencia del empleado solo viaja con `ALLOW`/`REVIEW` y
+    sin foto; (4) la bitácora lleva `API_FACE` y `device_hash`; el bloqueo 1:N es por dispositivo
+    (`ensure_unlocked(device_hash=...)`). Una ruta nueva de esta API va a `FACE_PREFIXES` si usa el motor y a
+    `CRITICAL_PREFIXES`, con su caso en `tests/test_verification_api.py` y en `perf/db/explain.py` si consulta.
 - **Validación en vivo**: todo correo, teléfono o dato único de un formulario se valida mientras
   se escribe por el canal `/api/ws/validation` (respaldo `GET /api/validation`). Campos, permisos
   (por pantalla) y reglas viven en `app/services/live_validation.py`: un campo nuevo es una
@@ -81,9 +97,9 @@ textos de los catálogos) existe en **es-MX y en-US** y se responde en el idioma
      validador, la base) y `tests/test_row_security.py` (clasificación de tablas, FK compuestas).
 - **Contrato de respuesta único, también en errores y en TODAS las capas**: éxito con
   `ok(data, code=..., params=...)` y `response_model=ApiResponse[...]`; error lanzando una excepción de
-  `app/core/exceptions.py` (o, en un middleware, con `error_response(..., t("LLAVE"))`) con `code` estable
+  `app/core/exceptions.py` (o, en un middleware, con `error_response(..., Text("LLAVE"))`) con `code` estable
   (`COMPANY_HAS_EMPLOYEES`, `EMAIL_TAKEN`...). El texto NUNCA se escribe ahí: sale del catálogo de mensajes en el idioma
-  de la petición (§11). Nunca un `JSONResponse`/`HTTPException` con otra
+  de la petición y, en `i18n`, en cada idioma (§11.6). Nunca un `JSONResponse`/`HTTPException` con otra
   forma. `tests/test_envelope.py` lo verifica para 404, 405, 401, 403, 409, 413, 422, 429, 500 y 503.
   Un error que debe atravesar la lectura del cuerpo de FastAPI (formulario/JSON) es un
   `HTTPException` de FastAPI (`BodyTooLargeError`): cualquier otra excepción ahí se vuelve un 400
@@ -172,7 +188,11 @@ final dice qué se hizo en cada punto (o por qué no aplica). Origen: la auditor
    `ABSENCE_MAX_DAYS` (CHECK `dates`).
 6. **Índice parcial** para el subconjunto caliente (`status = 'OPEN'`, `IS NOT NULL` de una FK
    opcional, `WHERE learned`), con `postgresql_where` y el mismo `sqlite_where`. La consulta debe
-   implicar el predicado (con parámetros funciona: PostgreSQL planea cada sentencia con sus valores).
+   implicar el predicado (con parámetros funciona: PostgreSQL planea cada sentencia con sus valores). Una
+   columna booleana del predicado se escribe TAL CUAL en la consulta (`Modelo.columna` /
+   `not_(Modelo.columna)`), nunca `.is_(True)`: PostgreSQL no deduce `columna` desde `columna IS TRUE` y
+   recorre la tabla (medido en `ix_face_enrollments_voice_pending`: con `IS true` la depuración descartaba
+   89 540 filas; con la columna tal cual va por el índice en 2.4 ms).
 7. **Súper-índice (INCLUDE)** cuando un *index-only scan* quita las lecturas de la tabla en una ruta
    caliente o en un conteo grande (`postgresql_include=[...]`; SQLite lo ignora). Nunca se incluye una
    columna que se actualiza seguido: cada cambio dejaría de ser HOT y reescribiría todos los índices.
@@ -230,7 +250,7 @@ La última barrera (decisión del dueño: por ninguna razón se mezclan datos de
 olvidara un filtro, PostgreSQL no entrega ni acepta filas de otra empresa. Mecanismo (`app/core/row_security.py`,
 migración `0056`):
 
-- **Tablas de empresa** (`TENANT_TABLES`, 49): `ENABLE` + `FORCE ROW LEVEL SECURITY` y la política
+- **Tablas de empresa** (`TENANT_TABLES`, 52): `ENABLE` + `FORCE ROW LEVEL SECURITY` y la política
   `tenant_isolation`: `company_id = NULLIF(current_setting('app.company_id', true), '')::integer` (USING y WITH
   CHECK). Las tablas de la plataforma con `company_id` (`auth.users`, `auth.auth_sessions`, `ops.error_occurrences`)
   están en `PLATFORM_TABLES_WITH_COMPANY` con su motivo; `tests/test_row_security.py` falla con una sin clasificar.
@@ -355,7 +375,8 @@ Decisión del dueño: «todos los delete de la aplicación deben ser softdelete�
 "Borrado lógico («Eliminados»)".
 
 - **Tablas**: `companies`, `users`, `employees`, `validators`, `departments`, `work_sites`, `site_kiosks` (`0070`),
-  `shifts`, `shift_assignments`, `company_holidays`, `employee_workdays` y `company_documents` (`0075`) (`SoftDeleteMixin`: `deleted_at` y `deleted_by`, el
+  `shifts`, `shift_assignments`, `company_holidays`, `employee_workdays`, `company_documents` (`0075`) y
+  `employee_documents` (`0087`) (`SoftDeleteMixin`: `deleted_at` y `deleted_by`, el
   correo literal de quien eliminó, como la cobranza: sobrevive a que esa cuenta se depure y no necesita JOIN).
 - **Mecanismo único y automático** (`app/core/soft_delete.py`): el evento `do_orm_execute` agrega
   `deleted_at IS NULL` de cada tabla con borrado lógico a TODA consulta y UPDATE masivo del ORM (FROM, JOIN,
@@ -382,10 +403,15 @@ Decisión del dueño: «todos los delete de la aplicación deben ser softdelete�
 - **Índices**: únicos parciales `WHERE deleted_at IS NULL` (`live_unique`: los datos se reutilizan); el índice que
   además es de una FK (debe ver todas las filas para el CASCADE o el RESTRICT) se queda completo con `deleted_at` en
   el INCLUDE; un índice del camino caliente que no es de una FK se vuelve parcial.
-- **Excepción (LFPDPPP, regla 13)**: al eliminar a una persona, sus datos biométricos y fotos se borran DE VERDAD
-  (`services/person_erasure.py`: plantillas, registros faciales, huellas perceptuales, evidencia de fraude, foto de
-  perfil y cuenta recordada; los objetos a la cola `storage_jobs`, así un bucket caído nunca detiene ni deja nada para
-  siempre). Restaurar no los regresa (su estado facial queda "sin registro" con el motivo `FACE_ERASED_ON_DELETE`).
+- **Excepción (LFPDPPP, regla 13)**: al eliminar a una persona, sus datos biométricos, fotos y documentos de identidad
+  se borran DE VERDAD (`services/person_erasure.py`: plantillas, registros faciales, huellas perceptuales, evidencia de
+  fraude, foto de perfil, cuenta recordada y los documentos del onboarding —`erase_employee_documents`: una
+  identificación oficial lleva la foto y los datos de la persona, decisión del dueño del producto 2026-10-07; TODAS sus
+  filas de `workforce.employee_documents`, vigentes y las que él mismo había eliminado, y sus objetos; no son el
+  expediente de una empresa—; los objetos a la cola `storage_jobs`, así un bucket caído nunca detiene ni deja nada para
+  siempre). Restaurar no los regresa (su estado facial queda "sin registro" con el motivo `FACE_ERASED_ON_DELETE`; los
+  documentos los vuelve a subir). Por eso la depuración `SOFT_DELETE_PURGES` de `employee_documents` solo cubre lo que
+  el propio empleado eliminó de su lista (un empleado eliminado ya no tiene documentos).
 - **Depuración** (`maintenance_service.SOFT_DELETE_PURGES`, lotes de `SOFT_DELETE_PURGE_BATCH_SIZE`): pasados
   `SOFT_DELETE_RETENTION_DAYS`, en orden y saltando lo que aún tiene una referencia RESTRICT (nunca falla el lote);
   una empresa con cobranza nunca se depura.
@@ -465,6 +491,32 @@ README, "Sin inyección SQL". Defensa en capas; ninguna se omite:
   (LRU por memoria o cantidad). Lo que es de cada proceso (control de admisión, conexiones del canal, cola
   facial, hilos de Argon2) solo protege a ESE proceso; nunca decide un resultado de negocio. Inventario
   vigente y por qué cada pieza es correcta con N réplicas: README, "Escalar en cualquier momento".
+- **Caché compartida entre réplicas: Redis, solo como caché y solo por `app/core/cache.py`** (decisión del dueño,
+  2026-10-07; README "Caché compartida (Redis)"). Reglas:
+  - Redis NUNCA es la fuente de verdad ni guarda nada personal en claro (regla 13 de la raíz): hoy, la instantánea de
+    los catálogos (`catalog_service`, llave `catalogs:<versión>`) y los contadores de los límites de peticiones
+    (`rate_limit.RedisRateLimiter`, llave `rl:<regla>:<huella>:<ventana>` con la huella BLAKE2 del sujeto y la sal
+    `RATE_LIMIT_HASH_SALT`). Un uso nuevo pasa por `SharedCache` (`get_json`/`set_json`/`delete`/`delete_prefix`/
+    `hit_window`), declara su llave, su TTL y cómo se invalida, y sigue funcionando con la caché apagada
+    (`REDIS_HOST` y `REDIS_URL` vacíos: la topología mínima) y con Redis caído. Ningún otro módulo importa `redis`.
+  - **Cortacircuitos** (regla 7): tiempos límite cortos (`REDIS_CONNECT_TIMEOUT_MS`, `REDIS_TIMEOUT_MS`), cliente sin
+    reintentos propios (`Retry(NoBackoff(), 0)`: por omisión redis-py reintenta 10 veces con espera creciente) y, tras
+    una falla, `REDIS_RETRY_SECONDS` sin tocar la red (cada operación responde None en microsegundos). La caída se
+    registra UNA vez por caída (`logger.error` con texto estable: va a `ops.error_reports`) y la recuperación con
+    `logger.info`; un valor ilegible se descarta y se recalcula (`logger.warning`). Quien usa la caché siempre tiene
+    respaldo: la caché local y la base (catálogos), el límite por proceso (peticiones).
+  - **Dos niveles para lo que todas las réplicas leen igual** (patrón de los catálogos): la memoria del proceso
+    (`CATALOG_CACHE_SECONDS`) y, al vencer, Redis antes que la base (`CATALOG_REDIS_SECONDS`, mayor). Lo que viaja a
+    Redis son los DATOS crudos en tipos JSON (`CatalogData`), nunca objetos: cada proceso arma sus vistas. La llave
+    lleva la huella de lo que define la forma de la instantánea (modelos, idiomas, conjunto de migraciones:
+    `catalog_version`, sin red ni consultas) y se rechaza una instantánea con otra forma; el servicio `migrate` borra
+    las llaves al terminar (`python -m app.cli cache clear-catalogs`, en `entrypoint.sh`). Un caché nuevo que use
+    Redis declara también cuánto tarda en verse en todas las réplicas un cambio hecho a mano (su TTL compartido).
+  - Pruebas sin red con `tests/redis_support.FakeRedis` (implementa solo lo que usa la capa; `use_cache` lo instala;
+    `server.down` simula la caída y `server.now` el reloj): acierto/fallo/vencimiento, cortacircuitos y reintento, valor
+    ilegible, prefijo, limpieza al migrar y dos réplicas que ven el cambio tras `clear` (`tests/test_shared_cache.py`);
+    Redis que cae a media petición (`test_fault_tolerance.py`) y cero consultas en una recarga desde Redis
+    (`test_performance.py`). Las cifras reales (latencias, MB) se miden con un Redis aislado y van al README.
 - **La BD llega por PgBouncer en modo transacción: nada de estado de SESIÓN de PostgreSQL** en el código de
   la API. Una conexión real cambia de cliente en cada transacción, así que:
   - ni `SET` (si hiciera falta, `SET LOCAL` / `set_config(..., true)` dentro de la transacción, como la empresa de
@@ -542,7 +594,7 @@ README, "Sin inyección SQL". Defensa en capas; ninguna se omite:
   datos: un N+1 lo detecta `test_performance.py`, pero un índice que falta o un orden en memoria solo
   se ve con volumen.
 - **Cachés por proceso, siempre acotadas y validadas**: política (LRU de 10 000 empresas, 5 s),
-  catálogos (`CATALOG_CACHE_SECONDS`), umbrales faciales (60 s), galería facial (LRU por memoria y
+  catálogos (`CATALOG_CACHE_SECONDS`; con Redis, el segundo nivel compartido de arriba), umbrales faciales (60 s), galería facial (LRU por memoria y
   huella contra la BD en cada uso; el 1:N de cada 1:1 la reutiliza sin revalidar durante
   `RISK_IDENTITY_GALLERY_MAX_AGE_SECONDS`, `face_galleries.recent`: solo MIDE una señal, y nunca carga una galería
   que no cabe), bloqueos de migración facial (tope de 10 000) y la base local de IP (`ip_intel`: el archivo
@@ -554,10 +606,30 @@ README, "Sin inyección SQL". Defensa en capas; ninguna se omite:
 - **Recursos por réplica**: cada proceso carga sus propios modelos faciales (≈150 MB por worker facial).
   `API_WORKERS` y `FACE_WORKERS` automáticos respetan el límite de CPU del contenedor (`BACKEND_CPUS`): en un
   equipo con varias réplicas se reparte el CPU entre ellas, nunca se deja que cada una vea todos los núcleos.
+- **Escalar es cambiar valores, nunca código** (decisión del dueño, 2026-10-07: 5 réplicas por omisión,
+  `BACKEND_REPLICAS=5`). Todo lo que depende de N vive en una variable con su fórmula en el README ("Presupuesto de
+  conexiones y recursos para N réplicas"): los pools de PgBouncer y `POSTGRES_MAX_CONNECTIONS`, los `NGINX_*` del
+  gateway (procesos, conexiones, keepalive hacia la API, `max_fails`, tiempos límite del proxy, reintentos, cuerpo
+  máximo: plantillas `docker/nginx*.conf.template` que `15-gateway-config.sh` escribe al arrancar con `envsubst`, solo
+  esas variables), `REDIS_MAXMEMORY` y `BACKEND_CPUS`/`BACKEND_MEMORY`. Un valor del gateway que dependa de las réplicas
+  o del equipo no se escribe fijo en la plantilla: va a `docker-compose.yml` (`${VAR:-valor}`), al script (mismo valor
+  por omisión; `./scripts/quality.sh` lo compara) y al `.env` de la raíz con su fila en el README.
 - **Análisis facial en paralelo solo con workers de repuesto** (`facial_recognition.run_on_spare` y, para N análisis
   iguales, `map_on_spares`): la ráfaga del intento y las fotos del registro facial (las 36 candidatas y CLIP de las
   referencias, `enrollment_selection`) se reparten con los workers LIBRES de ese instante, sin transacción abierta;
   lo que un repuesto no termina a tiempo lo hace el de la petición. Nunca un pool o hilo propio.
+- **Voz a texto en el servidor** (`app/speech/`; decisión del dueño, 2026-10-06, regla 13: el audio nunca sale de la
+  plataforma): `faster-whisper` (CTranslate2 int8, CPU) con el modelo `small` descargado AL CONSTRUIR la imagen y
+  verificado por SHA-256 (`app/speech/model_store.py`, reutiliza `ensure_models`; `SPEECH_MODELS_AUTO_DOWNLOAD=false` en
+  producción: jamás una descarga en la petición), cargado una vez por proceso (`engine._Holder`: candado sin bloqueo —una
+  carga en curso responde 503 `SPEECH_SERVICE_UNAVAILABLE` en lugar de encolar—, pausa `FACE_ENGINE_RETRY_SECONDS` tras
+  una falla) con `SPEECH_CPU_THREADS` hilos y `num_workers` = workers faciales. La transcripción, la decodificación del
+  clip (PyAV) y la comparación del rostro corren en el pool de workers de siempre, **sin transacción abierta**, y se
+  miden (`speech.transcribe`, `face.identity`). En las preguntas de texto (nombre, empresa, departamento, sitio) el dato
+  registrado va al modelo como vocabulario sugerido (`hotwords`, `suggested_vocabulary`; `SPEECH_HOTWORDS_ENABLED`): medido
+  28/28 nombres propios frente a 12/28 sin él y 1/28 inventado con un dato ajeno; nunca en fechas ni números y nunca sale
+  del servidor. Un motor nuevo entra por `SpeechBackend` (`app/speech/__init__.py`:
+  `use_backend` en las pruebas, `FakeSpeech` en `tests/speech_support.py`); nada de llamar al modelo desde una ruta.
 
 ### 4.1 Observabilidad de rendimiento (pantalla "Rendimiento", regla 18 de la raíz)
 
@@ -575,8 +647,10 @@ en el README, "Observabilidad de rendimiento" (migración `0063`).
   `storage.put`): es la llave de sus filas (cambiarlo empieza otra serie). Nunca un nombre con datos (ids, correos,
   empresas): la cardinalidad la acota el código, no el tráfico. Una excepción cuenta como falla y sigue su camino.
   Cuesta ≈1.2 µs por llamada: no se mide un ciclo interno de miles de vueltas, sino su función.
-- **Regla 18 (peticiones lentas)**: el umbral es `SLOW_REQUEST_THRESHOLD_MS` y, en las rutas faciales,
-  `SLOW_REQUEST_FACE_THRESHOLD_MS` (2 500; excepción del dueño del 2026-10-06). Las rutas faciales son UNA lista,
+- **Regla 18 (peticiones lentas)**: el umbral es `SLOW_REQUEST_THRESHOLD_MS`; en las rutas faciales,
+  `SLOW_REQUEST_FACE_THRESHOLD_MS` (2 500; excepción del dueño del 2026-10-06) y en la respuesta en video de la
+  verificación por voz `SLOW_REQUEST_VOICE_THRESHOLD_MS` (8 000; `admission.VOICE_PREFIXES`, `is_voice_route`: decodifica,
+  transcribe y compara el rostro). Las rutas faciales son UNA lista,
   `admission.FACE_PREFIXES` (con la ruta completa, `is_face_route`); `slow_threshold_ms` del middleware elige el umbral
   y solo clasifica si la petición pasó el menor. Una ruta nueva que use el motor (`Pipeline`) va a esa lista:
   `tests/test_slow_requests.py` lo exige. La alerta es UNA fila por ruta en
@@ -599,8 +673,9 @@ en el README, "Observabilidad de rendimiento" (migración `0063`).
 ## 5. Resiliencia y tolerancia a fallas
 
 - **Toda espera tiene tiempo límite** (BD: `statement_timeout`, pool, conexión; colas; descargas;
-  WebSocket) y toda falla de una dependencia responde con su código (`DATABASE_UNAVAILABLE`,
-  `DATABASE_TIMEOUT`, `FACE_SERVICE_UNAVAILABLE`...), nunca un 500 opaco ni un servicio caído.
+  WebSocket; Redis: `REDIS_CONNECT_TIMEOUT_MS`/`REDIS_TIMEOUT_MS` y su cortacircuitos) y toda falla de una dependencia
+  responde con su código (`DATABASE_UNAVAILABLE`, `DATABASE_TIMEOUT`, `FACE_SERVICE_UNAVAILABLE`...), nunca un 500 opaco
+  ni un servicio caído. Redis no tiene código de error: nunca falla una petición por él (es caché con respaldo).
 - **Degradar en vez de caer**: un dato cifrado ilegible se omite y se registra (`try_decrypt`,
   `readable_embedding`); los catálogos sirven lo anterior si la BD parpadea; lo accesorio (recordar
   la cuenta, aprender del rostro) es de mejor esfuerzo y nunca hace fallar lo principal; cada tarea
@@ -727,8 +802,10 @@ scripts/db_bucket_restore_check.sh     # copia cifrada del pg_dump: subir, borra
 - Secretos solo en `.env` (nunca en el código ni en el repositorio).
 - **Ninguna imagen ni archivo se guarda en la base de datos: van cifrados al bucket; la BD solo guarda la
   referencia** (decisión del dueño del producto; README "Almacenamiento de imágenes"). Todo proceso que
-  recibe una imagen o un archivo (hoy la foto de referencia del registro facial, el comprobante de un
-  pago, la foto de perfil de una persona, la evidencia de un caso de fraude y los documentos de una empresa) es UNA
+  recibe una imagen o un archivo (hoy la foto de referencia del registro facial, la foto inicial de un registro a medias
+  —su borrador—, el comprobante de un pago, la foto de perfil de una persona, la evidencia de un caso de fraude, los
+  documentos de una empresa, los documentos de identidad del empleado (onboarding con OCR, migración `0087`) y los
+  videos de la verificación por voz del registro) es UNA
   entrada en `STORED_IMAGES` (`app/services/image_storage.py`:
   fila dueña, columnas de la referencia —objeto, tipo, tamaño, SHA-256, `*_uploaded_at`— y ruta solo con ids
   bajo `<GCS_PREFIX>/companies/<empresa>/...`; lo que es de la PERSONA y no de una empresa, con `company=None`,
@@ -744,7 +821,9 @@ scripts/db_bucket_restore_check.sh     # copia cifrada del pg_dump: subir, borra
     sus permisos.
   - **Lo que se deja de conservar sale del bucket**: `image_storage.forget(db, TIPO, fila)` (p. ej. un
     registro rechazado) o, antes de BORRAR filas con imagen (también en cascada), `image_storage.release`
-    (hoy `release_employee_images` al eliminar un empleado; `reject_pending` encola en su misma
+    (al eliminar un empleado, `release_employee_images` sus fotos y biometría y `release_employee_documents` sus
+    documentos de identidad del onboarding —que se borran DE VERDAD con la persona, regla 13: un `INSERT ... FROM SELECT`
+    que incluye también los que el empleado había eliminado de su lista—; `reject_pending` encola en su misma
     sentencia). Todo en la misma transacción; el mantenimiento (`storage_jobs`) vacía la cola.
   - **Foto de perfil** (`avatar_service`, `avatar_image`, `USER_AVATARS`; README "Foto de perfil"): es de la
     persona (`auth.user_avatars`, una fila por tamaño, y `users.avatar_version`, que viaja con la cuenta: la URL
@@ -752,12 +831,22 @@ scripts/db_bucket_restore_check.sh     # copia cifrada del pg_dump: subir, borra
     de megapíxeles, orientación EXIF, TODOS los metadatos fuera —GPS incluido—, recorte validado, 512 y 96 px
     WebP). Se sube ANTES de abrir la transacción (ninguna conexión espera al bucket; si falla a la mitad,
     `image_storage.abandon` borra lo subido) y la transacción corta bloquea la cuenta, encola la foto anterior
-    y reemplaza las referencias. Leer una foto ajena se decide en UNA consulta (`AvatarRepository.visible`): la
-    empresa solo ve a sus empleados ACTIVOS y a sus cuentas activas; el ADMIN, solo cuentas que no son de
-    empleados (nunca fotos de empleados); cualquier otra, 404 `AVATAR_NOT_FOUND` igual que sin foto. Toda ruta
+    y reemplaza las referencias. Leer una foto ajena se decide en UNA consulta (`AvatarRepository.visible`; decisión
+    del dueño, 2026-10-06, que reemplaza «el ADMIN nunca ve fotos de empleados» y «empleado inactivo sin foto»): la
+    empresa —administrador o validador, que es una cuenta de la empresa— ve a SU gente (empleados activos e inactivos,
+    validadores y administradores); el ADMIN, toda cuenta vigente; el empleado, solo la suya; lo que está en
+    «Eliminados» nunca (la condición de lo vigente viaja en las subconsultas: un empleo eliminado no le da la foto a
+    esa empresa aunque la persona siga en otra); cualquier otra, 404 `AVATAR_NOT_FOUND` igual que sin foto. Toda ruta
     que borre cuentas encola antes sus fotos (`release_user_avatars`: empleado sin otro empleo, validador,
-    empresa con sus cuentas). Un listado de la empresa que muestre personas agrega `avatar` desde la cuenta ya
-    cargada (`avatar_path`), solo de empleados activos; la API de integración y las pantallas del ADMIN no.
+    empresa con sus cuentas). **Toda referencia a una persona en una respuesta lleva `avatar`** (la ruta versionada o
+    null): `EmployeeRef` (`employee_ref`), `EmployeeRead`, `CompanyEmployeeRead`, `CompanyAdminRead`,
+    `DepartmentPerson`, `ValidatorRead`, `FaceEnrollmentRead`/`SimilarEmployee`, `CheckpointEmployee`,
+    `CheckpointEvent`, `VerificationResult`, `UserUsage` y `ErrorOccurrenceRead.user_avatar`. Sale de
+    la cuenta que la consulta YA carga (`employee_avatar`/`person_avatar` de `app/schemas/avatar.py`: el empleado trae
+    su cuenta por JOIN) o en la misma consulta; donde la página evita a propósito el JOIN con las cuentas (el tablero)
+    la versión llega en UNA consulta por llave (`UserRepository.avatar_versions`) y el presupuesto lo dice. Nunca una
+    consulta por fila (`tests/test_performance.py`). La API de integración NO la recibe: sus rutas responden
+    `IntegrationEmployee`/`IntegrationValidator` (`app/schemas/integration.py`), que la dejan fuera.
   - **Documentos de la empresa** (decisión del dueño, 2026-10-06, migración `0075`; `company_document_service`,
     `document_files`, `COMPANY_DOCUMENTS`; README "Documentos de la empresa"): el ADMIN (pantalla "Empresas",
     `/admin/companies/{id}/documents`) y la empresa (pantalla `COMPANY_DOCUMENTS`, `/documents`) usan EL MISMO servicio
@@ -777,6 +866,9 @@ scripts/db_bucket_restore_check.sh     # copia cifrada del pg_dump: subir, borra
     almacenamiento en la BD (`photo_encrypted`, `payment_receipts`) se borró con la migración `0053`.
     Jamás se agrega una columna o tabla para los bytes de una imagen o un archivo: la única columna
     binaria es la plantilla facial cifrada y `tests/test_image_storage.py` falla con cualquier otra.
+  - El estado del almacenamiento del ADMIN cuenta TODOS los tipos de `STORED_IMAGES` en una sola consulta
+    (`StorageRepository.count_stored(STORED_IMAGES, tope)`: un subconteo con tope por tipo): un tipo nuevo no agrega
+    consultas (presupuesto fijo de `/api/admin/errors/server`).
   - Sin bucket o sin llave (`GCS_BUCKET`, `GCS_CREDENTIALS_FILE`) queda apagado con un aviso al arrancar.
     La llave vive FUERA del repositorio y docker compose la monta de solo lectura.
 - Datos biométricos cifrados. El ADMIN de la plataforma solo consulta la **ficha de trabajo** de los
@@ -784,11 +876,16 @@ scripts/db_bucket_restore_check.sh     # copia cifrada del pg_dump: subir, borra
   estado, estado facial y cuánto aprendió el reconocimiento: solo cuántas muestras y cuándo). Nunca
   RFC, CURP, NSS, fecha de nacimiento, fotos ni plantillas. Única excepción (decisión D1 del dueño): los fotogramas de evidencia de un caso de fraude
   (`GET /admin/fraud-cases/{id}/evidence/{evidence_id}`, descifrados en memoria y registrados en el historial del caso).
-- **Documentos opcionales** (decisión del dueño: la plataforma se abre a otros países): RFC, CURP y NSS del
-  empleado y el RFC de la empresa. Uno nuevo usa las mismas piezas, sin copiarlas: `optional_document` en su esquema
-  (null, vacío o solo separadores = `NULL`, nunca ""; con valor, todas sus reglas), `not_captured` en su validación en
-  vivo (`EMPTY` válido, sin consultar) y, al editar, null o vacío lo borra (`OPTIONAL_DOCUMENTS`,
-  `_CLEARABLE_FIELDS`). Su único parcial admite varios `NULL` (sin migración) y restaurar solo revisa el que tiene valor.
+- **Datos opcionales** (decisiones del dueño: la plataforma se abre a otros países; «el número de empleado debe ser
+  opcional también», migración `0076`): número de empleado, RFC, CURP y NSS del empleado y el identificador fiscal de la
+  empresa. Uno nuevo usa las mismas piezas, sin copiarlas: `optional_document` en su esquema (null, vacío o solo
+  separadores = `NULL`, nunca ""; con valor, todas sus reglas), `not_captured` en su validación en vivo (`EMPTY` válido,
+  sin consultar) y, al editar, null o vacío lo borra (`OPTIONAL_FIELDS`, `_CLEARABLE_FIELDS`); sus únicos van en
+  `_UNIQUE_FIELDS` (`EmployeeRepository.unique_exists`). Su único parcial admite varios `NULL` y restaurar solo revisa el
+  que tiene valor. Si la columna era `NOT NULL`, la migración solo quita esa restricción y toda expresión que la concatena
+  (la búsqueda y su índice de trigramas) la envuelve en `coalesce` (un NULL vuelve NULL todo el texto). Todo esquema de
+  lectura que lo lleva lo declara `str | None` (compatible hacia atrás) y un mensaje que lo nombraba tiene su variante
+  sin él (`FACE_ALREADY_REGISTERED_AS_NAME`).
 - **La política de verificación de cada empresa la configura el ADMIN**
   (`/admin/companies/{id}/verification-policy`). La empresa, sus empleados y sus validadores solo la
   leen (`GET /settings/verification`, sin quién la cambió). Una regla nueva de la política se agrega
@@ -813,24 +910,128 @@ scripts/db_bucket_restore_check.sh     # copia cifrada del pg_dump: subir, borra
   vuelve a servir. La BD guarda solo el hash del token (nunca el token ni una copia cifrada).
 - **Hora del negocio**: "hoy" y los conteos diarios con `app/core/clock.py` (`business_now`,
   `business_today`, `business_day_start`; `APP_TIMEZONE` = hora del Centro), nunca la del servidor.
+- **Registro facial en un orden fijo con verificación por voz y video** (decisión del dueño, 2026-10-06; migración
+  `0079`; README «Captura facial: foto inicial, 32 fotos válidas y video con preguntas»): foto inicial validada por
+  `POST /face/check` → `FACE_ENROLL_VALID_PHOTOS` (32) fotos válidas con la prueba de vida (`POST /enrollment/face`) →
+  tres preguntas en video (`POST /enrollment/voice/answer`) → fin. Reglas que no se rodean:
+  - **Tres pasos INDEPENDIENTES y retomables, con el orden exigido por el servidor** (decisión del dueño, 2026-10-07:
+    «una opción para tomar la foto, otra para el enrolamiento y otra para tomar el video y contestar las preguntas»;
+    migración `0083`; `services/enrollment_steps.py`; README «Registro facial en tres pasos independientes»). Lo que el
+    paso anterior dejó vive en la BASE, nunca en el cliente ni en memoria (N réplicas):
+    - Paso 1, `POST /enrollment/photo` (`EnrollmentStepsService.photograph`): la validación de `/face/check`
+      (`FaceCaptureService.frontal_policy` + `analyze` + `report`, una sola implementación) y, aceptada, el BORRADOR
+      `biometrics.face_enrollment_drafts` (de empresa: RLS, `company_fk` al empleado, único `(company_id, employee_id)`:
+      uno por empleado; `ix_face_enrollment_drafts_expires` para su depuración): la foto CIFRADA en el bucket
+      (`FACE_ENROLLMENT_DRAFT_PHOTOS` en `STORED_IMAGES`) y su plantilla cifrada (`template_encrypted`, el vector, nunca
+      una imagen), vigente `FACE_ENROLLMENT_DRAFT_HOURS`. Repetirla reemplaza el borrador (objeto anterior a la cola).
+      Cierra lo leído antes de analizar (CPU sin conexión) y sube dentro de la transacción corta que escribe la fila.
+    - Paso 2, `POST /enrollment/face`: `anchor_for` exige el borrador vigente, legible y del motor actual (409
+      `ENROLLMENT_PHOTO_REQUIRED`; vencido o inservible, con la llave `ENROLLMENT_PHOTO_EXPIRED`) ANTES del reto;
+      `ensure_same_person` (CPU, tras elegir las referencias) exige la mediana de la similitud de la foto inicial con las
+      referencias ≥ `FACE_ENROLL_CONSISTENCY_THRESHOLD` (422 `ENROLLMENT_PHOTO_MISMATCH`; la foto se conserva). Al
+      aceptarlas, `hand_over` toma el borrador con UNA sentencia atómica (`FaceEnrollmentDraftRepository.take`,
+      `DELETE … RETURNING`: si otra petición lo reemplazó a la mitad, 409 y nada se guarda) y su objeto pasa a ser la foto
+      de referencia del registro (`face_enrollments.photo_*` toma su referencia en la misma inserción: NO se vuelve a
+      subir ni va a la cola).
+      El registro en persona no lleva borrador: sigue subiendo la mejor de las elegidas.
+    - Paso 3, `POST /enrollment/voice/start` (`start_voice`): una sesión sellada nueva para el registro pendiente cuantas
+      veces haga falta (409 `VOICE_NOT_PENDING`; 422 `VOICE_RETRIES_EXHAUSTED` con el tope de la base agotado). Las
+      respuestas aceptadas se conservan: `VoiceVerificationService.plan` las deja en su posición como pasadas (con sus
+      intentos) y elige al azar solo las que faltan, de otros datos; la respuesta trae solo las que faltan con `answered`
+      de `total`. El envío del paso 2 sigue devolviendo `voice` por compatibilidad con la app de un solo flujo.
+    - `GET /enrollment/progress` (`progress`): el estado de los tres pasos, derivado de lo que hay (borrador, registro
+      pendiente, sus respuestas y la política); ninguna columna de estado nueva.
+    - Un registro a medias (borrador o capturas que esperan su video) vive `FACE_ENROLLMENT_DRAFT_HOURS`: después la
+      depuración (`PURGES`: «fotos iniciales del registro facial vencidas» y «registros faciales sin terminar») lo borra
+      con sus objetos; el borrador se borra de verdad con la persona (`person_erasure` → `erase_employee` +
+      `release_employee_images`). Un paso nuevo del registro sigue este patrón: su estado en la base y su lugar en
+      `progress`, nunca en el cliente.
+  - **Las fotos no terminan el registro** cuando la política `voice_verification` está encendida (por omisión; apagarla
+    relaja: `SAFER_WHEN_ON`, regla de dos personas) y no es un registro en persona: `face_enrollments.voice_required`
+    queda en `true` y `voice_passed_at` en NULL; el empleado sigue `NOT_ENROLLED`; `FaceEnrollmentRepository.get`, `search`,
+    la bandeja, los conteos y el detalle solo ven registros TERMINADOS (`FINISHED`); un envío nuevo borra el anterior sin
+    terminar (`delete_unfinished`); el mantenimiento depura los que no terminan (`ix_face_enrollments_voice_pending`).
+  - **La sesión de preguntas viaja SELLADA** (`services/voice_questions.py`: `VoiceSession` en un token Fernet con llave
+    derivada de `DATA_ENCRYPTION_KEY`, `app/core/sealed.py` —el mismo ayudante del destello dictado—, con dueño, empresa,
+    registro y vencimiento `VOICE_SESSION_TTL_SECONDS`): ni estado en memoria ni consultas para recordarla (N réplicas);
+    lo único que vive en la base es el **tope de intentos** (`face_enrollments.voice_attempts`, UPDATE atómico), así un
+    token viejo no regala intentos. Las preguntas se eligen al azar SOLO entre los datos registrados (`eligible`:
+    nombre, fecha de nacimiento y empresa siempre; número, departamento vigente y sitios activos del turno vigente solo
+    si existen; nunca un puesto ni un dato vacío). Una pregunta nueva es un valor de `VoiceQuestion` + fila en
+    `catalog.voice_questions` con sus siete traducciones + su regla en `speech/matching.py`.
+  - **Cada respuesta se valida en orden con códigos estables y repite la MISMA pregunta** (`VoiceVerificationService.answer`):
+    sesión (`VOICE_SESSION_EXPIRED`/`INVALID`, 409 `ANSWER_ALREADY_ACCEPTED`) → registro pendiente (404) → tope
+    (`VOICE_RETRIES_EXHAUSTED`) → clip (`VIDEO_UNSUPPORTED_FORMAT`, 413 `VIDEO_TOO_LARGE` en `read_video_upload`) →
+    `ANSWER_TOO_LONG`/`TOO_SHORT`/`INAUDIBLE` → transcripción (`ANSWER_UNCLEAR`) → dato (`ANSWER_MISMATCH`, con los
+    numerales y fechas en palabras de cada idioma: `speech/numerals.py`) → rostro contra las muestras del registro
+    (`VIDEO_FACE_MISMATCH`, `FACE_VIDEO_MATCH_MARGIN`). Un rechazo cuenta un intento y devuelve `token` y `attempts_left`
+    en `details`; un 5xx (`SPEECH_SERVICE_UNAVAILABLE`, `FACE_PROCESSING_ERROR`) o el `rate limit` no cuentan. Lo que no
+    niega queda como marca del revisor (`VOICE_RETRIES`, `VIDEO_FACE_MISMATCH`), nunca como señal del motor de riesgo (el
+    registro no lo corre).
+  - **El clip aceptado va cifrado al bucket** (`ENROLLMENT_VOICE_CLIPS`, `biometrics.enrollment_voice_answers`:
+    `company_fk` al registro, único `(company_id, enrollment_id, position)`, RLS) ANTES de la transacción corta que
+    escribe la fila; vive `FACE_VIDEO_RETENTION_DAYS` (90; purga del mantenimiento), lo lee **solo la COMPANY** por
+    `GET /enrollments/{id}/voice/{answer_id}/clip` (base64 en el sobre, nunca una URL del bucket, nunca el ADMIN) y se
+    borra de verdad al eliminar al empleado (`person_erasure`), al rechazar el registro y al reemplazarlo.
+  - **Presupuestos**: `POST /api/enrollment/face` 19 consultas (las mismas con 3 que con 36 fotos; +5 por la voz; +1 por
+    leer la foto inicial antes del reto: tomarla reemplaza al UPDATE de la foto, que viaja en la inserción del registro),
+    `POST /api/enrollment/photo` 6, `GET /api/enrollment/progress` 7, `POST /api/enrollment/voice/start` 7,
+    `GET /api/enrollments/{id}` 6 (+1: las respuestas), y la ruta de voz no abre ninguna conexión mientras analiza
+    (`tests/test_face_transactions.py`). `tests/test_voice_verification.py` recorre cada código, la sesión, el tope, el
+    bucket caído, la purga, la política y el registro en persona (que no lleva voz).
 - **Toda captura facial** (registro, verificación, identificación) se arma con las piezas de
   `identity_core`: `take_challenge` (cámara real y reto, antes de analizar), `confirm_live` (prueba de
   vida, suplantación y toma única) y `match_one` (1:1); las referencias del empleado salen de
   `FaceService.references_for`. Pasa así por los candados de
-  `capture_guard` (cámara real, tiempo humano, toma única, sin fotos fijas ni reenvíos), por
+  `capture_guard` (cámara real —el nombre contra `FACE_BLOCKED_CAMERAS` por palabra completa, sin mayúsculas ni
+  acentos con `app/core/text.py::fold_text`, el ÚNICO lugar que pliega texto; también en los idiomas de los sistemas,
+  decisión D-C4—, tiempo humano, toma única, sin fotos fijas ni reenvíos), por
   `check_liveness` (destello y movimientos en orden, anti-spoofing también en cada paso) y por
   `attempt_guard` (bloqueo). Un intento sospechoso es `SuspiciousCapture`: se registra en la bitácora
   con su motivo antes de responder. Cada candado se activa por empresa en `verification_policy`; uno
   nuevo lleva su interruptor, su motivo en `verification_reasons` y su mensaje en `face_errors`.
   - La respuesta al reto llega como `LivenessResponse` (dependencia `Liveness`: `challenge_id`,
     `challenge_image` por movimiento y `flash_image` por color); ningún router lee esos campos a mano.
-  - **Movimientos** (`LivenessAction`: girar, mirar arriba/abajo, acercarse; 1 a 3, sin repetir
+  - **Movimientos** (`LivenessAction`: girar, mirar arriba/abajo, acercarse; 1 a 3 en una verificación, sin repetir
     seguidos) medidos contra las frontales de la misma toma (`pose.step_measure`, `StepTarget`). Uno
     nuevo va al `StrEnum`, a `catalog.liveness_actions` (instrucción) y a `step_measure`.
-  - **Destello de colores** (`photometry`, `check_flash`): siempre se mide; solo decide con
-    `flash_liveness = ENFORCE`. En `OBSERVE` nada del destello bloquea (ni una captura ilegible ni una
-    falla del motor: se registra y el intento sigue). Decisión del dueño: no se exige hasta calibrarlo
-    con capturas reales.
+  - **Prueba de vida COMPLETA en el registro** (decisión del dueño, 2026-10-07, migración `0082`; README «Lentes
+    permitidos, guía del rostro y prueba de vida completa del registro»): el reto del registro facial, propio y en
+    persona (`POST /face/challenge?purpose=ENROLLMENT`, `FaceCaptureService.challenge(purpose)`,
+    `identity_core.issue_challenge(enrollment=True)`), pide SIEMPRE los cuatro movimientos de la cabeza
+    (`liveness_service.ENROLLMENT_ACTIONS`: derecha, izquierda, arriba, abajo; nunca «acercarse») en orden al azar
+    (`enrollment_actions`, `secrets`), sin importar `liveness_steps` ni el refuerzo; es una constante del servidor,
+    aparte de `liveness_steps` (1 a 3, su CHECK no cambia), y `MAX_CHALLENGE_STEPS` (4) manda en las columnas de
+    `face_challenges` (`fourth_direction`) y en las capturas que acepta `liveness_response`. `EnrollmentService` rechaza
+    un reto que no sea el del registro (`is_enrollment_challenge` → 422 `LIVENESS_REQUIRED`, tras consumirlo y antes del
+    análisis): la prueba de vida del registro es completa o no es. Un validador nunca recibe ese reto (su modo decide).
+    Las pruebas de un registro piden el reto con `tests/conftest.enrollment_challenge`.
+  - **Accesorios: insignias siempre, lentes apagados por omisión** (decisión del dueño, 2026-10-07, migración `0082`):
+    `block_glasses` es un interruptor normal de la política, en `false` en toda empresa y por omisión
+    (`VerificationPolicy`, `PolicySnapshot`, `FacePolicy`), que ningún nivel predefinido enciende y que el servidor
+    respeta cuando el ADMIN lo enciende (como `block_headwear` y `block_mask`). La validación previa (`/face/check`,
+    `FaceCaptureService.precheck`) mide SIEMPRE los accesorios (`FacePolicy.report_accessories`: CLIP corre aunque no
+    haya reglas encendidas; 1 a 3 fotos) y responde `accessories` con TODOS los detectados por consenso
+    (`FaceAnalysis.accessories_detected`; `accessories_found` son solo los bloqueados), aunque la empresa no los bloquee:
+    la app los dibuja como insignias, su único aviso. Lo bloqueado sigue respondiendo 422 `ACCESSORIES_DETECTED` con sus
+    códigos en `details` (el texto «Quítate … para continuar» del catálogo sigue existiendo para la API; la app no lo
+    muestra). Lo que el detector mide son exactamente los tres códigos del catálogo (`data/clip_prompts.json`: lentes
+    y lentes de sol; gorra, sombrero, gorro, visera y casco; cubrebocas con la piel de nariz y mejillas): un accesorio
+    nuevo exige su etiqueta en CLIP con calibración, su fila en `catalog.accessories` con siete traducciones y su
+    migración; nunca se inventa uno que el detector no mide.
+  - **Destello de colores: RETIRADO de la experiencia** (decisión del dueño del producto, 2026-10-06, tras probar el
+    proceso: «aún siguen apareciendo unos pantallazos de color… eso elimínalo por completo»; migración `0080`). La
+    aplicación web ya no pinta ningún color (ni `FlashOverlay`, ni `useScreenFlash`, ni el destello dictado) y la
+    política de toda empresa queda en `flash_liveness = OFF` y `flash_paced = false` (también por omisión, también en
+    «un paso más»: OFF es OFF en todas partes). El código del servidor (`photometry`, `check_flash`, `flash_pacing`) se
+    conserva con sus pruebas por si se reconsidera, pero ninguna pantalla lo ofrece: los controles del ADMIN se muestran
+    apagados y sin cambios con la nota «Desactivado por decisión del producto», y ningún nivel predefinido lo enciende ni
+    exige sus señales (`FLASH_*`: sin destello nunca se miden). Los ataques de presentación los cubren la ráfaga
+    (continuidad, congelado, bucle, pulso), `PERSPECTIVE_FLAT`, `MOIRE_HIGH`, `NOISE_MISMATCH`, los movimientos, el reenvío
+    perceptual, la llave del dispositivo, la telemetría y la verificación por voz y video del registro; el riesgo
+    residual (una reproducción en pantalla de alta calidad) y el plan para pasar esas señales a `ENFORCE` tras calibrarlas
+    están en `docs/rd/compatibilidad-biometria.md` §7 y en el README «Destello retirado». Si alguna vez se reactiva, la
+    regla anterior sigue vigente en el servidor: se mide siempre y solo decide con `ENFORCE`.
   - **Registro con muchas fotos** (decisión del dueño, 2026-10-06; `services/enrollment_selection.py`): el registro
     (propio o en persona) recibe hasta `FACE_ENROLL_MAX_PHOTOS` (36) fotos completas y el SERVIDOR elige la plantilla.
     Reglas que se conservan: cada foto pasa las comprobaciones reales salvo CLIP (lo que no cumple se DESCARTA con su
@@ -866,7 +1067,8 @@ scripts/db_bucket_restore_check.sh     # copia cifrada del pg_dump: subir, borra
     Si el motor falla, aplica `risk_fallback_action` (solo permitir, avisar o un paso más; nunca negar a ciegas) y lo
     registra. Su lectura va en un SAVEPOINT: nunca deshace lo demás del intento.
   - **Acciones** (decisión D3): un paso más = 422 `STEP_UP_REQUIRED` con el reto nuevo en `details.challenge` (máximo
-    de movimientos y destello obligatorio; sin prueba de vida, se registra "en revisión"); en revisión = la asistencia
+    de movimientos; el destello ya no forma parte de él: se retiró el 2026-10-06; sin prueba de vida, se registra "en
+    revisión"); en revisión = la asistencia
     se guarda y su jornada queda `review_status = PENDING` (la empresa confirma o rechaza con nota, `AttendanceReview`);
     negar = `SuspiciousCapture` `RISK_DENIED`. Cada decisión queda en `ops.risk_assessments` enlazada a su bitácora y a
     sus métricas (D7).
@@ -879,12 +1081,16 @@ scripts/db_bucket_restore_check.sh     # copia cifrada del pg_dump: subir, borra
     las huellas y suma a la línea base de sus señales (`risk_signal_stats`). Ver la evidencia es la excepción
     documentada a "el ADMIN no ve biometría" (regla 13 de la raíz) y cada consulta queda en el historial.
   - **Gobierno de la política** (`policy_rules`: qué relaja; `policy_governance`, D12): todo cambio deja su historial
-    (`ops.policy_changes`, antes → después). Lo que endurece aplica al momento; lo que RELAJA queda `PENDING` hasta que
-    otro ADMIN lo apruebe (`POLICY_TWO_PERSON_RULE`; vence a las `POLICY_CHANGE_APPROVAL_HOURS` y se cancela si la
-    política cambió desde que se pidió). Los niveles Estándar/Alto/Máximo (`PRESETS`) pasan por el mismo camino:
-    Máximo exige el protocolo de captura (`FLASH_UNPACED`, `FLASH_PACE_TIMING`, `FLASH_PACE_MISMATCH`, `BURST_MISSING`)
-    y las pruebas de presencia (`validator_signing`, `validator_location`, `site_codes` en `ENFORCE`); Alto y Estándar
-    las dejan en `OBSERVE` (decisión del dueño, 2026-10-06; descripciones del catálogo en la migración `0072`). Un
+    (`ops.policy_changes`, antes → después). **Todo cambio del ADMIN aplica al momento** (decisión del dueño,
+    2026-10-06: la plataforma tiene un único ADMIN y lo que configura a una empresa se dispersa de inmediato;
+    `POLICY_TWO_PERSON_RULE=false` por omisión). Con la regla encendida (varios ADMIN), lo que RELAJA queda `PENDING`
+    hasta que otro ADMIN lo apruebe (vence a las `POLICY_CHANGE_APPROVAL_HOURS` y se cancela si la política cambió
+    desde que se pidió); sus pruebas la encienden explícitamente. Los niveles Estándar/Alto/Máximo (`PRESETS`) pasan
+    por el mismo camino:
+    Máximo exige la ráfaga (`BURST_MISSING`) y las pruebas de presencia (`validator_signing`, `validator_location`,
+    `site_codes` en `ENFORCE`); Alto y Estándar las dejan en `OBSERVE` (decisión del dueño, 2026-10-06; descripciones
+    del catálogo en las migraciones `0072` y `0080`). Ningún nivel enciende el destello ni exige sus señales (retirado el
+    2026-10-06, `0080`). Un
     cambio del motor lleva su simulación sobre los últimos `RISK_SIMULATION_DAYS` días. La política se bloquea
     (`FOR UPDATE`) al cambiarla: dos ADMIN nunca se pisan.
   - **Fase 0**: el destello mide además el cociente rostro/fondo (`FLASH_RATIO`, autocalibrado: solo endurece);
@@ -910,12 +1116,22 @@ scripts/db_bucket_restore_check.sh     # copia cifrada del pg_dump: subir, borra
       `CAPTURE_TELEMETRY_MAX_BYTES` (mal formada = `TELEMETRY_MISSING`, nunca un 422); una firma inválida =
       `DEVICE_KEY_MISSING`; sin base de IP, las señales de red no se miden. Solo las lecturas de ubicación mal formadas
       responden 422 `LOCATION_SAMPLES_INVALID` (son datos del registro, como la ubicación misma).
+    - **Lo que no se puede medir en un cliente no es sospechoso** (compatibilidad universal, decisión del dueño,
+      2026-10-06; `docs/rd/compatibilidad-biometria.md`): una señal distingue «no medible en este navegador, sistema o
+      dispositivo» de «sospechoso», y en lo primero no produce `Hit`. Hoy: el ritmo de los cuadros solo con el reloj de
+      llegada (`FrameTelemetry.clock = presentation`; el del dibujo va alineado a la pantalla), la pista de la cámara
+      por lados ordenados (en vertical va girada respecto a sus capacidades, por especificación), las lecturas
+      idénticas o de precisión redonda solo con GPS (`RISK_LOCATION_GPS_MAX_ACCURACY_M`) y el Exif de una captura solo
+      con evidencia de cámara o de editor (Safari escribe un Exif propio al codificar el lienzo). Una señal o un
+      candado nuevo que lea bytes o datos del navegador se prueba con lo que de verdad mandan Chromium, Firefox y WebKit
+      (el banco de motores del documento, §1 y §9) y su prueba dice qué ataque sigue atrapando y qué caso legítimo pasa.
     - **Costo por intento acotado**: el dispositivo cuesta 2 consultas (lectura por el prefijo `(company_id,
       key_hash)` del único y un upsert en la transacción del intento); la red, 0 (en memoria); el 1:N, 0 consultas
       mientras la galería está fresca y solo CPU después de cerrar la transacción. `LOCATION_JUMP` y `NETWORK_JUMP`
       reutilizan la MISMA lectura del registro anterior que el viaje imposible.
   - **Fase 2a** (migración `0066`, motor `1.2.0`; README "Fase 2a"): protocolo de captura de frontera.
-    - **Destello dictado por el servidor** (`services/flash_pacing.py`, política `flash_paced`): el reto no trae sus
+    - **Destello dictado por el servidor** (`services/flash_pacing.py`, política `flash_paced`; RETIRADO con el destello el
+      2026-10-06: apagado en toda empresa y sin control en la app; el mecanismo se conserva): el reto no trae sus
       colores; se revelan uno por uno por el canal en vivo (`routers/realtime.py`, mensaje `flash`) y cada captura se
       compromete con su SHA-256 dentro de `FACE_FLASH_PACE_WINDOW_MS`. El estado viaja SELLADO en un token (Fernet con una
       llave derivada de `DATA_ENCRYPTION_KEY`, también las anteriores): ni consultas ni estado en memoria (N réplicas,
@@ -955,6 +1171,16 @@ scripts/db_bucket_restore_check.sh     # copia cifrada del pg_dump: subir, borra
       también nacida en «Solo medir».
     - **Ubicación en cada identificación** (`validator_presence`): la MISMA regla del inicio de sesión
       (`location_service.check`) y, con la ubicación, las señales del lugar de la 1b (`location_context`).
+  - **Ubicación de las verificaciones** (decisión del dueño, 2026-10-07; migración `0085`; README "Verificaciones"): la
+    política `verification_location` (modos de `signal_modes`, por omisión `OBSERVE`; distinta de `validator_location`,
+    que es la presencia del validador) decide la ubicación de las TRES verificaciones (empleado `/verification/face`,
+    validador `/checkpoint/identify/*` y API `/integrations/v1/verification/*`): `OFF` no la pide, `OBSERVE` la registra
+    en `attendance.verification_logs` (`latitude`/`longitude`/`location_accuracy_m`; la empresa la ve en el mapa de
+    `GET /verifications`, pantalla `COMPANY_VERIFICATIONS`) y `ENFORCE` la EXIGE: `identity_core.ensure_verification_location`
+    responde 422 `LOCATION_REQUIRED`/`LOCATION_INVALID` ANTES del motor y del reto (no hay geocerca: solo que llegue y sea
+    precisa, `max_location_accuracy_m`). La asistencia NO pasa por ahí (su ubicación vive en `attendance_events`; se llama
+    sin `enforce_location`). El perfil del validador (`CheckpointProfile.location_required`) pide la ubicación cuando la
+    presencia del validador la requiere O `verification_location != OFF`, para que la app la envíe y alimente el mapa.
     - **Código de sitio** (`site_codes`, `kiosk_service`): TOTP con HMAC-SHA256 y el secreto del sitio CIFRADO (texto
       Fernet; nunca columna binaria ni un log); vale el periodo actual, `SITE_CODE_GRACE_WINDOWS` anteriores y el
       siguiente; un solo uso por empleado y periodo con `attendance_events.presence_window` comparado con el registro
@@ -965,6 +1191,36 @@ scripts/db_bucket_restore_check.sh     # copia cifrada del pg_dump: subir, borra
       llave de integración: plataforma por su id o hash y después solo su empresa.
     - Sin rostro no hay motor: una identificación solo con QR mide la firma y la ubicación en el log (INFO) y las exige si
       son obligatorias.
+  - **Fase 3** (migración `0081`; README "Fase 3"): monitoreo de deriva y llaves de acceso (decisión del dueño,
+    2026-10-06; el clasificador propio D5 sigue pendiente de datos reales, solo documentado en I+D §3.5). Reglas:
+    - **Deriva** (`services/drift_service.py`, reglas puras en `drift_stats.py`, bitácora en `engine_log.py`,
+      consultas en `repositories/drift_repository.py`): la calcula SOLO el mantenimiento (`_drift` en
+      `purge_expired`, una instancia a la vez) al cerrar una ventana (`DRIFT_WINDOW_DAYS`, lunes) o el ADMIN con
+      «Calcular ahora» (`POST /admin/drift/compute`, idempotente: reemplaza las filas de la ventana). Compara por
+      señal de `face_security.SIGNALS` (sin el destello retirado, `EXCLUDED_SIGNALS`) y por plataforma
+      (`core/devices.platform_of`, categoría gruesa guardada en `face_attempt_metrics.platform` al registrar el intento)
+      los intentos genuinos de la ventana con la anterior: mediana, cola (p10; p90 en un máximo con `upper=True`) y
+      PSI. UNA lectura por plataforma y ventana con todas las señales (`platform_samples`), nunca una por señal.
+      Solo mide y avisa: ninguna regla cambia un umbral ni una política aquí. **Las alertas van por el camino de los
+      respaldos**: `logger.error` con un logger estable (`app.drift.<señal>.<plataforma>`, `app.drift.company`) →
+      `ErrorLogHandler` → `ops.error_reports`; nunca un canal nuevo. Una ventana con cambio de versión incompatible
+      (`engine_log.INCOMPATIBLE`: motor de riesgo o modelos faciales) se mide pero no se compara (`VERSION_CHANGE`); una
+      versión nueva del motor (`RISK_ENGINE_VERSION`) o un modelo nuevo quedan anotados solos (`record_versions` en el
+      mantenimiento; la de la aplicación web la observa la telemetría, `observe_webapp`). Las tablas (`ops.signal_drift`,
+      `ops.engine_versions`, de la plataforma; `ops.company_fraud_weekly`, de empresa con seguridad por fila) son
+      acotadas y se depuran a `DRIFT_RETENTION_DAYS`. Una señal nueva de la calibración entra sola; una plataforma nueva
+      va a `PLATFORMS` + `platform_of` + `DriftPlatform` del esquema.
+    - **Llaves de acceso** (`services/passkey_service.py`, `repositories/passkey_repository.py`, `models/passkey.py`;
+      `webauthn==3.0.1`): el reto viaja SELLADO (`core/sealed.py`, propósito `passkey-register` / `passkey-login`,
+      `PASSKEY_CHALLENGE_TTL_SECONDS`) y se canjea UNA vez con una inserción atómica en `auth.passkey_challenges`
+      (`claim_challenge`; purga en `PURGES`): ni estado en memoria ni consultas al emitirlo. `auth.passkeys` es de la
+      PERSONA (`user_id`, sin `company_id`, como `user_avatars`); revocar es un borrado real. Entrar con una llave
+      (`POST /auth/login/passkey`) termina en el MISMO `_start_session` del login por contraseña (empresa suspendida,
+      estado del empleado, `ensure_device_*`, ubicación del validador, auditoría, `remember`): una regla nueva del inicio
+      de sesión va ahí, una sola vez. `sign_count` que no avanza = clon: se borra la llave, `logger.error` al ADMIN y 401
+      `PASSKEY_CLONED`. Rutas públicas en `PUBLIC` (`login/passkey*`) y las propias en `ANY_SESSION` de
+      `tests/test_authorization.py`; la credencial se acota (`CREDENTIAL_MAX_BYTES`) antes de verificarla; las pruebas
+      firman con `tests/passkey_support.FakeAuthenticator` (cbor2 + EC P-256), nunca con credenciales grabadas.
 - **Seguridad que se mejora sola** (`face_security`, decisión del dueño: siempre activa, tenga o no la
   empresa el aprendizaje de su galería):
   - Cada intento facial deja sus números en `ops.face_attempt_metrics` (`face_signals`: un recolector
@@ -1099,6 +1355,9 @@ scripts/db_bucket_restore_check.sh     # copia cifrada del pg_dump: subir, borra
   de pago; la manual solo la levanta el ADMIN (y da otra gracia completa, `plans.grace_until`).
 - Toda autenticación por token (HTTP y canal WebSocket) usa `SessionService.authenticate_access`:
   las mismas reglas en ambos canales.
+- Todo inicio de sesión (contraseña o llave de acceso) crea la sesión con `auth._start_session`: las reglas del
+  dispositivo, la ubicación del validador y la auditoría viven ahí una sola vez; un método nuevo de autenticación solo
+  resuelve la cuenta y lo llama.
 - Reglas del inicio de sesión por cuenta (dispositivo permitido, ubicación del validador) se aplican
   en `POST /auth/login` antes de crear la sesión (`ensure_device_allowed`, `ensure_device_authorized`,
   `ensure_location_allowed`). La llave que probó el dispositivo queda en la sesión (firma por petición, fase 2b); con la
@@ -1122,7 +1381,9 @@ scripts/db_bucket_restore_check.sh     # copia cifrada del pg_dump: subir, borra
   valor por defecto) y su fila en el README (§7). `scripts/generate_secrets.py` la toma sola de `config.py`
   (lo lee como texto, sin importarlo). Una variable que solo lee un script de arranque (`entrypoint.sh`,
   `pgbouncer/entrypoint.sh`) va con `${VAR:-valor}` en el script y en `RUNTIME` del generador con el mismo
-  valor; si la fija docker compose según la topología, en `TOPOLOGY`.
+  valor; si la fija docker compose según la topología, en `TOPOLOGY`. Un campo de `Settings` que compose fija según la
+  topología (`REDIS_HOST`, `RATE_LIMIT_BACKEND`: desde el `.env` de la raíz, vacío y `database` por omisión —Redis apagado por decisión del dueño, 2026-10-07—; `redis` con el perfil `redis`)
+  conserva en `.env` el valor que sirve SIN compose (apagado), y el README §7 lo dice.
 - `tests/test_env_files.py` es el guardián (corre sin `.env` en CI): el generador escribe cada campo y cada
   variable de los scripts una vez y nada más, con el valor del código y con comentario; el `.env` local
   tiene exactamente esas variables (sus mensajes solo nombran variables, nunca un valor).
@@ -1133,81 +1394,125 @@ scripts/db_bucket_restore_check.sh     # copia cifrada del pg_dump: subir, borra
   misma línea sirva en docker (`/app/...`) y en desarrollo. Datos descargados (la base de IP) nunca van al
   repositorio ni a la imagen: `.gitignore` y `.dockerignore` (`data/ipdb/`).
 
-## 11. Idiomas: es-MX y en-US (regla 16 de la raíz)
+## 11. Idiomas: siete idiomas (regla 16 de la raíz)
 
-Decisión del dueño del producto: todo lo que una persona lee sale en el idioma de la petición. El código vive en
-`app/i18n/`; cifras y diseño en el README, "Idiomas en el backend".
+Decisión del dueño del producto (2026-10-06): todo lo que una persona lee sale en el idioma de la petición, en
+cualquiera de los siete idiomas de la plataforma: es-MX (por omisión), en-US, pt-BR, fr-FR, de-DE, it-IT y es-ES
+(`LOCALES`). El registro de cada idioma y el glosario por término viven en `docs/i18n/glosario.md` (obligatorio al
+traducir). El código vive en `app/i18n/`; cifras y diseño en el README, "Idiomas en el backend".
 
 ### 11.1 Cómo funciona
-- **El idioma de la petición** lo resuelve UNA vez el middleware del traceId (`negotiate`: `Accept-Language` con sus pesos;
-  `es*` → es-MX, `en*` → en-US, lo demás o nada → es-MX; el canal en vivo, `?lang=` y si no la cabecera) y lo deja en una
-  `ContextVar`: `current_locale()` en cualquier capa, también en los hilos del threadpool. Fuera de una petición
-  (mantenimiento, arranque, CLI) rige es-MX. Las respuestas JSON llevan `Content-Language` y `Vary: Accept-Language`.
-- **Catálogo de mensajes** (`app/i18n/messages/es_mx/<área>.py` y `en_us/<área>.py`, las mismas áreas y llaves): llave
-  estable → texto, o sus formas de plural (`one`, `other` y, si el cero lleva otro texto, `zero`). Los datos van como
-  `{parámetros}`; `t(llave, params)` arma el texto en el idioma vigente y `Text(llave, params)` es el mismo texto diferido
-  (se traduce al leerse, p. ej. dentro de otro mensaje). Los parámetros se escriben como se acostumbra en cada idioma:
-  `date` (05/10/2026 · 10/05/2026), `DayMonth`, `time` ya en la zona del negocio (14:05 · 2:05 PM), `Megabytes` (regla
-  17), una lista (`["A", "B"]` → «A y B» · «A and B»), un `Text`; `count` elige el plural y lleva separador de miles.
+- **El idioma de la petición** lo resuelve UNA vez el middleware del traceId (`negotiate`: `Accept-Language` con sus
+  pesos; `locale_of` lleva cada etiqueta a un idioma de la API: `es-ES`, `es-EA` e `es-IC` → es-ES, cualquier otro `es*`
+  → es-MX (el español sin región y el de Hispanoamérica comparten vocabulario con México y es-MX es el idioma por
+  omisión), `en*` → en-US, `pt*` → pt-BR (también `pt-PT`: solo hay portugués de Brasil), `fr*` → fr-FR, `de*` → de-DE,
+  `it*` → it-IT; lo demás o nada → es-MX; el canal en vivo, `?lang=` y si no la cabecera) y lo deja en una `ContextVar`:
+  `current_locale()` en cualquier capa, también en los hilos del threadpool. Fuera de una petición (mantenimiento,
+  arranque, CLI) rige es-MX. Las respuestas JSON llevan `Content-Language` y `Vary: Accept-Language`.
+- **Catálogo de mensajes** (`app/i18n/messages/<idioma>/<área>.py`: `es_mx`, `en_us`, `pt_br`, `fr_fr`, `de_de`, `it_it`
+  y `es_es`, las mismas áreas y llaves): llave estable → texto, o sus formas de plural (`one`, `other` y, si el cero
+  lleva otro texto, `zero`). **`es_es` deriva de `es_mx`**: cada módulo define `OVERRIDES` (solo las llaves cuyo texto
+  cambia en España, glosario §3) y `MESSAGES = {**es_mx.<área>.MESSAGES, **OVERRIDES}` (regla 6: el español común no se
+  duplica). Los datos van como `{parámetros}`; `t(llave, params)` arma el texto en el idioma vigente y `Text(llave,
+  params)` es el mismo texto diferido (se traduce al leerse, p. ej. dentro de otro mensaje). Los parámetros se escriben
+  como se acostumbra en cada idioma (`app/i18n/render.py`, las mismas convenciones que `Intl` en la aplicación web):
+  `date` (05/10/2026 en es, pt, fr, it · 10/05/2026 en en-US · 05.10.2026 en de-DE), `DayMonth` (05/10 · 10/05 · 05.10.),
+  `time` ya en la zona del negocio (14:05 en todos salvo en-US, 2:05 PM), `Megabytes` (regla 17), una lista
+  (`["A", "B"]` → «A y B» · «A and B» · «A e B» · «A et B» · «A und B», con las llaves `LIST_PAIR`/`LIST_SERIES` de cada
+  idioma), un `Text`; `count` elige el plural con la regla CLDR del idioma (`_ZERO_IS_ONE`: en pt-BR y fr-FR el cero es
+  `one`) y lleva el separador de miles del idioma (`format_count`: 1,234 · 1.234 · 1 234 · 1234 pero 12.345 en it-IT y
+  es-ES).
 - **Errores**: `raise NotFoundError(code="EMPLOYEE_NOT_FOUND")`; con datos, `params={...}`; si el mismo código tiene
-  varias frases, `key="OTRA_LLAVE"` (el código no cambia). El mensaje se arma al responder (`exc.message`). El argumento
-  `message` solo recibe un texto YA traducido (de un catálogo de la BD, p. ej. `get_catalogs().face_error_message(...)`,
-  o de `t()`), nunca uno escrito a mano. `ok(data, code="X", params=...)` igual.
+  varias frases, `key="OTRA_LLAVE"` (el código no cambia). El mensaje se arma al responder, en cada idioma (`exc.text`,
+  §11.6). El argumento `message` solo recibe un texto DIFERIDO (`LazyText`): el de un catálogo de la BD con su función
+  de `catalog_service` (`face_error_text(code)`, `reason_text(code)`, `session_text(reason)`, `catalog_name_text(...)`)
+  o el `Text` de una regla (`LocalizedValueError.text`); nunca una cadena ya armada (`t()`, `str(...)`,
+  `get_catalogs()...`): diría lo mismo en todos los idiomas. `ok(data, code="X", params=...)` igual; un resultado que le
+  explica algo a la persona (`Explained`: verificación, asistencia) se construye con `message=Text(...)` y responde
+  `ok(result, result.text, ...)`.
+- **Un parámetro es un dato o un texto diferido**: un nombre de un catálogo de la BD dentro de un mensaje (el país, el
+  tipo de ausencia, el modo del validador) va con `catalog_name_text(catálogo, código)`, nunca con
+  `get_catalogs().name(...)` (ya armado en un idioma); `t()` arma un `Text` o una función de un parámetro en el idioma
+  del mensaje que lo lleva.
 - **Validación de Pydantic (422)**: cada tipo de error tiene su mensaje (`app/core/validation_errors.py`, llaves
   `INPUT_*`); una regla propia lanza `LocalizedValueError("LLAVE", params)` (es un `ValueError`: `str(error)` también sale
   traducido, p. ej. en la validación en vivo). El código del error no cambia (`VALUE_ERROR`, `MISSING`...).
 - **Catálogos de la BD**: el español en las columnas de cada catálogo (`alembic/seed/catalogs.json`); los demás idiomas
-  en `catalog.translations` (`alembic/seed/catalogs.<idioma>.json`, migración `0064`). `get_catalogs()` entrega la
-  instantánea del idioma de la petición (una por idioma en la misma caché: cero consultas por petición).
+  en `catalog.translations` (`alembic/seed/catalogs.<idioma>.json`, uno por idioma de `TRANSLATION_LOCALES`: en-US desde
+  la migración `0064`; pt-BR, fr-FR, de-DE, it-IT y es-ES desde la `0078`, que amplió el CHECK `locale` e insertó sus
+  filas). `catalogs.es-ES.json` es completo (una fila por texto e idioma) aunque solo cambie el vocabulario de España.
+  `get_catalogs()` entrega la instantánea del idioma de la petición (una por idioma en la misma caché: cero consultas
+  por petición).
 - **Textos que el sistema guarda** para que alguien los lea después: `stored("LLAVE", params)` en la columna y
   `StoredText` (o `read_stored`) en el esquema de lectura; se traducen al leerse, en el idioma de quien lee. Lo que
   escribe una persona es un dato y se muestra tal cual.
+- **Nunca se mezclan idiomas y todo el idioma es en caliente** (decisión del dueño del producto: «no mezcles el spanish
+  con el english… todo el idioma debe ser en caliente»): ningún texto sale en un idioma distinto del pedido, tampoco uno
+  anidado (un nombre de catálogo dentro de un mensaje) ni uno escrito en el código (un `label=`, un motivo: van al
+  catálogo de mensajes), y el sobre lleva cada texto en cada idioma (§11.6) para que la aplicación web cambie de idioma
+  sin recargar ni repetir peticiones.
 
 ### 11.2 Agregar un mensaje (en el mismo cambio, sin excepción)
 1. Llave en MAYÚSCULAS y estable (el código del error o de la respuesta si es uno a uno; si no, una llave propia que diga
    qué es). Nunca se reutiliza una llave para otro sentido ni se cambia la de un mensaje que ya existe.
-2. Su texto en `app/i18n/messages/es_mx/<área>.py` y en `app/i18n/messages/en_us/<área>.py` (misma área, mismos
-   `{parámetros}`, mismas formas de plural), en orden alfabético. Inglés natural de Estados Unidos con los mismos
-   términos que la aplicación web (`webapp-employee-time-clock/src/i18n/locales/en-US/`: *sign in*, *check in*,
-   *workday*, *site*, *validator*, *face enrollment*, *liveness check*, *leave*, *sick leave*...).
+2. Su texto en `app/i18n/messages/es_mx/<área>.py` y en el mismo módulo de CADA uno de los otros seis idiomas (misma
+   área, mismos `{parámetros}`, mismas formas de plural), en orden alfabético; en `es_es` solo si su texto cambia
+   (`OVERRIDES`). Cada idioma con su registro y el glosario de `docs/i18n/glosario.md` y los mismos términos que la
+   aplicación web (`webapp-employee-time-clock/src/i18n/locales/<idioma>/`: *sign in*, *check in*, *workday*, *site*,
+   *validator*, *face enrollment*, *liveness check*; «registrar entrada», «pointer», «einstempeln», «timbrare»,
+   «fichar»...).
 3. En el código: `code=`/`key=`/`params=` (o `t()`/`Text()`/`LocalizedValueError`); nada de f-strings ni concatenar
    texto. Un plural, con `params={"count": n}` (nunca "empleado(s)").
-4. `tests/test_i18n.py` falla si los idiomas difieren, si una llave que el código nombra no existe, si una sobra o si un
-   error o `ok(...)` lleva un texto escrito a mano; las pruebas corren en modo estricto (`strict(True)`): una llave o un
-   parámetro faltante hace fallar la prueba que lo arma (en producción se registra como error del sistema).
-5. Ortografía: `./scripts/quality.sh --only=backend` corre cspell sobre los dos idiomas (§11.4).
+4. `tests/test_i18n.py` falla si algún idioma difiere de es-MX, si una llave que el código nombra no existe, si una
+   sobra o si un error o `ok(...)` lleva un texto escrito a mano; las pruebas corren en modo estricto (`strict(True)`):
+   una llave o un parámetro faltante hace fallar la prueba que lo arma (en producción se registra como error del
+   sistema).
+5. Ortografía: `./scripts/quality.sh --only=backend` corre cspell sobre los siete idiomas (§11.4).
 
 ### 11.3 Agregar un texto de un catálogo (registro nuevo o columna de texto nueva)
-1. El registro con su texto en español en `alembic/seed/catalogs.json` y su traducción en
-   `alembic/seed/catalogs.en-US.json` (`{catálogo: {código: {columna: texto}}}`): cada columna de texto con valor
-   (`name`, `description`, `message`, `phrase`, `instruction`, `employee_note`, `short_name`) lleva la suya, con los
-   mismos `{marcadores}` y sin pasar del largo de su columna.
-2. La migración nueva que agrega el registro inserta también su fila en `catalog.translations` (la `0064` solo cargó los
-   registros que existían entonces). Cambiar un texto en inglés = migración que actualiza su fila. Un **catálogo nuevo**
-   (una tabla que crea una migración, p. ej. `tax_id_types` en `0074`) se puede agregar: su migración crea la tabla y
-   carga sus registros y sus traducciones; `0064` salta las tablas que aún no existen en una base nueva (`to_regclass`,
-   corregida con la `0074`).
+1. El registro con su texto en español en `alembic/seed/catalogs.json` y su traducción en CADA
+   `alembic/seed/catalogs.<idioma>.json` de `TRANSLATION_LOCALES` (`{catálogo: {código: {columna: texto}}}`; también en
+   `catalogs.es-ES.json`, aunque el texto sea el mismo): cada columna de texto con valor (`name`, `description`,
+   `message`, `phrase`, `instruction`, `employee_note`, `short_name`) lleva la suya, con los mismos `{marcadores}` y sin
+   pasar del largo de su columna.
+2. La migración nueva que agrega el registro inserta también sus filas en `catalog.translations`, una por idioma (la
+   `0064` y la `0078` solo cargaron los registros que existían entonces). Cambiar un texto traducido = migración que
+   actualiza su fila. Un **catálogo nuevo** (una tabla que crea una migración, p. ej. `tax_id_types` en `0074`) se puede
+   agregar: su migración crea la tabla y carga sus registros y sus traducciones; `0064` y `0078` saltan las tablas que
+   aún no existen en una base nueva (`to_regclass`).
 3. Una columna de texto nueva: su nombre en `TRANSLATED_FIELDS` (`app/models/catalog.py`) y en el CHECK `field` de
-   `catalog.translations` (migración). Un idioma nuevo: su valor en `LOCALES` (`app/i18n/locale.py`),
-   `TRANSLATION_LOCALES` y el CHECK `locale`, su paquete de mensajes, su archivo de catálogos y su configuración de cspell.
-4. `tests/test_i18n.py` verifica que cada texto de cada registro tenga su traducción (y ninguna sobre);
+   `catalog.translations` (migración). Un idioma nuevo (`docs/i18n/glosario.md` §7): su valor en `Locale` y `LOCALES`
+   (`app/i18n/locale.py`), su etiqueta en `locale_of`, sus formatos en `render.py`, `TRANSLATION_LOCALES` y el CHECK
+   `locale` (migración como la `0078`: amplía el CHECK e inserta las filas de su archivo), su paquete de mensajes, su
+   archivo de catálogos, su `Locale` en `app/schemas/user.py` y su configuración de cspell.
+4. `tests/test_i18n.py` verifica que cada texto de cada registro tenga su traducción en cada idioma (y ninguna sobre);
    `./scripts/quality.sh --postgres` compara los registros de la base migrada con los de los modelos.
 
 ### 11.4 Ortografía (cspell)
-- `backend-employee-time-clock/cspell.json` revisa el catálogo de mensajes y los textos de los dos archivos de catálogos:
-  es-MX solo contra el diccionario de español y en-US solo contra el de inglés de Estados Unidos. Usa la instalación de
-  cspell, el diccionario de español y las listas de palabras revisadas de la aplicación web
-  (`webapp-employee-time-clock/cspell-words*.txt`: comunes, solo español, solo inglés); no se duplican. Revisa solo los
-  textos (no llaves, códigos, `{marcadores}`, comentarios, docstrings, rutas, `identificadores` entre comillas
-  invertidas ni ejemplos de documentos como `PEGJ900515AB1`).
+- `backend-employee-time-clock/cspell.json` revisa el catálogo de mensajes de los siete idiomas y los textos de los siete
+  archivos de catálogos, cada idioma SOLO contra su diccionario (es_mx y es_es con el de español, en_us con el de inglés
+  de Estados Unidos, pt_br, fr_fr, de_de e it_it con el suyo). Usa la instalación de cspell, los diccionarios y las
+  listas de palabras revisadas de la aplicación web (`webapp-employee-time-clock/cspell-words.txt` común y
+  `cspell-words.<idioma>.txt` por idioma); no se duplican. Revisa solo los textos (no llaves, códigos, `{marcadores}`,
+  comentarios, docstrings, rutas, `identificadores` entre comillas invertidas ni ejemplos de documentos como
+  `PEGJ900515AB1`).
 - Correrlo: `./scripts/quality.sh --only=backend` (sección "ortografía"), o directo desde
   `backend-employee-time-clock/`: `../webapp-employee-time-clock/node_modules/.bin/cspell --no-progress`.
 - Una palabra desconocida se corrige; solo si está bien escrita se agrega a la lista de su idioma (o a la común si es
-  igual en los dos: nombres propios, siglas, marcas), con un comentario de por qué.
+  igual en todos los idiomas: nombres propios, siglas, marcas), con un comentario de por qué.
+- **ESTRICTA** (decisión del dueño del producto: «no mezcles el spanish con el english»): `loadDefaultConfiguration:
+  false` (los diccionarios de programación que cspell carga por omisión dejaban pasar «token», «app» o «Save» en un texto
+  en español) y la marca «Employee Time Clock» solo como frase completa (la única excepción entre idiomas).
+- **Palabras de otro idioma**: `webapp-employee-time-clock/src/i18n/backendLanguage.test.ts` revisa los mismos textos
+  (mensajes y catálogos de los siete idiomas) con el revisor estricto de la app: una palabra que el idioma no conoce
+  falla, y si la conoce otro de los idiomas se señala como tal («spoofing», «embedding», «morphing», «token» o «app» en
+  español). Se reescriben en su idioma («detección de suplantación», «vector facial», «rostro combinado», «sesión»,
+  «aplicación»); un texto de un catálogo, con su migración (§11.3). Ninguna lista propia admite una palabra del inglés
+  (`foreignWordsInList`).
 
 ### 11.5 Estilo de los textos (mensajes simples pero profesionales)
 Decisión del dueño del producto: los `message` y `errors[].message` que la app muestra en sus popups siguen el mismo
-estilo que la aplicación web (`webapp-employee-time-clock/AGENTS.md` §7.6), en los dos idiomas:
+estilo que la aplicación web (`webapp-employee-time-clock/AGENTS.md` §7.6), en los siete idiomas:
 - **Error**: qué pasó y qué hacer, una frase corta cada uno: «Tu sesión ya no es válida. Inicia sesión de nuevo.».
   «No se pudo…» (nunca «No fue posible», «No pudimos»), «Intenta de nuevo.» (nunca «nuevamente»); en inglés,
   "Couldn't …", "Try again." (sin "Please").
@@ -1220,3 +1525,39 @@ estilo que la aplicación web (`webapp-employee-time-clock/AGENTS.md` §7.6), en
 - No cambian por estilo: llaves, `{parámetros}`, formas de plural, códigos ni el sentido de una regla. Los textos de
   los catálogos de la BD siguen la misma guía; cambiarlos requiere una migración que actualice sus filas y las de
   `catalog.translations` (§11.3).
+
+### 11.6 El sobre en cada idioma (`i18n`) y su guardián (`tests/test_api_language.py`)
+- **Contrato (regla 3 de la raíz)**: `i18n = {"es-MX": {message, errors, texts}, "en-US": {...}, "pt-BR": {...},
+  "fr-FR": {...}, "de-DE": {...}, "it-IT": {...}, "es-ES": {...}}`, una entrada por idioma de `LOCALES` en ese orden: `errors[i]` es `errors[i].message` en ese idioma y la entrada del idioma de la
+  petición es idéntica a `message`/`errors[].message`. **Solo donde hace falta**: en TODO sobre de error (4xx/5xx, de
+  cualquier capa: rutas, manejadores, middlewares —seguridad, admisión, el 500 del traceId—, salud) y en lo que no se
+  puede volver a pedir (una escritura —POST, PUT, PATCH, DELETE— y cada mensaje del canal en vivo). En una lectura
+  exitosa (listados y detalles: casi todo el tráfico) es `null` y no se arma (la aplicación web la vuelve a pedir al
+  cambiar el idioma). `texts`: los textos del catálogo de mensajes que se armaron para `data` (`t()` de primer nivel: el
+  resultado de un registro, el motivo de cada empleado de una operación masiva, un `StoredText`), mismo largo y orden en
+  cada idioma, sin repetidos y a lo más `RECORDED_MAX` (200); vacío sin `data`. Nada más cambia con el idioma (códigos,
+  `data`, estado, cabeceras).
+- **Tamaño (regla 17, en MB) y más idiomas**: crece con el número de idiomas solo en esas respuestas. Medido en
+  `tests/test_envelope.py::test_the_i18n_block_is_small` con los siete idiomas: un 422 con tres campos lleva
+  0.000931 MB (0.000133 MB por idioma; un 409 con un solo error, 0.001142 MB), por debajo del tope de 0.0015 MB que exige la prueba, y el costo de armarlo son búsquedas en diccionarios. Un idioma nuevo no cambia el mecanismo
+  (§11.3: su valor en `LOCALES`, su paquete de mensajes y su archivo de catálogos).
+- **Cómo se arma (UN mecanismo)**: los constructores (`app/core/responses.py`: `ok`, `envelope_body`,
+  `envelope_response`; `error_response` en `app/core/exceptions.py`) reciben el texto diferido (`LazyText` = `Text` o
+  una función que lo arma, `app/i18n/render.py`) y los errores como función (`LazyErrors`, `single_error`); `localize`
+  los arma una vez por idioma con `use_locale` (búsquedas en diccionarios: los catálogos de la BD salen de la instantánea
+  de cada idioma, sin consultas). `texts`: el middleware del traceId enciende la anotación en una petición que cambia
+  algo (`start_recording`) y el canal en cada mensaje (`recording_texts`); `t()` anota la llave y los datos, y `localize`
+  los vuelve a armar en cada idioma. `note_error` (regla 4) se anota una sola vez, con el texto del idioma de la
+  petición.
+- **El guardián** (`tests/test_api_language.py`, decisión: por PROCEDENCIA y no por ortografía): cada texto debe salir
+  de los catálogos del idioma que dice (exacto, o una plantilla del catálogo de mensajes con sus `{parámetros}` como
+  comodines; una plantilla solo de parámetros exige que sus partes de texto también lo sean). Recorre TODAS las rutas de
+  `API_ROUTERS` con el rol permitido en CADA idioma de `LOCALES` (con los datos de la empresa con todo tipo de datos de
+  `test_tenant_isolation`), los errores de cada capa y el canal en vivo; revisa `message`, `errors`, cada entrada de
+  `i18n` y que nada en `data` ni en `errors[].details` sea un texto conocido SOLO de otro idioma (`OTHERS`: los otros
+  seis). Un texto que no está en
+  ningún catálogo (escrito en el código) no se puede atribuir: por eso nada se escribe en el código (§11.2) y lo que el
+  sistema muestra va al catálogo de mensajes.
+- **Una ruta, error o texto nuevo** no necesita nada más: el guardián la recorre solo. Si falla, se corrige en su origen
+  (el texto al catálogo, el parámetro diferido, la traducción de la BD con su migración §11.3); nunca se agrega una
+  excepción al guardián.

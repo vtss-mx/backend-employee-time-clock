@@ -4,14 +4,14 @@ Lo usan el canal WebSocket de validación, el endpoint HTTP de respaldo y el alt
 empleados (la regla y los mensajes viven en un solo lugar).
 """
 
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass, fields
 from typing import Any, Literal, cast
 
 from sqlalchemy.orm import Session
 
-from app.i18n import t
-from app.repositories.employee_repository import EmployeeRepository, UniqueDocument
-from app.schemas.employee import OPTIONAL_DOCUMENTS
+from app.i18n import LazyText, Text, error_text, render_text
+from app.repositories.employee_repository import EmployeeRepository, UniqueField
+from app.schemas.employee import OPTIONAL_FIELDS
 from app.schemas.validators import (
     is_blank_document,
     normalize_curp,
@@ -40,11 +40,8 @@ _AVAILABLE = {
     "phone": "PHONE_AVAILABLE",
 }
 _TAKEN = {"employee_number": NUMBER_TAKEN, "rfc": RFC_TAKEN, "curp": CURP_TAKEN, "nss": NSS_TAKEN}
-_EMPTY = {
-    "employee_number": "EMPLOYEE_NUMBER_REQUIRED",
-    "email": "EMAIL_REQUIRED",
-    "phone": "PHONE_REQUIRED",
-}
+#: Los obligatorios (los demás son `OPTIONAL_FIELDS`: vacíos no se consultan).
+_EMPTY = {"email": "EMAIL_REQUIRED", "phone": "PHONE_REQUIRED"}
 
 
 @dataclass(frozen=True)
@@ -56,21 +53,28 @@ class Availability:
     valid: bool
     available: bool
     #: AVAILABLE | LINKABLE (persona de otra empresa: se vincula) | TAKEN | INVALID_FORMAT | EMPTY (vacío: en un dato
-    #: obligatorio no es válido; en uno opcional —RFC, CURP, NSS, identificador fiscal de la empresa— es válido y no se
-    #: consulta nada)
+    #: obligatorio no es válido; en uno opcional —número de empleado, RFC, CURP, NSS, identificador fiscal de la
+    #: empresa— es válido y no se consulta nada)
     code: str
-    #: Para la persona, en el idioma de la petición.
-    message: str
+    #: Para la persona, diferido: `message` (en `data`) sale en el idioma de la petición y el sobre lo arma en cada
+    #: idioma (`ok(result.as_dict(), result.text)`; el canal en vivo igual).
+    text: LazyText
+
+    @property
+    def message(self) -> str:
+        return render_text(self.text)
 
     def as_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        """El resultado para `data`: sus campos y `message` en el idioma de la petición."""
+        data = {item.name: getattr(self, item.name) for item in fields(self) if item.name != "text"}
+        return {**data, "message": self.message}
 
 
 def not_captured(field: str, value: str) -> Availability:
-    """Un documento opcional vacío (RFC, CURP y NSS del empleado; identificador fiscal de la empresa): válido, no
+    """Un dato opcional vacío (número, RFC, CURP y NSS del empleado; identificador fiscal de la empresa): válido, no
     impide guardar y no se consulta nada. Una sola regla y un solo mensaje para todos («Opcional: puede quedar
     vacío»)."""
-    return Availability(field, value, None, True, True, "EMPTY", t("DOCUMENT_OPTIONAL"))
+    return Availability(field, value, None, True, True, "EMPTY", Text("DOCUMENT_OPTIONAL"))
 
 
 class AvailabilityService:
@@ -86,23 +90,23 @@ class AvailabilityService:
         """`related`: al validar el teléfono en un alta, el correo escrito (deben ser de la misma
         persona si ya trabaja en otra empresa)."""
         raw = (value or "").strip()
-        if field in OPTIONAL_DOCUMENTS and is_blank_document(raw):  # opcional: sin capturar no hay nada que verificar
+        if field in OPTIONAL_FIELDS and is_blank_document(raw):  # opcional: sin capturar no hay nada que verificar
             return not_captured(field, value)
         if not raw:
-            return Availability(field, value, None, False, False, "EMPTY", t(_EMPTY[field]))
+            return Availability(field, value, None, False, False, "EMPTY", Text(_EMPTY[field]))
         try:
             normalized = self._normalize(field, raw)
         except ValueError as exc:
-            return Availability(field, value, None, False, False, "INVALID_FORMAT", str(exc))
+            return Availability(field, value, None, False, False, "INVALID_FORMAT", error_text(exc))
         if field in ("email", "phone"):
             check = self._account_check(field, normalized, exclude_employee_id, related)
-            message = check.message or t(_AVAILABLE[field])
+            text = check.text or Text(_AVAILABLE[field])
             usable = check.match in ("AVAILABLE", "LINKABLE")
-            return Availability(field, value, normalized, True, usable, check.match, message)
+            return Availability(field, value, normalized, True, usable, check.match, text)
         taken = self._exists(field, normalized, exclude_employee_id)
         code = "TAKEN" if taken else "AVAILABLE"
-        message = t(_TAKEN[field] if taken else _AVAILABLE[field])
-        return Availability(field, value, normalized, True, not taken, code, message)
+        text = Text(_TAKEN[field] if taken else _AVAILABLE[field])
+        return Availability(field, value, normalized, True, not taken, code, text)
 
     @staticmethod
     def _normalize(field: Field, value: str) -> str:
@@ -119,9 +123,7 @@ class AvailabilityService:
         return normalize_email(value)
 
     def _exists(self, field: Field, value: str, exclude_employee_id: int | None) -> bool:
-        if field == "employee_number":
-            return self.employees.number_exists(value, exclude_id=exclude_employee_id)
-        return self.employees.unique_exists(cast(UniqueDocument, field), value, exclude_id=exclude_employee_id)
+        return self.employees.unique_exists(cast(UniqueField, field), value, exclude_id=exclude_employee_id)
 
     def _account_check(
         self, field: Field, value: str, exclude_employee_id: int | None, related: str | None = None

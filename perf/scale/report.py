@@ -179,6 +179,17 @@ def main() -> None:
         *deploy_lines(folder, "rolling"),
         "",
     ]
+    redis = folder / "redis.txt"
+    redis_text = redis.read_text().strip() if redis.exists() else "(sin datos)"
+    report += ["", "## 7. Caché compartida (Redis)", "", "```", redis_text, "```"]
+    # Memoria por réplica (docker stats al final de cada etapa de carga): lo que cuesta cada instancia.
+    stats = sorted(folder.glob("load-*.stats"))
+    if stats:
+        report += ["", "## Memoria por réplica (docker stats, al final de cada etapa)", "", "```"]
+        for path in stats:
+            usage = [line.split()[2] for line in path.read_text().splitlines() if line.strip()]
+            report.append(f"{path.stem}: " + " · ".join(usage))
+        report += ["```"]
     (folder / "report.md").write_text("\n".join(report))
     print("\n".join(report))
 

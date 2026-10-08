@@ -286,9 +286,11 @@ def test_admin_sees_the_employees_of_a_company_paginated_and_read_only(
         "phone",
         "active",
         "face_status",
-        "face_learned_samples",  # solo cuántas y cuándo: nunca fotos ni plantillas
+        "face_learned_samples",  # solo cuántas y cuándo: nunca fotos del registro facial ni plantillas
         "face_last_learned_at",
+        "avatar",  # su foto de PERFIL (decisión del dueño, 2026-10-06: el ADMIN ve la de todos); null sin foto
     }
+    assert item["avatar"] is None
     found = client.get(url, params={"search": "ana@"}, headers=admin_headers).json()["data"]
     assert [e["email"] for e in found["items"]] == ["ana@empresa.com"]
     assert client.get(url, params={"active": False}, headers=admin_headers).json()["data"]["total"] == 0

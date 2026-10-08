@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 
 from app.core.admission import admission
+from app.core.cache import shared_cache
 from app.core.config import settings
 from app.core.database import (
     platform_session,
@@ -28,6 +29,7 @@ from app.middleware.request_id import register_request_id_middleware
 from app.middleware.security import register_security_middlewares
 from app.routers import (
     admin,
+    admin_drift,
     admin_errors,
     admin_face_security,
     admin_fraud,
@@ -41,10 +43,12 @@ from app.routers import (
     client_errors,
     company_documents,
     departments,
+    employee_documents,
     employees,
     enrollments,
     face,
     health,
+    integration_verification,
     integrations,
     kiosk,
     performance,
@@ -57,6 +61,7 @@ from app.routers import (
     validation,
     validators,
     verification,
+    verifications,
 )
 from app.routers import settings as settings_router
 from app.services.bootstrap import ensure_first_admin, ensure_first_company
@@ -164,6 +169,9 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         logger.error("No se pudieron cargar los modelos faciales (se reintentará bajo demanda): %s", exc)
     # Almacenamiento de imágenes: dice UNA vez si copia al bucket o por qué está apagado (sin red).
     get_storage()
+    # Caché compartida entre réplicas (Redis): dice UNA vez dónde está o que está apagada (sin red: la primera
+    # operación real la hace la primera petición y, si no responde, el cortacircuitos lo registra).
+    cache = shared_cache()
     # Depuración de lo vencido en segundo plano (fuera de las peticiones; una instancia a la vez).
     scheduler = (
         MaintenanceScheduler(settings.MAINTENANCE_INTERVAL_SECONDS) if settings.MAINTENANCE_INTERVAL_SECONDS else None
@@ -181,6 +189,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         perf.stop()  # guarda el rendimiento y las peticiones lentas pendientes
     if flusher:
         flusher.stop()  # guarda lo pendiente antes de apagar
+    cache.close()  # el pool de Redis, ya sin nadie que lo use
 
 
 app = FastAPI(
@@ -195,10 +204,12 @@ app = FastAPI(
         "access token (rotación con detección de reutilización). `POST /api/auth/logout` cierra la "
         "sesión y la revoca de inmediato.\n\n"
         "**Contrato de respuesta**: todas las respuestas tienen `success`, `statusCode`, `code`, "
-        "`message`, `data`, `errors`, `traceId` y `timestamp`.\n\n"
+        "`message`, `data`, `errors`, `i18n`, `traceId` y `timestamp`.\n\n"
         "**Idioma**: los textos (`message`, `errors[].message` y los de los catálogos) salen en el idioma de "
         "`Accept-Language` (`es-MX` por omisión o `en-US`; el canal en vivo, `?lang=`); la respuesta lo dice en "
-        "`Content-Language`. Los códigos (`code`) son los mismos en los dos idiomas."
+        "`Content-Language`. Los códigos (`code`) son los mismos en los dos idiomas. `i18n` lleva `message`, "
+        "`errors[].message` y los textos de `data` de un POST, PUT, PATCH o DELETE (`texts`) en CADA idioma: la app "
+        "cambia de idioma un aviso abierto sin repetir la petición."
     ),
     swagger_ui_parameters={"persistAuthorization": True, "displayRequestDuration": True, "filter": True},
     lifespan=lifespan,
@@ -235,6 +246,7 @@ API_ROUTERS = (
     admin_errors.router,
     admin_face_security.router,
     admin_fraud.router,
+    admin_drift.router,
     users.router,
     employees.router,
     departments.router,
@@ -243,12 +255,14 @@ API_ROUTERS = (
     settings_router.router,
     realtime.router,
     verification.router,
+    verifications.router,
     validators.router,
     checkpoint.router,
     catalogs.router,
     validation.router,
     api_keys.router,
     integrations.router,
+    integration_verification.router,
     sites.router,
     shifts.router,
     attendance.company_router,
@@ -259,6 +273,8 @@ API_ROUTERS = (
     billing.router,
     company_documents.admin_router,
     company_documents.router,
+    employee_documents.router,
+    employee_documents.company_router,
     usage.router,
     performance.router,
     telemetry.router,

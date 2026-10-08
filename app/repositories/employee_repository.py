@@ -11,7 +11,8 @@ from app.models.employee import employee_search_text
 from app.repositories.aggregates import affected_rows, get_scoped, paginate, trash_page
 from app.repositories.search import contains_text, search_term
 
-UniqueDocument = Literal["rfc", "curp", "nss"]
+#: Datos únicos del empleado dentro de su empresa (todos opcionales: sin capturar no se consulta).
+UniqueField = Literal["employee_number", "rfc", "curp", "nss"]
 
 
 class EmployeeRepository:
@@ -34,6 +35,11 @@ class EmployeeRepository:
         `include_deleted`: también uno en «Eliminados» (su detalle, eliminarlo y restaurarlo)."""
         # FOR UPDATE OF employees: el usuario y la empresa se cargan con LEFT JOIN (no se bloquean).
         return get_scoped(self.db, Employee, employee_id, self.company_id, lock=lock, include_deleted=include_deleted)
+
+    def get_by_number(self, employee_number: str) -> Employee | None:
+        """El empleado vigente con ese número en la empresa (la API pública de verificación lo acepta en lugar del id).
+        Va por el único parcial `uq_employees_company_number` (empresa + número, solo lo vigente)."""
+        return self.db.scalar(select(Employee).where(self._scoped(), Employee.employee_number == employee_number))
 
     def by_ids(self, employee_ids: set[int]) -> dict[int, Employee]:
         """Varios empleados de la empresa en una consulta (p. ej. para nombrar una bitácora). Resuelve referencias
@@ -71,13 +77,9 @@ class EmployeeRepository:
     def count(self) -> int:
         return int(self.db.scalar(select(func.count()).select_from(Employee).where(self._scoped())) or 0)
 
-    # Número, RFC, CURP y NSS se guardan normalizados: la igualdad directa usa su índice único
-    # (company_id, campo).
-    def number_exists(self, employee_number: str, exclude_id: int | None = None) -> bool:
-        return self._exists(Employee.employee_number == employee_number.upper(), exclude_id)
-
-    def unique_exists(self, field: UniqueDocument, value: str, exclude_id: int | None = None) -> bool:
-        """RFC, CURP o NSS ya registrado en otro empleado de la empresa."""
+    def unique_exists(self, field: UniqueField, value: str, exclude_id: int | None = None) -> bool:
+        """Número, RFC, CURP o NSS ya registrado en otro empleado vigente de la empresa. Se guardan normalizados: la
+        igualdad directa usa su índice único parcial (company_id, campo)."""
         return self._exists(getattr(Employee, field) == value.upper(), exclude_id)
 
     def _exists(self, condition: ColumnElement[bool], exclude_id: int | None) -> bool:

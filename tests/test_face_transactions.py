@@ -16,7 +16,7 @@ from app.dependencies import get_pipeline
 from app.main import app
 from app.models import VerificationPolicy
 from app.services.policy_service import clear_policy_cache
-from tests.conftest import FakePipeline, create_employee, login, turn_files
+from tests.conftest import FakePipeline, create_employee, initial_photo, login, turn_files
 from tests.test_validators import approved, identify_face, validator_headers
 
 
@@ -75,6 +75,7 @@ def test_enrolling_without_liveness_holds_no_connection_while_analyzing(client, 
     clear_policy_cache()
     assert create_employee(client, company_headers).status_code == 201
     headers = login(client, "juan@empresa.com", "Empleado123")
+    assert initial_photo(client, headers).status_code == 201  # el paso 1 también analiza sin conexión prestada
     files = [("images", (f"f{i}.jpg", b"face:juan", "image/jpeg")) for i in range(3)]
     assert client.post("/api/enrollment/face", files=files, headers=headers).status_code == 201
     assert watched and set(watched) == {0}

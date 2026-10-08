@@ -36,6 +36,9 @@ PUBLIC = {
     ("GET", "/health/live"),
     ("GET", "/health/ready"),
     ("POST", "/auth/login"),
+    # Entrar con una llave de acceso (WebAuthn, antifraude fase 3): el reto y la firma, sin sesión, limitados por IP.
+    ("POST", "/auth/login/passkey/options"),
+    ("POST", "/auth/login/passkey"),
     ("POST", "/auth/refresh"),
     ("GET", "/auth/session"),
     ("POST", "/auth/logout"),
@@ -50,6 +53,12 @@ ANY_SESSION = {
     ("POST", "/auth/logout-all"),
     ("GET", "/auth/sessions"),
     ("DELETE", "/auth/sessions/{session_id}"),
+    # Las llaves de acceso propias (WebAuthn): registrar, listar, renombrar y revocar las de la cuenta.
+    ("POST", "/auth/passkeys/options"),
+    ("POST", "/auth/passkeys"),
+    ("GET", "/auth/passkeys"),
+    ("PATCH", "/auth/passkeys/{passkey_id}"),
+    ("DELETE", "/auth/passkeys/{passkey_id}"),
     ("GET", "/users/me"),
     ("PATCH", "/users/me/preferences"),
     ("GET", "/catalogs"),
@@ -145,3 +154,24 @@ def test_integration_api_never_accepts_a_user_session(client, tokens):
         for headers in tokens.values():
             response = client.request(method, _url(path), headers=headers)
             assert response.status_code == 401 and response.json()["code"] in ("API_KEY_REQUIRED", "API_KEY_INVALID")
+
+
+#: Quién ve la foto de perfil de quién (decisión del dueño, 2026-10-06): la empresa —su administrador y su validador,
+#: que es una cuenta de la empresa— a su gente; el ADMIN, a todos; el empleado, solo la suya. Lo demás: 404.
+PHOTO_VISIBILITY = {
+    UserRole.ADMIN: set(UserRole),
+    UserRole.COMPANY: {UserRole.COMPANY, UserRole.VALIDATOR, UserRole.EMPLOYEE},
+    UserRole.VALIDATOR: {UserRole.COMPANY, UserRole.VALIDATOR, UserRole.EMPLOYEE},
+    UserRole.EMPLOYEE: {UserRole.EMPLOYEE},
+}
+
+
+def test_each_role_sees_only_the_profile_photos_its_rule_allows(client, tokens):
+    from tests.avatar_support import fetch, upload
+
+    photos = {role: upload(client, headers).json()["data"]["avatar"] for role, headers in tokens.items()}
+    seen = {
+        viewer: {owner for owner, url in photos.items() if fetch(client, tokens[viewer], url).status_code == 200}
+        for viewer in tokens
+    }
+    assert seen == PHOTO_VISIBILITY

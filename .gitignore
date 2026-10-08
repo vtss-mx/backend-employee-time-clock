@@ -9,3 +9,10 @@ __pycache__/
 *.db
 # Base local de IP (DB-IP Lite, CC BY 4.0): se descarga en cada instalación; nunca va al repositorio
 /data/ipdb/
+
+# Salidas de las herramientas de calidad (pytest-cov, mypy, ruff) y metadatos de Finder: nunca al repositorio
+.coverage
+coverage_html/
+.mypy_cache/
+.ruff_cache/
+.DS_Store

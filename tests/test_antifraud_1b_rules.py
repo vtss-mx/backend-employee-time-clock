@@ -167,7 +167,7 @@ def test_each_browser_signal():
                 automation=2,
                 virtual_camera=True,
                 track={"width": 1920, "height": 1080, "frame_rate": 30.0, "width_max": 1280, "device_id": False},
-                frames={"count": 90, "mean_ms": 33.333, "cv": 0.001},
+                frames={"count": 90, "mean_ms": 33.333, "cv": 0.001, "clock": "presentation"},
                 screen={"width": 1920, "height": 1080, "pixel_ratio": 1, "touch_points": 0},
             )
         ),
@@ -194,6 +194,45 @@ def test_track_and_screen_rules():
     assert telemetry_hits(desktop, DESKTOP_UA) == []
     few = parse_telemetry(_telemetry(frames={"count": 5, "mean_ms": 33.3, "cv": 0.0}, track=None, screen=None))
     assert telemetry_hits(few, PHONE_UA) == []
+
+
+def test_a_phone_held_upright_is_not_an_inconsistent_track():
+    """Compatibilidad universal: la orientación del dispositivo no es una cámara que reporta más de lo que puede."""
+    upright = {"width": 720, "height": 1280, "frame_rate": 30, "width_max": 1920, "height_max": 1080,
+               "frame_rate_max": 30, "device_id": True}  # fmt: skip
+    reading = parse_telemetry(_telemetry(track=upright))
+    assert reading.data is not None and track_problems(reading.data.track) == 0
+    assert telemetry_hits(reading, PHONE_UA) == []
+    # Lo que la regla atrapa sigue atrapado: una cámara virtual que dice 1920 × 1080 y solo puede 1280 × 720 (en
+    # cualquier orientación), una que pasa sus cuadros por segundo o una pista sin deviceId.
+    for track, expected in (
+        ({"width": 1920, "height": 1080, "width_max": 1280, "height_max": 720}, 2),
+        ({"width": 1080, "height": 1920, "width_max": 1280, "height_max": 720}, 2),
+        ({"width": 1280, "height": 720, "frame_rate": 60, "width_max": 1280, "frame_rate_max": 30}, 1),
+        ({"width": 1280, "height": 720, "width_max": 1280, "height_max": 720, "device_id": False}, 1),
+        # Con un solo lado conocido se compara tal cual (nada que girar).
+        ({"width": 1920, "width_max": 1280, "height_max": 720}, 1),
+        ({"width": 1280, "height": 720, "width_max": 1920}, 0),
+    ):
+        data = parse_telemetry(_telemetry(track=track)).data
+        assert data is not None and track_problems(data.track) == expected, track
+
+
+def test_the_frame_rhythm_is_only_judged_with_the_arrival_clock():
+    """Compatibilidad universal: con el reloj del dibujo (alineado al refresco de la pantalla) una cámara real en fase
+    da intervalos idénticos; esa medición no se puede juzgar y nunca cuenta como sospechosa."""
+    exact = {"count": 90, "mean_ms": 33.333, "cv": 0.002}
+    for clock in (None, "render"):
+        frames = {**exact, "clock": clock} if clock else exact
+        assert telemetry_hits(parse_telemetry(_telemetry(frames=frames)), PHONE_UA) == []
+    # Con el reloj de llegada, un video o una cámara virtual exactos siguen marcándose; una cámara real varía.
+    synthetic = telemetry_hits(parse_telemetry(_telemetry(frames={**exact, "clock": "presentation"})), PHONE_UA)
+    assert synthetic == [Hit("FRAME_TIMING_SYNTHETIC", 0.002, settings.RISK_FRAME_TIMING_MIN_CV)]
+    real = {"count": 90, "mean_ms": 33.4, "cv": 0.03, "clock": "presentation"}
+    assert telemetry_hits(parse_telemetry(_telemetry(frames=real)), PHONE_UA) == []
+    few = {"count": 5, "mean_ms": 33.3, "cv": 0.0, "clock": "presentation"}
+    assert telemetry_hits(parse_telemetry(_telemetry(frames=few)), PHONE_UA) == []
+    assert parse_telemetry(_telemetry(frames={**exact, "clock": "vsync"})).invalid  # un reloj que no existe
 
 
 # ---------------------------------------------------------------- tablas JPEG

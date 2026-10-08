@@ -24,6 +24,7 @@ from app.core.exceptions import UnprocessableError
 from app.core.perf_meter import OTHER, perf_meter
 from app.models import PerfKind
 from app.schemas.performance import WebPerfBatch, WebPerfResult, WebSample
+from app.services import engine_log
 
 #: Pantallas de la aplicación web que existen sin sesión.
 PUBLIC_SCREENS: Final = frozenset({"/login"})
@@ -112,6 +113,10 @@ def record(batch: WebPerfBatch, *, authenticated: bool, index: RouteIndex) -> We
         raise UnprocessableError(
             code="TOO_MANY_SAMPLES", params={"count": settings.PERF_WEB_MAX_SAMPLES}, field="samples"
         )
+    # La compilación de la aplicación web (bitácora del motor, deriva de señales): solo en memoria, de usuarios con
+    # sesión; el mantenimiento la anota si es nueva.
+    if authenticated:
+        engine_log.observe_webapp(batch.app_version)
     accepted = 0
     for sample in batch.samples:
         kind = KINDS[sample.kind]

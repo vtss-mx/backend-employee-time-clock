@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.crypto import encrypt_bytes
+from app.core.devices import platform_of
 from app.core.exceptions import UnprocessableError
 from app.core.observability import observed
 from app.facial_recognition import (
@@ -41,30 +42,42 @@ from app.facial_recognition.matcher import (
 )
 from app.facial_recognition.photometry import FlashResponse, flash_hex, flash_response
 from app.facial_recognition.pipeline import FlashCapture
-from app.i18n import t
+from app.i18n import LazyText, Text
 from app.models import (
     CaptureTrace,
     Employee,
     EmployeeDeviceMode,
     FlashMode,
     RiskAction,
+    SignalMode,
     VerificationLog,
     VerificationMethod,
 )
 from app.repositories.face_security_repository import FaceSecurityRepository
 from app.repositories.risk_repository import CaptureTraceRepository, RiskAssessmentRepository
 from app.repositories.verification_repository import VerificationLogRepository
+from app.schemas.auth import DeviceLocation
+from app.schemas.avatar import employee_avatar
 from app.schemas.verification import FaceChallengeResponse, FlashPace, VerificationResult
 from app.services import employee_devices, face_signals, flash_pacing, fraud_cases
 from app.services.capture_guard import ensure_human_timing, ensure_real_camera, inspect_take, spoofed
 from app.services.capture_protocol import BurstMeasure, burst_spec, parallax_of
-from app.services.catalog_service import get_catalogs
+from app.services.catalog_service import face_error_text, get_catalogs, reason_text
 from app.services.client_evidence import ClientEvidence
-from app.services.device_service import issue_nonce
+from app.services.device_service import issue_api_nonce, issue_nonce
 from app.services.face_security import SecurityThresholds, thresholds, under_attack
 from app.services.face_service import SECURITY_REASONS, Reference, SuspiciousCapture, engine_failure
 from app.services.fraud_cases import OpenedCase
-from app.services.liveness_service import MAX_STEPS, Challenge, LivenessResponse, challenge_store
+from app.services.liveness_service import (
+    MAX_STEPS,
+    ApiDevice,
+    Challenge,
+    ChallengeOwner,
+    LivenessResponse,
+    challenge_store,
+    enrollment_actions,
+    user_of,
+)
 from app.services.policy_service import PolicySnapshot
 from app.services.risk_engine import RiskOutcome
 
@@ -82,11 +95,6 @@ EVIDENCE_STEP = "STEP"
 EVIDENCE_FLASH = "FLASH"
 #: La hoja de la ráfaga (antifraude 2a): entra a la evidencia por el mismo camino (decisión D1), en su propio lugar.
 EVIDENCE_BURST = "BURST"
-
-
-def reason_message(reason: str | None) -> str:
-    """Mensaje para la persona según el motivo del rechazo (catalog.verification_reasons)."""
-    return get_catalogs().reason_message(reason)
 
 
 def _confidence(policy: PolicySnapshot, among_all: bool) -> float:
@@ -190,43 +198,64 @@ def ensure_frame_count(images: Sequence[bytes]) -> None:
         raise UnprocessableError(code="INVALID_FRAME_COUNT", params={"min": 1, "max": MAX_FRONTAL_FRAMES})
 
 
+def _device_nonce(owner: ChallengeOwner, policy: PolicySnapshot, *, device: bool) -> str | None:
+    """El reto que firma la llave del dispositivo: SIEMPRE para un dispositivo de la API pública (su firma es
+    obligatoria, `api_verification_service`); para el empleado que se captura a sí mismo, según el modo de su
+    empresa."""
+    if isinstance(owner, ApiDevice):
+        return issue_api_nonce(owner.key_id, owner.device_hash)
+    return issue_nonce(owner) if device and policy.employee_device_mode != EmployeeDeviceMode.OFF else None
+
+
 def issue_challenge(
     db: Session,
-    user_id: int,
+    owner: ChallengeOwner,
     policy: PolicySnapshot,
     company_id: int,
     *,
     step_up: bool = False,
     device: bool = False,
+    enrollment: bool = False,
 ) -> FaceChallengeResponse:
-    """Reto de prueba de vida de uso único para quien lo pide: los movimientos al azar (los que pide la
+    """Reto de prueba de vida de uso único para quien lo pide (`owner`: una cuenta o un dispositivo de la API
+    pública): los movimientos al azar (los que pide la
     empresa, o el máximo si está bajo ataque), los colores del destello y los umbrales vigentes (la app
     guía a la persona hasta ellos).
 
     `step_up` (riesgo medio del motor de riesgo, decisión D3): el reto de "un paso más": el máximo de movimientos
     y el destello OBLIGATORIO para ese intento aunque la empresa solo lo mida.
 
+    `enrollment` (decisión del dueño, 2026-10-07): el reto del REGISTRO facial pide SIEMPRE los cuatro movimientos
+    (`enrollment_actions`: derecha, izquierda, arriba y abajo, en orden al azar), sin importar `liveness_steps` ni el
+    refuerzo por ataques; el registro rechaza cualquier otro reto (`is_enrollment_challenge`).
+
     `device` (el empleado se captura a sí mismo, decisión D2): con el reto va otro que firma la llave de su
     dispositivo (`device_nonce`, el mismo de los validadores: ligado a la cuenta y con vencimiento), también sin prueba
-    de vida; con el modo apagado no se pide nada.
+    de vida; con el modo apagado no se pide nada. Un dispositivo de la API lo recibe siempre (`_device_nonce`).
+
+    La API pública nunca usa el destello (retirado de la experiencia, migración 0080, y sin canal en vivo para
+    dictarlo): su reto va sin colores aunque una empresa lo tuviera encendido.
 
     Antifraude 2a: con `flash_paced` los colores NO viajan con el reto (los dicta el servidor uno por uno por el canal
     en vivo, `flash_pacing`; aquí va su token inicial) y con `capture_burst` se pide la ráfaga de recortes."""
-    nonce = issue_nonce(user_id) if device and policy.employee_device_mode != EmployeeDeviceMode.OFF else None
+    nonce = _device_nonce(owner, policy, device=device)
     if not policy.liveness_required:
         return FaceChallengeResponse(liveness_required=False, device_nonce=nonce)
     reinforced = under_attack(db, company_id, datetime.now(UTC))
     steps = MAX_STEPS if reinforced or step_up else policy.liveness_steps
-    flash = settings.FACE_FLASH_COLORS if policy.flash_liveness != FlashMode.OFF or step_up else 0
+    # Decisión del dueño (2026-10-06): OFF es OFF también en «un paso más» (el destello se retiró de la experiencia).
+    api = isinstance(owner, ApiDevice)
+    flash = settings.FACE_FLASH_COLORS if policy.flash_liveness != FlashMode.OFF and not api else 0
     challenge = challenge_store.issue(
         db,
-        user_id,
+        owner,
         steps=steps,
         lifetime_seconds=policy.liveness_timeout_seconds,
         flash=flash,
         step_up=step_up,
         reinforced=reinforced,
         paced=policy.flash_paced,
+        actions=enrollment_actions() if enrollment else None,
     )
     pace = (
         FlashPace(
@@ -251,7 +280,7 @@ def issue_challenge(
         min_pitch_delta=limits.min_pitch_delta,
         min_closer_scale=limits.min_closer_scale,
         flash=[] if pace is not None else [flash_hex(code) for code in challenge.flash],
-        flash_required=policy.flash_liveness == FlashMode.ENFORCE or step_up,
+        flash_required=bool(challenge.flash) and policy.flash_liveness == FlashMode.ENFORCE,
         expires_in=policy.liveness_timeout_seconds,
         step_up=step_up,
         device_nonce=nonce,
@@ -271,11 +300,11 @@ class LivenessFailure:
     capture_error: FaceValidationError | None = None
 
     @property
-    def message(self) -> str:
-        """Para la identificación: el motivo de la bitácora (o el error de la captura del reto)."""
+    def text(self) -> LazyText:
+        """Para la identificación (diferido): el motivo de la bitácora (o el error de la captura del reto)."""
         if self.capture_error is not None:
-            return get_catalogs().face_error_message(self.capture_error.code, self.capture_error.details)
-        return reason_message(self.reason)
+            return face_error_text(self.capture_error.code, self.capture_error.details)
+        return reason_text(self.reason)
 
 
 @dataclass(frozen=True)
@@ -376,7 +405,7 @@ def check_flash(
     """
     if not challenge.flash or not images:
         return FlashCheck()
-    enforce = policy.flash_liveness == FlashMode.ENFORCE or challenge.step_up
+    enforce = policy.flash_liveness == FlashMode.ENFORCE
     captures = _flash_captures(pipeline, images, face_policy, enforce=enforce)
     if isinstance(captures, LivenessFailure):
         return FlashCheck(failure=captures)
@@ -454,7 +483,7 @@ def check_liveness(
 
 def take_challenge(
     db: Session,
-    actor_id: int,
+    actor: ChallengeOwner,
     response: LivenessResponse,
     camera_label: str | None,
     policy: PolicySnapshot,
@@ -476,7 +505,7 @@ def take_challenge(
     encabezados: microsegundos)."""
     signals = face_signals.begin(policy.flash_liveness if policy.liveness_required else None)
     signals.camera, signals.camera_required = camera_label, policy.block_virtual_cameras
-    signals.actor_id, signals.client = actor_id, client
+    signals.actor_id, signals.client = user_of(actor), client
     signals.jpeg = tuple(encoder_quality(image) for image in (*frontal, *response.steps, *response.flash))
     # Evidencia por si el intento abre un caso (decisión D1): solo en memoria durante la petición.
     signals.keep_evidence = policy.fraud_evidence and settings.FRAUD_EVIDENCE_FRAMES_PER_ATTEMPT > 0
@@ -489,7 +518,7 @@ def take_challenge(
     ensure_real_camera(camera_label, policy)
     challenge = challenge_store.require(
         db,
-        actor_id,
+        actor,
         response,
         required=policy.liveness_required,
         flash_required=policy.flash_liveness == FlashMode.ENFORCE,
@@ -498,9 +527,10 @@ def take_challenge(
     if challenge is not None:
         signals.challenged(len(challenge.actions), challenge.issued_at, datetime.now(UTC))
         signals.step_up, signals.reinforced = challenge.step_up, challenge.reinforced
-        if challenge.flash_paced and response.flash:
-            # El destello dictado: ¿cada captura es la que se comprometió a tiempo? (sin consultas; solo su firma).
-            signals.pace = flash_pacing.verify(response.flash_receipt, challenge, actor_id, response.flash)
+        if challenge.flash_paced and response.flash and isinstance(actor, int):
+            # El destello dictado: ¿cada captura es la que se comprometió a tiempo? (sin consultas; solo su firma). Solo
+            # una cuenta lo recibe: el reto de la API nunca se dicta.
+            signals.pace = flash_pacing.verify(response.flash_receipt, challenge, actor, response.flash)
     return challenge
 
 
@@ -544,8 +574,9 @@ def confirm_live(
     return liveness
 
 
-def failed(method: VerificationMethod, message: str) -> VerificationResult:
-    return VerificationResult(verified=False, method=method, message=message)
+def failed(method: VerificationMethod, text: LazyText) -> VerificationResult:
+    """Una identificación que no pasó, con su motivo para la persona (diferido: el sobre lo arma en cada idioma)."""
+    return VerificationResult(verified=False, method=method, message=text)
 
 
 def succeeded(
@@ -555,10 +586,11 @@ def succeeded(
     return VerificationResult(
         verified=True,
         method=method,
-        message=t(key),
+        message=Text(key),
         employee_id=employee.id,
         employee_number=employee.employee_number,
         name=employee.full_name,
+        avatar=employee_avatar(employee),
         confidence=None if confidence is None else round(max(0.0, min(1.0, confidence)), 7),
         verified_at=datetime.now(UTC),
     )
@@ -571,17 +603,19 @@ class StepUpRequired(UnprocessableError):
 
     def __init__(self, challenge: FaceChallengeResponse) -> None:
         super().__init__(
-            get_catalogs().face_error_message("STEP_UP_REQUIRED"),
+            face_error_text("STEP_UP_REQUIRED"),
             code="STEP_UP_REQUIRED",
             details={"challenge": challenge.model_dump(mode="json")},
         )
+        #: El reto nuevo (la API pública lo entrega dentro de su resultado, no como error).
+        self.challenge = challenge
 
 
 def enforce_risk(
     db: Session,
     outcome: RiskOutcome,
     *,
-    actor_id: int,
+    actor_id: ChallengeOwner,
     policy: PolicySnapshot,
     company_id: int,
     record: Callable[[str], None],
@@ -599,6 +633,25 @@ def enforce_risk(
         raise StepUpRequired(issue_challenge(db, actor_id, policy, company_id, step_up=True, device=device))
 
 
+def ensure_verification_location(policy: PolicySnapshot, location: DeviceLocation | None) -> None:
+    """Exige la ubicación de una verificación cuando la empresa la puso en «Obligatoria»
+    (`verification_location = ENFORCE`; decisión del dueño, 2026-10-07): sin ella, 422 `LOCATION_REQUIRED`; con ella
+    pero sin precisión o peor que `max_location_accuracy_m` de la empresa, 422 `LOCATION_INVALID`. Con OBSERVE u OFF
+    nunca bloquea (la ubicación solo se registra para el mapa). Se llama ANTES del motor y del reto (como la presencia
+    del validador): nada se consume ni cuenta como intento si falta la ubicación. No hay geocerca aquí (a diferencia del
+    validador, que la tiene): una verificación puede ocurrir en cualquier lugar; solo se exige que llegue y sea precisa.
+    La asistencia NO pasa por aquí (su ubicación vive en `attendance_events`): quien la verifica no la exige."""
+    if policy.verification_location != SignalMode.ENFORCE:
+        return
+    # El `code` es estable (lo que distingue la app y los SDK, contrato `docs/sdk/contrato-verificacion.md`); el `key`
+    # da el texto propio de la verificación (el de `LOCATION_REQUIRED` del catálogo es del inicio de sesión
+    # del validador).
+    if location is None:
+        raise UnprocessableError(code="LOCATION_REQUIRED", key="VERIFICATION_LOCATION_REQUIRED")
+    if location.accuracy is None or location.accuracy > policy.max_location_accuracy_m:
+        raise UnprocessableError(code="LOCATION_INVALID", key="VERIFICATION_LOCATION_INVALID")
+
+
 class IdentityLog:
     """Bitácora de intentos de identificación (quién lo hizo, a quién, cómo y con qué resultado)."""
 
@@ -607,17 +660,21 @@ class IdentityLog:
         self.logs = VerificationLogRepository(db)
         self.ip = ip
         self.user_agent = user_agent
+        #: Dónde se hizo la verificación (decisión del dueño, 2026-10-07): se fija una vez por petición antes de
+        #: registrar y queda en las columnas del log para el mapa de «Verificaciones». None cuando no llevó ubicación.
+        self.location: DeviceLocation | None = None
 
     def record(
         self,
         *,
         company_id: int,
         employee_id: int | None,
-        actor_id: int,
+        actor_id: int | None,
         method: VerificationMethod,
         success: bool,
         score: float | None = None,
         reason: str | None = None,
+        device_hash: str | None = None,
     ) -> VerificationLog:
         """El intento en la bitácora y, si fue facial, en la MISMA transacción: sus números (enlazados con él), la
         decisión del motor de riesgo, las huellas perceptuales de sus capturas (si coincidió) y su caso de fraude (si
@@ -625,6 +682,7 @@ class IdentityLog:
         abierta, de mejor esfuerzo)."""
         signals = face_signals.finish()
         now = datetime.now(UTC)
+        location = self.location
         log = self.logs.add(
             VerificationLog(
                 employee_id=employee_id,
@@ -636,6 +694,11 @@ class IdentityLog:
                 reason=reason,
                 ip_address=self.ip,
                 user_agent=self.user_agent,
+                device_hash=device_hash,
+                # Dónde se hizo (si la verificación llevó ubicación): la empresa la ve en el mapa de «Verificaciones».
+                latitude=location.latitude if location else None,
+                longitude=location.longitude if location else None,
+                location_accuracy_m=round(location.accuracy) if location and location.accuracy is not None else None,
                 created_at=now,
             )
         )
@@ -648,6 +711,8 @@ class IdentityLog:
     def _facial(self, signals: face_signals.AttemptSignals, log: VerificationLog, now: datetime) -> OpenedCase | None:
         metric = signals.metric(log.company_id, success=log.success, reason=log.reason, log_id=log.id)
         metric.created_at = now
+        # La plataforma del navegador (categoría gruesa, nunca el User-Agent): agrupa la deriva de las señales.
+        metric.platform = platform_of(self.user_agent)
         FaceSecurityRepository(self.db).add_metric(metric)
         if signals.assessment is not None:
             signals.assessment.verification_log_id = log.id

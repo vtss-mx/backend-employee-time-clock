@@ -129,9 +129,10 @@ def remove_my_avatar(user: PersonUser, db: DbSession) -> ApiResponse[AvatarRead]
     response_model=ApiResponse[AvatarImage],
     summary="Foto de perfil de una persona (si puedes verla)",
     description=(
-        "La ruta sale de `user.avatar` / `employee.avatar` (lleva la versión); se agrega `size=96|512`. Solo la "
-        "propia, la de un empleado activo o una cuenta activa de TU empresa (administrador o validador) y, para el "
-        "ADMIN, la de cuentas que no son de empleados; cualquier otra: 404 `AVATAR_NOT_FOUND` (igual que sin foto). "
+        "La ruta sale de `user.avatar` / `employee.avatar` / `avatar` de cada persona (lleva la versión); se agrega "
+        "`size=96|512`. La propia; la empresa (administrador o validador), la de SU gente: empleados activos o "
+        "inactivos, validadores y administradores; el ADMIN, la de cualquier cuenta vigente; lo eliminado o de otra "
+        "empresa: 404 `AVATAR_NOT_FOUND` (igual que sin foto). "
         "Cabeceras `ETag` y `Cache-Control: private` (inmutable con la versión vigente); `If-None-Match` igual → 304 "
         "sin leer el bucket. Bucket caído: 503 `STORAGE_UNAVAILABLE` (la app muestra las iniciales)."
     ),

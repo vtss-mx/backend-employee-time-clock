@@ -48,6 +48,29 @@ def test_purge_from_the_command_line(monkeypatch, capsys):
     assert "Depurado: sesiones=2, códigos QR=0" in capsys.readouterr().out
 
 
+def test_clearing_the_shared_catalogs_from_the_command_line_never_fails(monkeypatch, capsys):
+    """Lo corre `migrate` al terminar: sin Redis, o con Redis caído, lo dice y termina bien (nunca frena nada)."""
+    from app.core.cache import use_cache
+    from tests.redis_support import FakeRedis, shared
+
+    use_cache(None)
+    assert _run(monkeypatch, "cache", "clear-catalogs") == 0
+    assert "Caché compartida apagada" in capsys.readouterr().out
+    server = FakeRedis()
+    cache = shared(server)
+    use_cache(cache)
+    try:
+        cache.set_json("catalogs:v1", {}, 60)
+        cache.set_json("catalogs:v2", {}, 60)
+        assert _run(monkeypatch, "cache", "clear-catalogs") == 0
+        assert "borradas de la caché compartida: 2" in capsys.readouterr().out and server.store == {}
+        server.down = True
+        assert _run(monkeypatch, "cache", "clear-catalogs") == 0
+        assert "Redis no respondió" in capsys.readouterr().out
+    finally:
+        use_cache(None)
+
+
 # ---------------------------------------------------------------- almacén de modelos
 
 

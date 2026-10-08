@@ -12,8 +12,10 @@ from sqlalchemy import (
     ForeignKeyConstraint,
     Index,
     Integer,
+    SmallInteger,
     String,
     UniqueConstraint,
+    false,
     func,
     text,
 )
@@ -44,6 +46,16 @@ class FaceEnrollment(Base):
         Index("ix_face_enrollments_company_status", "company_id", "status", "submitted_at", "id"),
         # Historial completo de la empresa (sin filtrar por estado): ORDER BY submitted_at, id.
         Index("ix_face_enrollments_company_submitted", "company_id", "submitted_at", "id"),
+        # Los registros que esperan su verificación por voz (minutos; muy pocos): la depuración de los abandonados
+        # (`submitted_at` vencido) los encuentra sin recorrer la tabla. Parcial: ninguno terminado lo toca. Las
+        # consultas escriben la columna tal cual (`voice_required`, `UNFINISHED`), nunca `IS true`: PostgreSQL no
+        # deduce este predicado desde `IS TRUE` y recorría la tabla (medido con volumen, perf/db).
+        Index(
+            "ix_face_enrollments_voice_pending",
+            "submitted_at",
+            postgresql_where=text("voice_required AND voice_passed_at IS NULL"),
+            sqlite_where=text("voice_required AND voice_passed_at IS NULL"),
+        ),
         # FK con ON DELETE SET NULL (revisor): evita recorrer la tabla al borrar un usuario.
         Index(
             "ix_face_enrollments_reviewed_by_id",
@@ -70,7 +82,9 @@ class FaceEnrollment(Base):
             postgresql_where=text("captured_by_id IS NOT NULL"),
             sqlite_where=text("captured_by_id IS NOT NULL"),
         ),
-        {"schema": BIOMETRICS},
+        # Ids que nunca se reutilizan (como en PostgreSQL) también en SQLite (pruebas): el objeto de la foto se nombra
+        # con el id y un registro sin terminar que se reemplaza deja su objeto en la cola del bucket un rato más.
+        {"schema": BIOMETRICS, "sqlite_autoincrement": True},
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -100,6 +114,13 @@ class FaceEnrollment(Base):
     #: aprobado al momento). None = el empleado se registró solo y la empresa lo revisó después.
     captured_by_id: Mapped[int | None] = mapped_column(ForeignKey(f"{AUTH}.users.id", ondelete="SET NULL"))
     rejection_reason: Mapped[str | None] = mapped_column(String(500))
+    #: Verificación por voz y video (decisión del dueño, 2026-10-06; `voice_verification`): la exige la política al
+    #: enviar las fotos y el registro no llega a la empresa (ni el empleado a «en validación») hasta `voice_passed_at`.
+    #: `voice_attempts` cuenta las respuestas que NO pasaron, en la base y no en el token sellado: un cliente no puede
+    #: reiniciarlas; al agotarse (VOICE_MAX_RETRIES_PER_QUESTION × preguntas) el registro empieza de nuevo.
+    voice_required: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false(), nullable=False)
+    voice_passed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    voice_attempts: Mapped[int] = mapped_column(SmallInteger, default=0, server_default=text("0"), nullable=False)
 
     employee: Mapped[Employee] = relationship(
         primaryjoin="FaceEnrollment.employee_id == Employee.id", foreign_keys=[employee_id], lazy="joined"
@@ -113,6 +134,11 @@ class FaceEnrollment(Base):
     @property
     def flag_codes(self) -> list[str]:
         return [flag.flag_code for flag in self.flags]
+
+    @property
+    def voice_pending(self) -> bool:
+        """Falta la verificación por voz: el registro aún no termina (no se lista ni se revisa)."""
+        return self.voice_required and self.voice_passed_at is None
 
 
 class FaceEnrollmentFlag(Base):

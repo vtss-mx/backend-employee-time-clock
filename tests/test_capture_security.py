@@ -26,7 +26,15 @@ from app.services.capture_guard import (
     spoofed,
 )
 from app.services.face_service import SuspiciousCapture
-from tests.conftest import _analysis, approved_employee, create_employee, login, submit_enrollment, turn_files
+from tests.conftest import (
+    _analysis,
+    approved_employee,
+    create_employee,
+    initial_photo,
+    login,
+    submit_enrollment,
+    turn_files,
+)
 from tests.test_in_person_face import in_person
 from tests.test_policy import admin_policy, set_policy
 from tests.test_validators import approved, validator_headers
@@ -64,6 +72,42 @@ def test_virtual_cameras_are_recognized_by_whole_words():
         assert not is_virtual_camera(name), name
 
 
+def test_virtual_cameras_in_other_languages_are_blocked_without_regard_to_accents_or_case():
+    """D-C4: los sistemas nombran la cámara virtual en su idioma, con o sin acentos; una cámara real no se bloquea."""
+    for name in (
+        "Câmera virtual",
+        "Camera Virtual",
+        "Cámara virtual",
+        "Camara virtual",
+        "Caméra virtuelle",
+        "Camera virtuelle",
+        "Virtuelle Kamera",
+        "VIRTUELLE KAMERA",
+        "Fotocamera virtuale",
+        "Périphérique virtuel",
+        "OBS-Kamera (virtuell)",
+    ):
+        assert is_virtual_camera(name), name
+    for name in (
+        "FaceTime HD Camera",
+        "Integrated Camera",
+        "Câmera frontal",
+        "Caméra avant",
+        "Vordere Kamera",
+        "Fotocamera anteriore",
+        "Virtualmente",  # «virtual» solo como palabra completa
+        "Virtuelles Studio",
+        "Logitech BRIO",
+    ):
+        assert not is_virtual_camera(name), name
+
+
+def test_blocked_camera_list_with_accents_matches_names_without_them(monkeypatch):
+    monkeypatch.setattr(settings, "FACE_BLOCKED_CAMERAS", ["Câmera Virtual"])  # como llegó en el .env, sin plegar
+    assert is_virtual_camera("camera virtual")
+    assert not is_virtual_camera("camera frontal")
+
+
 def test_images_with_camera_or_editor_metadata_are_not_live_captures():
     def jpeg(**tags: str) -> bytes:
         image, buffer = Image.new("RGB", (240, 240), (120, 90, 60)), io.BytesIO()
@@ -73,13 +117,29 @@ def test_images_with_camera_or_editor_metadata_are_not_live_captures():
         image.save(buffer, "JPEG", exif=exif)
         return buffer.getvalue()
 
+    def with_ifd(ifd: int, tags: dict[int, object]) -> bytes:
+        image, buffer = Image.new("RGB", (240, 240), (120, 90, 60)), io.BytesIO()
+        exif = image.getexif()
+        exif.get_ifd(ifd).update(tags)
+        image.save(buffer, "JPEG", exif=exif)
+        return buffer.getvalue()
+
     options = {"min_dimension": 160, "max_dimension": 4096}
-    for foreign in (jpeg(t271="Canon"), jpeg(t305="Adobe Photoshop")):  # Make / Software
+    shot = with_ifd(0x8769, {0x9003: "2026:10:06 11:37:00", 0xA001: 1})  # fecha de la toma
+    gps = with_ifd(0x8825, {1: "N"})
+    for foreign in (jpeg(t271="Canon"), jpeg(t272="iPhone 15"), jpeg(t315="Ana Ruiz"), shot, gps):
         with pytest.raises(FaceValidationError) as error:
             decode_image(foreign, **options, reject_foreign=True)
         assert error.value.code == "IMAGE_NOT_FROM_CAMERA"
         assert decode_image(foreign, **options).shape == (240, 240, 3)  # sin la regla se acepta
     assert decode_image(jpeg(), **options, reject_foreign=True).shape == (240, 240, 3)  # captura de la app
+    # Safari en iPhone: el lienzo se codifica con un bloque Exif propio (espacio de color, tamaño) y una fecha: es la
+    # captura en vivo de la app, no una foto de la galería.
+    safari = with_ifd(0x8769, {0xA001: 1, 0xA002: 240, 0xA003: 240})
+    dated = jpeg(t306="2026:10:06 11:37:00")
+    encoder = jpeg(t305="Navegador")  # el programa que codificó: cualquier navegador o sistema puede escribirlo
+    for live in (safari, dated, encoder):
+        assert decode_image(live, **options, reject_foreign=True).shape == (240, 240, 3)
 
 
 def test_capture_traits_identify_each_frame():
@@ -239,8 +299,10 @@ def test_the_same_face_cannot_be_two_employees(client, company_headers):
     juan = client.get("/api/employees", headers=company_headers).json()["data"]["items"][0]
     ana = create_employee(client, company_headers, number="EMP-002", email="ana@empresa.com").json()["data"]
 
-    # Autoregistro con el rostro de Juan: se envía, pero marcado para quien revisa.
-    assert submit_enrollment(client, login(client, "ana@empresa.com", "Empleado123")).status_code == 201
+    # Autoregistro con el rostro de Juan: se envía (y responde las preguntas en video), pero marcado para quien revisa.
+    ana_headers = login(client, "ana@empresa.com", "Empleado123")
+    submitted = submit_enrollment(client, ana_headers)
+    assert submitted.status_code == 201
     pending = client.get("/api/enrollments", headers=company_headers).json()["data"]["items"][0]
     assert "DUPLICATE_FACE" in pending["flagged_accessories"]
 
@@ -254,6 +316,7 @@ def test_the_same_face_cannot_be_two_employees(client, company_headers):
 def test_suspicious_enrollment_is_logged_for_the_employee(client, company_headers):
     created = create_employee(client, company_headers).json()["data"]
     headers = login(client, "juan@empresa.com", "Empleado123")
+    assert initial_photo(client, headers).status_code == 201
     rejected = attempt(client, headers, "/api/enrollment/face", camera="OBS Virtual Camera")
     assert rejected.status_code == 422 and rejected.json()["code"] == "VIRTUAL_CAMERA"
     assert history(client, company_headers, created["id"]) == [(False, "VIRTUAL_CAMERA")]

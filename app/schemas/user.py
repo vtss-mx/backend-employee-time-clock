@@ -13,7 +13,8 @@ class UserEmployeeInfo(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    employee_number: str
+    #: Opcionales: null = sin capturar.
+    employee_number: str | None = None
     rfc: str | None = None
     curp: str | None = None
     nss: str | None = None
@@ -49,7 +50,7 @@ class UserMembership(BaseModel):
 
 
 #: Idiomas de la aplicación (regla 16 de AGENTS.md): español de México e inglés de Estados Unidos.
-Locale = Literal["es-MX", "en-US"]
+Locale = Literal["es-MX", "en-US", "pt-BR", "fr-FR", "de-DE", "it-IT", "es-ES"]
 
 
 class UserPreferences(BaseModel):

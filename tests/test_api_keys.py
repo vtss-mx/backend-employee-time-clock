@@ -16,7 +16,7 @@ from tests.test_validators import validator_headers
 
 KEYS = "/api/api-keys"
 API = "/api/integrations/v1"
-ALL_SCOPES = ["EMPLOYEES_READ", "ATTENDANCE_READ", "VALIDATORS_READ"]
+ALL_SCOPES = ["EMPLOYEES_READ", "ATTENDANCE_READ", "VALIDATORS_READ", "VERIFICATION"]
 
 
 def new_key(client, headers, *, scopes=None, name="Nómina", **extra) -> dict:

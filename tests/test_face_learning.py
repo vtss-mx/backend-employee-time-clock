@@ -10,6 +10,7 @@ import pytest
 from app.core.config import settings
 from app.core.crypto import decrypt_bytes
 from app.core.database import SessionLocal
+from app.facial_recognition import matcher
 from app.facial_recognition.matcher import embedding_from_bytes
 from app.models import Employee, FaceEmbedding
 from app.services import face_service
@@ -238,8 +239,8 @@ def test_gallery_cache_decrypts_only_new_samples(client, company_headers, monkey
     approved(client, company_headers, "ana", number="EMP-002")
     headers = login(client, "juan@empresa.com", "Empleado123")
     calls: list[int] = []
-    real_decrypt = face_service.try_decrypt
-    monkeypatch.setattr(face_service, "try_decrypt", lambda data: calls.append(1) or real_decrypt(data))
+    real_decrypt = matcher.try_decrypt  # readable_embedding vive ahora en matcher (sin ciclo servicio ↔ repositorio)
+    monkeypatch.setattr(matcher, "try_decrypt", lambda data: calls.append(1) or real_decrypt(data))
     face_galleries.clear()
 
     def gallery_size() -> tuple[int, int]:

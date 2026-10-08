@@ -211,7 +211,7 @@ def test_country_and_type_defaults_and_their_errors():
     with pytest.raises(LocalizedValueError) as unknown:  # un tipo que el catálogo ya no tiene
         normalize_tax_id("NOPE", "123")
     assert str(unknown.value) == "Elige un tipo de identificador de la lista"
-    assert tax_id_name("US_EIN") == "EIN" and tax_id_name("GONE") == "GONE"
+    assert tax_id_name("US_EIN")() == "EIN" and tax_id_name("GONE")() == "GONE"  # diferido: se arma en cada idioma
     assert is_blank_tax_id(None) and is_blank_tax_id(" - . / ") and not is_blank_tax_id("A")
 
 

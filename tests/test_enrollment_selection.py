@@ -35,13 +35,16 @@ from app.services.catalog_service import get_catalogs
 from app.services.enrollment_selection import select_references
 from app.services.face_service import SuspiciousCapture
 from app.services.face_signals import BurstOutcome
-from app.services.identity_core import burst_rejects, reason_message
+from app.services.identity_core import burst_rejects
 from app.services.image_storage import FACE_ENROLLMENT_PHOTOS
 from tests.conftest import (
     FakePipeline,
     burst_files,
+    complete_voice,
     create_employee,
+    enrollment_challenge,
     face_vector,
+    initial_photo,
     login,
     qr_content,
     turn_files,
@@ -217,15 +220,20 @@ class Counting(Graded):
 
 
 def test_clip_runs_only_on_the_references_and_decides_by_their_majority():
+    # Los lentes se permiten por omisión (decisión del dueño, 2026-10-07): aquí la regla se enciende a propósito para
+    # probar el mecanismo del consenso, que se conserva.
+    glasses_rule = replace(DEFAULT_POLICY, block_glasses=True)
     glasses = [photo(i, 0.99, kind="glasses") for i in range(3)]
     images = [*glasses, photo(3, 0.98), photo(4, 0.98), *(photo(i, 0.5) for i in range(5, 36))]
     engine = Counting()
-    selection = select_references(engine, images, DEFAULT_POLICY)
+    selection = select_references(engine, images, glasses_rule)
     assert sorted(engine.clip) == sorted(images[:5]) and selection.flags == ("GLASSES",)
     assert [r.accessories_found for r in selection.references][:3] == [("GLASSES",)] * 3
+    # Con la regla retirada (la política por omisión), los lentes no marcan nada.
+    assert select_references(Counting(), images, DEFAULT_POLICY).flags == ()
     # Lentes solo en fotos que no se eligieron: CLIP nunca las ve.
     unseen = [*(photo(i, 0.99) for i in range(6)), *(photo(i, 0.5, kind="glasses") for i in range(6, 36))]
-    assert select_references(Counting(), unseen, DEFAULT_POLICY).flags == ()
+    assert select_references(Counting(), unseen, glasses_rule).flags == ()
     # Si la empresa no bloquea ningún accesorio, CLIP no corre.
     allowed = Counting()
     select_references(allowed, images, FacePolicy(block_glasses=False, block_headwear=False, block_mask=False))
@@ -254,7 +262,7 @@ def test_an_engine_failure_while_choosing_is_a_503():
 
 def test_the_pipeline_checks_only_the_accessories_of_a_reference():
     blocked = pipeline([face()], accessories=StubAccessories(glasses=0.9))
-    scores, _, found = blocked.accessories_of(image_bytes())
+    scores, _, found = blocked.accessories_of(image_bytes(), policy=replace(DEFAULT_POLICY, block_glasses=True))
     assert scores is not None and scores.glasses == 0.9 and [a.value for a in found] == ["GLASSES"]
     allowed = FacePolicy(block_glasses=False, block_headwear=False, block_mask=False)
     assert blocked.accessories_of(b"no se decodifica", policy=allowed) == (None, None, ())
@@ -382,10 +390,17 @@ def test_a_failure_of_the_request_worker_stops_the_spares(spares):
 
 
 def enroll(client, headers, images, url=ENROLL, person="juan"):
-    challenge = client.post("/api/face/challenge", headers=headers).json()["data"]
+    """Las fotos con el reto del registro (los cuatro movimientos) y, si el autoregistro las acepta, las preguntas en
+    video (como la app)."""
+    if url == ENROLL:
+        assert initial_photo(client, headers, f"face:{person}".encode()).status_code == 201
+    challenge = enrollment_challenge(client, headers)
     files = [("images", (f"f{i}.jpg", image, "image/jpeg")) for i, image in enumerate(images)]
     files += turn_files(challenge, person)
-    return client.post(url, data={"challenge_id": challenge["challenge_id"]}, files=files, headers=headers)
+    response = client.post(url, data={"challenge_id": challenge["challenge_id"]}, files=files, headers=headers)
+    if url == ENROLL and response.status_code == 201:
+        complete_voice(client, headers, response.json()["data"], person=person)
+    return response
 
 
 def _employee(client, company_headers) -> tuple[dict, dict[str, str]]:
@@ -404,8 +419,10 @@ def test_a_36_photo_enrollment_keeps_five_references_and_one_photo(client, compa
     with SessionLocal() as db:
         assert db.scalar(select(func.count()).select_from(FaceEmbedding)) == settings.FACE_MAX_SAMPLES_PER_EMPLOYEE
         enrollment = db.get(FaceEnrollment, enrollment_id)
-        # Una sola foto en el bucket (cifrada): la de mejor calidad (la primera de las buenas); nunca las 36.
-        assert len(bucket.objects) == 1 and image_storage.read(FACE_ENROLLMENT_PHOTOS, enrollment) == images[10]
+        # Una sola foto en el bucket (cifrada), nunca las 36: en el registro propio, la foto inicial del paso 1, que
+        # pasa a ser la foto de referencia (decisión del dueño, 2026-10-07; en persona, la mejor de las elegidas).
+        photos = [name for name in bucket.objects if "/voice/" not in name]  # los videos de la voz van aparte
+    assert len(photos) == 1 and image_storage.read(FACE_ENROLLMENT_PHOTOS, enrollment) == b"face:juan"
 
 
 def test_a_36_photo_enrollment_in_person_is_approved_at_once(client, company_headers):
@@ -500,7 +517,10 @@ def test_a_verification_passes_only_if_the_live_video_is_the_person(client, comp
     with caplog.at_level(logging.INFO, logger="app.services.identity_core"):
         swapped, _ = verify_with(client, headers, burst=burst_files("pedro"))  # las frontales sí son de juan
     assert swapped.status_code == 200 and swapped.json()["data"]["verified"] is False
-    assert swapped.json()["message"] == reason_message("NO_MATCH") and "Consenso de la ráfaga" in caplog.text
+    assert (
+        swapped.json()["message"] == get_catalogs().reason_message("NO_MATCH")
+        and "Consenso de la ráfaga" in caplog.text
+    )
     row = metric()
     assert row.reason == "NO_MATCH" and row.burst_consensus is not None and row.burst_consensus < 0.5
     assert history(client, company_headers, employee_id(client, headers))[0] == (False, "NO_MATCH")
@@ -533,7 +553,9 @@ def test_the_validator_identifies_only_if_the_live_video_agrees(client, company_
     found = checkpoint(client, headers, "juan", "juan").json()["data"]
     assert found["verified"] is True and found["name"] == "Juan Pérez"
     missed = checkpoint(client, headers, "juan", "pedro")
-    assert missed.json()["data"]["verified"] is False and missed.json()["message"] == reason_message("NO_MATCH")
+    assert missed.json()["data"]["verified"] is False and missed.json()["message"] == get_catalogs().reason_message(
+        "NO_MATCH"
+    )
     assert metric().reason == "NO_MATCH" and metric().burst_consensus is not None
 
 

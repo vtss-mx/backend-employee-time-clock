@@ -1,0 +1,129 @@
+{
+    "metrics": {
+        "data_sent": {
+            "count": 13137870,
+            "rate": 626788.944667256
+        },
+        "http_req_duration": {
+            "p(95)": 2418.039517549996,
+            "p(99)": 5018.87259939,
+            "max": 5906.757794,
+            "avg": 508.7668810800944,
+            "p(50)": 170.118729
+        },
+        "http_req_blocked": {
+            "avg": 0.03643886063170326,
+            "p(50)": 0.003041,
+            "p(95)": 0.03093124999999987,
+            "p(99)": 0.603194959999999,
+            "max": 30.209208
+        },
+        "dropped_iterations": {
+            "count": 130,
+            "rate": 6.202113646028106
+        },
+        "http_req_sending": {
+            "avg": 0.030181877052613982,
+            "p(50)": 0.008792,
+            "p(95)": 0.08745845,
+            "p(99)": 0.40114063999999977,
+            "max": 7.257667
+        },
+        "data_received": {
+            "rate": 5715732.157599222,
+            "count": 119805154
+        },
+        "checks": {
+            "fails": 12069,
+            "passes": 11802,
+            "value": 0.49440743998994596
+        },
+        "http_req_duration{expected_response:true}": {
+            "avg": 638.082161714819,
+            "p(50)": 376.239986,
+            "p(95)": 2077.6538259999998,
+            "p(99)": 4329.384203659999,
+            "max": 5906.757794
+        },
+        "http_req_connecting": {
+            "max": 30.167417,
+            "avg": 0.02619156622821716,
+            "p(50)": 0,
+            "p(95)": 0,
+            "p(99)": 0.42532531999999923
+        },
+        "vus_max": {
+            "max": 1070,
+            "value": 1070,
+            "min": 1000
+        },
+        "shed_503": {
+            "count": 12069,
+            "rate": 575.7946891839479
+        },
+        "iteration_duration": {
+            "max": 5906.886919,
+            "avg": 508.97190605136024,
+            "p(50)": 170.278916,
+            "p(95)": 2418.301167499996,
+            "p(99)": 5018.9882314
+        },
+        "iterations": {
+            "rate": 1138.8511911102842,
+            "count": 23871
+        },
+        "vus": {
+            "value": 10,
+            "min": 10,
+            "max": 952
+        },
+        "http_req_receiving": {
+            "p(95)": 0.27056089999999994,
+            "p(99)": 0.9701662499999979,
+            "max": 53.017834,
+            "avg": 0.09030881698223843,
+            "p(50)": 0.0270625
+        },
+        "http_reqs": {
+            "count": 23872,
+            "rate": 1138.898899676792
+        },
+        "http_req_tls_handshaking": {
+            "avg": 0,
+            "p(50)": 0,
+            "p(95)": 0,
+            "p(99)": 0,
+            "max": 0
+        },
+        "http_req_waiting": {
+            "max": 5905.889045,
+            "avg": 508.64639038606316,
+            "p(50)": 169.9596665,
+            "p(95)": 2417.960107249996,
+            "p(99)": 5018.645113070001
+        },
+        "http_req_failed": {
+            "passes": 12069,
+            "fails": 11803,
+            "value": 0.505571380697051
+        }
+    },
+    "setup_data": {
+        "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6InM0RXpOVzJjRmRJQ0YtX0UiLCJ0eXAiOiJhdCtqd3QifQ.eyJpc3MiOiJ0aW1lLWNsb2NrLWFwaSIsImF1ZCI6InRpbWUtY2xvY2std2ViIiwic3ViIjoiMiIsInNpZCI6IjI0M2Q1Yjc2ZjhkNzQ3MzhiNDY2NTc1YjZmZDhjYmI4IiwianRpIjoiNTY1YWFmYmY3ZDc5NGY2YWE0NzY4OTdkNGNlZTlkZTYiLCJyb2xlIjoiQ09NUEFOWSIsImlhdCI6MTc5MTM5NjQ3MSwibmJmIjoxNzkxMzk2NDcxLCJleHAiOjE3OTE0Mzk2NzF9.wH_3sMFWds_T653wkNAwdSCCMaerO8GMoV-wh5gK3HPrMUOunOtCJOmibBAYOhn_76Rnud56YZMF1M9C0u-ZoQ"
+    },
+    "root_group": {
+        "name": "",
+        "path": "",
+        "id": "d41d8cd98f00b204e9800998ecf8427e",
+        "groups": {},
+        "checks": {
+                "respuesta 200": {
+                    "passes": 11802,
+                    "fails": 12069,
+                    "name": "respuesta 200",
+                    "path": "::respuesta 200",
+                    "id": "b304736d6fbf81af5836a4c1d2b9d46c"
+                }
+            }
+    }
+}

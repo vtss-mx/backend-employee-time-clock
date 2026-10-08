@@ -31,6 +31,7 @@ import numpy as np
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.core.text import fold_text
 from app.facial_recognition import FaceAnalysis, FacePolicy, LivenessAction
 from app.facial_recognition.pipeline import FlashCapture
 from app.repositories.capture_repository import CaptureFingerprintRepository
@@ -40,11 +41,13 @@ from app.services.policy_service import PolicySnapshot
 
 
 def is_virtual_camera(label: str | None) -> bool:
-    """El nombre de la cámara es el de un programa que finge ser una (palabra completa)."""
+    """El nombre de la cámara es el de un programa que finge ser una: palabra completa de `FACE_BLOCKED_CAMERAS`, sin
+    distinguir mayúsculas ni acentos («Câmera virtual», «Caméra virtuelle», «Virtuelle Kamera», «Fotocamera virtuale»:
+    el sistema la nombra en SU idioma, con o sin acentos; la lista también se pliega, por si llegó con ellos)."""
     if not label:
         return False
-    text = label.lower()
-    return any(re.search(rf"(?<!\w){re.escape(name)}(?!\w)", text) for name in settings.FACE_BLOCKED_CAMERAS)
+    text = fold_text(label)
+    return any(re.search(rf"(?<!\w){re.escape(fold_text(name))}(?!\w)", text) for name in settings.FACE_BLOCKED_CAMERAS)
 
 
 def ensure_real_camera(camera_label: str | None, policy: PolicySnapshot) -> None:

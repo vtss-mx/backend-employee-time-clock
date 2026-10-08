@@ -63,7 +63,9 @@ class VerificationPolicy(Base):
     company_id: Mapped[int] = mapped_column(
         ForeignKey(f"{TENANCY}.companies.id", ondelete="CASCADE"), unique=True, index=True, nullable=False
     )
-    block_glasses: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    #: Lentes: apagado por omisión en toda empresa (decisión del dueño, 2026-10-07, migración 0082); el ADMIN lo
+    #: enciende por empresa como cualquier otra regla y entonces un rostro con lentes no se registra ni se verifica.
+    block_glasses: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false(), nullable=False)
     block_headwear: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     block_mask: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     liveness_challenge: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
@@ -120,12 +122,14 @@ class VerificationPolicy(Base):
     liveness_timeout_seconds: Mapped[int] = mapped_column(
         SmallInteger, default=60, server_default=text("60"), nullable=False
     )
-    #: Destello de colores en la pantalla (catalog.flash_modes): apagado, solo medir u obligatorio.
+    #: Destello de colores en la pantalla (catalog.flash_modes). RETIRADO de la experiencia por decisión del dueño del
+    #: producto (2026-10-06, migración 0080): nace y se queda en OFF en toda empresa (la app no lo ofrece); el código de
+    #: la fotometría sigue disponible por si se reconsidera.
     flash_liveness: Mapped[str] = mapped_column(
         String(20),
         ForeignKey(f"{CATALOG}.flash_modes.code"),
-        default="OBSERVE",
-        server_default="OBSERVE",
+        default="OFF",
+        server_default="OFF",
         nullable=False,
     )
     block_virtual_cameras: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true(), nullable=False)
@@ -214,9 +218,24 @@ class VerificationPolicy(Base):
     # --- Protocolo de captura de frontera (antifraude 2a, migración 0066): nacen midiendo, nunca bloquean solos ---
     #: Destello dictado por el servidor: los colores se revelan uno por uno por el canal en vivo, con tiempo por color
     #: (sin el canal, la app usa el destello de siempre y eso es una señal medida: FLASH_UNPACED).
-    flash_paced: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true(), nullable=False)
+    #: Retirado con el destello (decisión del dueño, 2026-10-06, migración 0080): nace apagado.
+    flash_paced: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false(), nullable=False)
     #: Ráfaga corta de recortes del rostro con las capturas (continuidad, micromovimiento y pulso; decisión D11).
     capture_burst: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true(), nullable=False)
+    #: Verificación por voz y video del registro facial (decisión del dueño, 2026-10-06; migración 0079): tras las fotos
+    #: válidas, el empleado responde en video tres preguntas al azar sobre sus propios datos y el servidor compara su
+    #: voz (transcrita aquí) y su rostro con lo registrado; la empresa revisa el video al validar. Apagarla relaja la
+    #: seguridad (regla de dos personas).
+    voice_verification: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true(), nullable=False)
+    #: Guía por audio del registro facial (decisión del dueño, 2026-10-08): encendida, la app DICTA las indicaciones con
+    #: voz («quédate quieto», «voltea a la derecha»...). Apagada por omisión; es una ayuda, no un candado de seguridad,
+    #: así que no pasa por la regla de dos personas. La síntesis es del navegador (nada sale del servidor, regla 13).
+    voice_guidance_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false(), nullable=False)
+    #: Voz con que se dicta la guía por audio (código activo de catalog.voice_profiles; lo valida el servicio, como los
+    #: modos de señal —sin llave foránea—; la app mapea el código a los parámetros de la voz).
+    voice_profile: Mapped[str] = mapped_column(
+        String(30), default="FEMALE_WARM", server_default="FEMALE_WARM", nullable=False
+    )
     # --- Presencia (antifraude 2b, migración 0070): cada prueba con el modo de una señal (catalog.signal_modes):
     # apagada, solo medir (señal del motor de riesgo, nace así) u obligatoria (sin ella, se rechaza con su código) ---
     #: Firma por petición: cada identificación de un validador lleva la firma de la llave del dispositivo con que inició
@@ -238,6 +257,18 @@ class VerificationPolicy(Base):
     )
     #: Código de sitio en la entrada y la salida, en los sitios que lo activen (decisión D9).
     site_codes: Mapped[str] = mapped_column(
+        String(20),
+        ForeignKey(f"{CATALOG}.signal_modes.code"),
+        default="OBSERVE",
+        server_default="OBSERVE",
+        nullable=False,
+    )
+    #: Ubicación de CADA verificación de identidad (empleado, validador y API pública; decisión del dueño, 2026-10-07,
+    #: migración 0085): modo de `signal_modes`. OFF no la pide; OBSERVE la registra (la empresa ve dónde se hizo cada
+    #: verificación en el mapa); ENFORCE la exige (sin ubicación válida, el servidor no completa la verificación: 422
+    #: LOCATION_REQUIRED/LOCATION_INVALID antes del motor). Por omisión OBSERVE (registra sin dejar a nadie afuera; el
+    #: ADMIN la sube a ENFORCE a propósito). Distinto de `validator_location` (prueba de presencia del validador, 2b).
+    verification_location: Mapped[str] = mapped_column(
         String(20),
         ForeignKey(f"{CATALOG}.signal_modes.code"),
         default="OBSERVE",

@@ -132,6 +132,8 @@ def test_the_attempt_signals_keep_numbers_only():
 
 
 def test_a_challenge_brings_up_to_three_steps_the_flash_and_the_live_thresholds(client, company_headers):
+    # El destello se retiró (2026-10-06): aquí se enciende a propósito para probar el mecanismo que se conserva.
+    set_policy(client, company_headers, flash_liveness="OBSERVE", flash_paced=True)
     headers = approved_employee(client, company_headers)
     challenge = client.post("/api/face/challenge", headers=headers).json()["data"]
     # Antifraude 2a: los colores no viajan con el reto; los dicta el servidor por el canal en vivo (su token).
@@ -159,6 +161,7 @@ def test_policy_rejects_an_unknown_flash_mode(client, company_headers):
 
 
 def test_while_observing_the_flash_is_measured_but_never_blocks(client, company_headers, caplog):
+    set_policy(client, company_headers, flash_liveness="OBSERVE", flash_paced=False)  # retirado: se enciende aquí
     headers = approved_employee(client, company_headers)
     assert attempt(client, headers).json()["data"]["verified"] is True
     measured = metrics()[-1]

@@ -41,6 +41,8 @@ SAFER_WHEN_ON = frozenset(
         # Protocolo de captura (antifraude 2a): apagarlo quita la prueba en tiempo real y la ráfaga.
         "flash_paced",
         "capture_burst",
+        # Verificación por voz y video del registro facial: apagarla deja el registro solo con las fotos.
+        "voice_verification",
     }
 )
 #: Apagado = más seguro (caminos sin rostro).
@@ -76,6 +78,8 @@ ORDERED = {
     "validator_signing": "signal_modes",
     "validator_location": "signal_modes",
     "site_codes": "signal_modes",
+    # Ubicación de cada verificación (decisión del dueño, 2026-10-07): bajar de modo relaja (regla de dos personas).
+    "verification_location": "signal_modes",
 }
 #: El modo de cada señal (risk_signals.<código>.mode) se ordena con su catálogo.
 SIGNAL_MODES = "signal_modes"
@@ -155,10 +159,12 @@ _COMMON: dict[str, Any] = {
     "qr_only_attendance": False,
     "risk_engine": True,
     "risk_fallback_action": "ALLOW",
-    # Antifraude 2a: los tres niveles usan el protocolo de captura (medir no bloquea a nadie); solo Máximo lo exige
-    # (sus señales, abajo).
-    "flash_paced": True,
+    # Antifraude 2a: los tres niveles usan la ráfaga de captura (medir no bloquea a nadie); solo Máximo la exige (sus
+    # señales, abajo). El destello dictado se retiró con el destello (decisión del dueño, 2026-10-06): apagado.
+    "flash_paced": False,
     "capture_burst": True,
+    # Verificación por voz y video del registro facial (decisión del dueño, 2026-10-06): en los tres niveles.
+    "voice_verification": True,
 }
 #: Antifraude 2b (decisión del dueño, 2026-10-06): en Estándar y Alto las pruebas de presencia de los validadores y el
 #: código de sitio solo miden; Máximo las exige.
@@ -175,22 +181,29 @@ _PRESENCE_REQUIRED: dict[str, Any] = {
 
 #: Lo que fija cada nivel; el resto de la política queda como estaba. Las señales que no se nombran vuelven a su
 #: valor de la plataforma (catalog.risk_signals).
+# Endurecimiento de los tres niveles (decisión del dueño, 2026-10-08: «activar todas las políticas y endurécelas un
+# 100% más»). Se endurece lo que la arquitectura permite SIN rechazar a personas reales: se suben los candados y los
+# umbrales hacia su extremo estricto en cada nivel, Máximo activa también el bloqueo de lentes (invierte el valor por
+# omisión, que sigue en false fuera de este nivel), exige la ubicación de cada verificación y agrega la firma del
+# validador como regla dura. NO se reactiva el destello (retirado, decisión 2026-10-06) ni se obliga una señal sin
+# calibrar a negar (las de `CALIBRATING_SIGNALS`/`BROWSER_SIGNALS` quedan topadas en «en revisión» por `ask_only`:
+# «lo nuevo nunca niega»). El detalle y el porqué de cada tope están en `docs/rd/blindaje-frontera-2026-10-08.md`.
 PRESETS: dict[str, dict[str, Any]] = {
     "STANDARD": {
         **_COMMON,
         **_PRESENCE_MEASURED,
         "liveness_steps": 2,
-        "liveness_timeout_seconds": 60,
-        # "Obligatorio tras calibrar": mientras no haya datos, solo se mide (decisión del dueño sobre el destello).
-        "flash_liveness": "OBSERVE",
+        "liveness_timeout_seconds": 45,  # 2026-10-08: menos holgura (antes 60)
+        # Destello retirado de la experiencia (decisión del dueño, 2026-10-06): apagado en los tres niveles.
+        "flash_liveness": "OFF",
         "anti_spoofing_level": "STANDARD",
-        "min_capture_quality": 0.4,
-        "lockout_max_failures": 5,
-        "lockout_minutes": 15,
+        "min_capture_quality": 0.5,  # 2026-10-08 (antes 0.4)
+        "lockout_max_failures": 4,  # 2026-10-08 (antes 5)
+        "lockout_minutes": 30,  # 2026-10-08 (antes 15)
         "employee_device_mode": "OBSERVE",
-        "risk_medium_score": 30,
-        "risk_high_score": 60,
-        "risk_critical_score": 80,
+        "risk_medium_score": 25,  # 2026-10-08: cortes más bajos (antes 30/60/80)
+        "risk_high_score": 55,
+        "risk_critical_score": 75,
         "risk_medium_action": "STEP_UP",
         "risk_high_action": "REVIEW",
         "risk_critical_action": "DENY",
@@ -200,50 +213,56 @@ PRESETS: dict[str, dict[str, Any]] = {
         **_COMMON,
         **_PRESENCE_MEASURED,
         "liveness_steps": 3,
-        "liveness_timeout_seconds": 45,
-        "flash_liveness": "ENFORCE",
+        "liveness_timeout_seconds": 35,  # 2026-10-08 (antes 45)
+        "flash_liveness": "OFF",
         "anti_spoofing_level": "HIGH",
-        "min_capture_quality": 0.55,
+        "min_capture_quality": 0.65,  # 2026-10-08 (antes 0.55)
         "lockout_max_failures": 4,
-        "lockout_minutes": 30,
+        "lockout_minutes": 120,  # 2026-10-08 (antes 30)
         "employee_device_mode": "STEP_UP",
-        "risk_medium_score": 25,
-        "risk_high_score": 50,
-        "risk_critical_score": 75,
+        "risk_medium_score": 20,  # 2026-10-08 (antes 25/50/75)
+        "risk_high_score": 45,
+        "risk_critical_score": 70,
         "risk_medium_action": "STEP_UP",
         "risk_high_action": "REVIEW",
         "risk_critical_action": "DENY",
-        "risk_signals": {"REPLAY_PERCEPTUAL": {"mode": "ENFORCE"}},
+        # 2026-10-08: Alto exige también el ataque conocido (regla dura: niega sola si coincide una huella de ataque).
+        "risk_signals": {"REPLAY_PERCEPTUAL": {"mode": "ENFORCE"}, "KNOWN_ATTACK": {"mode": "ENFORCE"}},
     },
     "MAXIMUM": {
         **_COMMON,
         **_PRESENCE_REQUIRED,
+        # 2026-10-08: el nivel Máximo activa también el bloqueo de lentes (el valor por omisión sigue en false fuera de
+        # este nivel) y exige la ubicación de cada verificación (OBSERVE → ENFORCE).
+        "block_glasses": True,
+        "verification_location": "ENFORCE",
         "liveness_steps": 3,
-        "liveness_timeout_seconds": 30,
-        "flash_liveness": "ENFORCE",
+        "liveness_timeout_seconds": 20,  # 2026-10-08: el mínimo del rango (antes 30)
+        "flash_liveness": "OFF",
         "anti_spoofing_level": "MAXIMUM",
-        "min_capture_quality": 0.7,
+        "min_capture_quality": 0.9,  # 2026-10-08: el máximo del rango (antes 0.7)
         "lockout_max_failures": 3,
-        "lockout_minutes": 60,
+        "lockout_minutes": 1440,  # 2026-10-08: el máximo del rango, un día (antes 60)
+        "qr_lifetime_seconds": 15,  # 2026-10-08: la vida mínima del QR
+        "max_location_accuracy_m": 10,  # 2026-10-08: la precisión más exigente
+        "max_travel_kmh": 30,  # 2026-10-08: el viaje creíble más estricto
         "employee_device_mode": "APPROVAL",
-        "risk_medium_score": 20,
-        "risk_high_score": 40,
-        "risk_critical_score": 70,
+        "risk_medium_score": 15,  # 2026-10-08: los cortes más bajos (antes 20/40/70)
+        "risk_high_score": 35,
+        "risk_critical_score": 65,
         "risk_medium_action": "STEP_UP",
         "risk_high_action": "DENY",
         "risk_critical_action": "DENY",
         "risk_signals": {
             "REPLAY_PERCEPTUAL": {"mode": "ENFORCE"},
             "KNOWN_ATTACK": {"mode": "ENFORCE"},
-            "FLASH_FLAT": {"mode": "ENFORCE"},
-            # Antifraude 2a (docs/rd §5.3: «obligatorio y dictado por el servidor» + ráfaga; decisión del dueño del
-            # 2026-10-06: Máximo los exige): sin destello dictado o sin ráfaga, 20 puntos (el corte medio de este nivel:
-            # un paso más); un color fuera de tiempo, sus 15; alterado, 35. Piden más, nunca niegan (ASK_ONLY_SIGNALS):
-            # una red que bloquea el canal en vivo sigue pudiendo checar tras el paso extra.
-            "FLASH_UNPACED": {"mode": "ENFORCE", "points": 20},
-            "FLASH_PACE_TIMING": {"mode": "ENFORCE"},
+            # 2026-10-08: la firma del validador alterada es regla dura (niega sola) también desde el nivel Máximo.
+            "VALIDATOR_SIGNATURE_INVALID": {"mode": "ENFORCE"},
+            # Antifraude 2a (docs/rd §5.3; decisión del dueño del 2026-10-06: Máximo exige la ráfaga): sin ráfaga,
+            # 20 puntos (el corte medio de este nivel: un paso más). Pide más, nunca niega (ASK_ONLY_SIGNALS). Las
+            # señales del destello (FLASH_*) ya no se exigen: el destello se retiró de la experiencia ese mismo día y
+            # sin él nunca se miden.
             "BURST_MISSING": {"mode": "ENFORCE", "points": 20},
-            "FLASH_PACE_MISMATCH": {"mode": "ENFORCE"},
         },
     },
 }

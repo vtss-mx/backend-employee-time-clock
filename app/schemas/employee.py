@@ -17,9 +17,10 @@ from app.schemas.validators import (
     validate_password_strength,
 )
 
-#: Documentos opcionales del empleado (decisión del dueño del producto: la plataforma se abre a otros países). Vacío,
-#: solo espacios o null = sin capturar (NULL); con valor se valida completo y es único en la empresa.
-OPTIONAL_DOCUMENTS = ("rfc", "curp", "nss")
+#: Datos opcionales del empleado (decisiones del dueño del producto: RFC, CURP y NSS porque la plataforma se abre a
+#: otros países; el número de empleado, migración 0076). Vacío, solo espacios o guiones, o null = sin capturar (NULL);
+#: con valor se valida completo y es único en la empresa. Al editar, null o vacío lo borra.
+OPTIONAL_FIELDS = ("employee_number", "rfc", "curp", "nss")
 
 
 class _EmployeeFields(BaseModel):
@@ -31,7 +32,7 @@ class _EmployeeFields(BaseModel):
     @field_validator("employee_number", check_fields=False)
     @classmethod
     def _number(cls, value: str | None) -> str | None:
-        return None if value is None else normalize_employee_number(value)
+        return optional_document(value, normalize_employee_number)
 
     @field_validator("rfc", check_fields=False)
     @classmethod
@@ -69,7 +70,12 @@ class EmployeeCreate(_EmployeeFields):
     first_name: str = Field(max_length=100)
     last_name: str = Field(max_length=100)
     birth_date: date
-    employee_number: str = Field(max_length=30)
+    employee_number: str | None = Field(
+        default=None,
+        max_length=30,
+        description="Opcional. Único en la empresa: letras, números, guion o guion bajo; vacío o null = sin capturar",
+        examples=["EMP-001"],
+    )
     rfc: str | None = Field(
         default=None,
         max_length=20,
@@ -101,13 +107,13 @@ class EmployeeCreate(_EmployeeFields):
 
 
 class EmployeeUpdate(_EmployeeFields):
-    """Actualización parcial: solo se modifican los campos enviados. Un null no cambia nada, salvo en RFC, CURP y NSS
-    (`OPTIONAL_DOCUMENTS`), donde null o vacío borra el dato."""
+    """Actualización parcial: solo se modifican los campos enviados. Un null no cambia nada, salvo en el número, el
+    RFC, la CURP y el NSS (`OPTIONAL_FIELDS`), donde null o vacío borra el dato."""
 
     first_name: str | None = Field(default=None, max_length=100)
     last_name: str | None = Field(default=None, max_length=100)
     birth_date: date | None = None
-    employee_number: str | None = Field(default=None, max_length=30)
+    employee_number: str | None = Field(default=None, max_length=30, description="Null o vacío lo borra")
     rfc: str | None = Field(default=None, max_length=20, description="Null o vacío lo borra")
     curp: str | None = Field(default=None, max_length=25, description="Null o vacía la borra")
     nss: str | None = Field(default=None, max_length=20, description="Null o vacío lo borra")
@@ -145,12 +151,12 @@ class EmployeeRead(Deletion):
 
     id: int
     user_id: int
-    employee_number: str
+    #: Opcionales (`OPTIONAL_FIELDS`): null = sin capturar.
+    employee_number: str | None = None
     first_name: str
     last_name: str
     full_name: str
     birth_date: date
-    #: Opcionales (`OPTIONAL_DOCUMENTS`): null = sin capturar.
     rfc: str | None = None
     curp: str | None = None
     nss: str | None = None
@@ -174,8 +180,8 @@ class EmployeeRead(Deletion):
     department_name: str | None = None
     #: Departamentos de los que es responsable (solo en el detalle).
     managed_departments: list[DepartmentRef] = Field(default_factory=list)
-    #: Ruta versionada de la foto de perfil de la persona (`/users/{user_id}/avatar?v=...`) o None (sin foto o
-    #: empleado inactivo: la empresa solo ve la foto de sus empleados activos).
+    #: Ruta versionada de la foto de perfil de la persona (`/users/{user_id}/avatar?v=...`) o None (sin foto o en
+    #: «Eliminados»). La empresa ve la de sus empleados activos e inactivos (decisión del dueño, 2026-10-06).
     avatar: str | None = None
     created_at: datetime
     updated_at: datetime

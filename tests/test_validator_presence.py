@@ -370,7 +370,9 @@ def test_qr_carries_its_location_in_the_json_body(client, company_headers):
 
 
 def test_without_location_checks_nothing_is_asked(client, company_headers, located):
-    set_policy(client, company_headers, validator_location="OFF")
+    # También la ubicación de las verificaciones en OFF: con OBSERVE (por omisión) el perfil pediría la ubicación para
+    # el mapa aunque la presencia del validador esté apagada (decisión del dueño, 2026-10-07, migración 0085).
+    set_policy(client, company_headers, validator_location="OFF", verification_location="OFF")
     assert profile(client, located)["location_required"] is False
     identified(identify(client, located, signed=signed_for(client, located)))
     assert not {code for code in last_reasons() if code.startswith("VALIDATOR_LOCATION")}

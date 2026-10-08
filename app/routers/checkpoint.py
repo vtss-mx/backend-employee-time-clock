@@ -76,8 +76,8 @@ PRESENCE_ERRORS: dict[int | str, dict[str, Any]] = {
 
 def _identified(result: VerificationResult) -> ApiResponse[VerificationResult]:
     if result.verified:
-        return ok(result, result.message, code="EMPLOYEE_IDENTIFIED")
-    return ok(result, result.message, code="EMPLOYEE_NOT_IDENTIFIED")
+        return ok(result, result.text, code="EMPLOYEE_IDENTIFIED")
+    return ok(result, result.text, code="EMPLOYEE_NOT_IDENTIFIED")
 
 
 @router.get("/me", response_model=ApiResponse[CheckpointProfile], summary="Configuración del validador")

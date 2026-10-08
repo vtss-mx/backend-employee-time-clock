@@ -82,6 +82,8 @@ class UserUsage(UsageCounters):
     role: str | None = None
     #: Nombre del empleado si la cuenta es de un empleado de esa empresa.
     name: str | None = None
+    #: Foto de perfil de la cuenta (ruta versionada) o None: el ADMIN ve la de todos (decisión del dueño, 2026-10-06).
+    avatar: str | None = None
     #: % de las peticiones de la empresa.
     share: float
 

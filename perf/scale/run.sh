@@ -20,6 +20,8 @@
 #      tras los reintentos de la app.
 #   6. Despliegue en plena carga: `docker compose up -d` (recrea TODAS las réplicas a la vez) contra
 #      scripts/deploy.sh (primero las nuevas, luego se retiran las viejas una por una).
+#   7. Caché compartida (Redis): la instantánea de catálogos (una sola para todas las réplicas; su tamaño en MB),
+#      los contadores de límites compartidos, los aciertos frente a los fallos y la memoria usada.
 set -eu
 PERF="$(cd "$(dirname "$0")/.." && pwd)"
 ROOT="$(cd "$PERF/../.." && pwd)"
@@ -72,7 +74,7 @@ docker run --rm --entrypoint python timeclock-scale-backend scripts/generate_sec
 dc --profile load down -v --remove-orphans >/dev/null 2>&1 || true  # siempre desde una base vacía
 
 echo "== 1. Carrera de migraciones: 3 réplicas migran a la vez sobre una base vacía =="
-dc up -d --wait db pgbouncer >/dev/null
+dc up -d --wait db pgbouncer redis >/dev/null
 SCALE_RUN_MIGRATIONS=1 SCALE_OWNER_PASSWORD="$(sed -n 's/^POSTGRES_PASSWORD=//p' "$PERF_ENV_FILE")" \
   dc up -d --no-deps --scale backend=3 backend >/dev/null
 wait_replicas 3
@@ -115,6 +117,19 @@ for n in $REPLICAS; do
 done
 
 rm -f "$OUT"/*.stop
+
+# La caché compartida justo después de la carga (antes de las caídas y los despliegues, que la vacían al migrar).
+redis_cli() { dc exec -T redis sh -c 'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli "$@"' -- "$@"; }
+{
+  echo "memoria: $(redis_cli info memory | tr -d '\r' | grep -E '^(used_memory|maxmemory):' | tr '\n' ' ')"
+  echo "llaves: $(redis_cli dbsize | tr -d '\r')"
+  for key in $(redis_cli --scan --pattern '*:catalogs:*' | tr -d '\r'); do
+    echo "instantánea $key bytes=$(redis_cli memory usage "$key" | tr -d '\r') ttl=$(redis_cli ttl "$key" | tr -d '\r')"
+  done
+  echo "contadores de límites (rl:*): $(redis_cli --scan --pattern '*:rl:*' | grep -c . || true)"
+  echo "aciertos/fallos: $(redis_cli info stats | tr -d '\r' | grep -E '^(keyspace_hits|keyspace_misses|total_commands_processed):' | tr '\n' ' ')"
+  echo "caídas registradas por las réplicas (Redis no responde): $(dc logs backend 2>&1 | grep -c 'no responde en' || true)"
+} > "$OUT/redis.txt"
 
 echo "== 3. Canal WebSocket por el gateway =="
 since=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -187,6 +202,9 @@ wait_replicas "$n"
 sleep 8
 deploy_under_load rolling env COMPOSE_FILE="$ROOT/docker-compose.yml:$PERF/scale/docker-compose.scale.yml" \
   "$ROOT/scripts/deploy.sh"
+
+echo "== 7. Caché compartida (Redis), medida tras la carga =="
+cat "$OUT/redis.txt"
 
 # El resumen corre en la imagen de la API (Python 3.14): no depende del Python del equipo.
 docker run --rm -v "$OUT:/out" -v "$PERF/scale:/scale:ro" --entrypoint python timeclock-scale-backend \

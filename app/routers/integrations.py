@@ -14,9 +14,15 @@ from app.core.responses import ApiResponse, ok
 from app.dependencies import ApiClientDep, DbSession, Pagination, require_api_scope, require_validators_api
 from app.models import ApiScope
 from app.schemas.common import ErrorResponse
-from app.schemas.employee import EmployeeList, EmployeeRead
-from app.schemas.integration import AttendanceFeed, AttendanceList, IntegrationCompanyRead
-from app.schemas.validator import ValidatorList
+from app.schemas.integration import (
+    AttendanceFeed,
+    AttendanceList,
+    IntegrationCompanyRead,
+    IntegrationEmployee,
+    IntegrationEmployeeList,
+    IntegrationValidatorList,
+    integration_employee,
+)
 from app.services.employee_service import EmployeeService
 from app.services.integration_service import IntegrationService
 from app.services.validator_service import ValidatorService
@@ -43,24 +49,27 @@ def company(client: ApiClientDep, db: DbSession) -> ApiResponse[IntegrationCompa
     return ok(IntegrationService(db, client).company(), code="INTEGRATION_COMPANY")
 
 
-@router.get("/employees", response_model=ApiResponse[EmployeeList], summary="Empleados (paginado)")
+@router.get("/employees", response_model=ApiResponse[IntegrationEmployeeList], summary="Empleados (paginado)")
 def employees(
     client: EmployeesReader,
     db: DbSession,
     page: Pagination,
     search: Annotated[str | None, Query(max_length=100, description="Nombre, número, RFC, CURP o correo")] = None,
     active: Annotated[bool | None, Query(description="Filtrar por estado")] = None,
-) -> ApiResponse[EmployeeList]:
+) -> ApiResponse[IntegrationEmployeeList]:
     result = EmployeeService(db, client.company_id).list_employees(search=search, active=active, page=page)
-    return ok(result, code="EMPLOYEES_LISTED", params={"count": result.total})
+    return ok(IntegrationEmployeeList.of_list(result), code="EMPLOYEES_LISTED", params={"count": result.total})
 
 
 @router.get(
-    "/employees/{employee_id}", response_model=ApiResponse[EmployeeRead], summary="Un empleado", responses=NOT_FOUND
+    "/employees/{employee_id}",
+    response_model=ApiResponse[IntegrationEmployee],
+    summary="Un empleado",
+    responses=NOT_FOUND,
 )
-def employee(employee_id: int, client: EmployeesReader, db: DbSession) -> ApiResponse[EmployeeRead]:
+def employee(employee_id: int, client: EmployeesReader, db: DbSession) -> ApiResponse[IntegrationEmployee]:
     service = EmployeeService(db, client.company_id)
-    return ok(service.read(service.get(employee_id)), code="EMPLOYEE_FOUND")
+    return ok(integration_employee(service.read(service.get(employee_id))), code="EMPLOYEE_FOUND")
 
 
 @router.get(
@@ -112,10 +121,10 @@ def attendance_feed(
 
 @router.get(
     "/validators",
-    response_model=ApiResponse[ValidatorList],
+    response_model=ApiResponse[IntegrationValidatorList],
     summary="Validadores de identidad (paginado)",
     description="Con el uso del límite (`active`, `limit`). Sin el módulo de validadores: 403 `VALIDATORS_DISABLED`.",
 )
-def validators(client: ValidatorsReader, db: DbSession, page: Pagination) -> ApiResponse[ValidatorList]:
+def validators(client: ValidatorsReader, db: DbSession, page: Pagination) -> ApiResponse[IntegrationValidatorList]:
     result = ValidatorService(db, client.company_id).list_validators(page, client.max_validators)
-    return ok(result, code="VALIDATORS_LISTED", params={"count": result.total})
+    return ok(IntegrationValidatorList.of_list(result), code="VALIDATORS_LISTED", params={"count": result.total})

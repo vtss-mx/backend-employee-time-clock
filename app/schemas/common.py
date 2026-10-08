@@ -3,12 +3,44 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Self
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ModelWrapValidatorHandler, PrivateAttr, model_validator
 
 from app.core.responses import ApiResponse, ErrorItem
+from app.i18n import LazyText, render_text
 
 #: Respuesta de error documentada en Swagger (success=false, data=null, errors=[...]).
 ErrorResponse = ApiResponse[Any]
+
+
+class Explained(BaseModel):
+    """Un resultado que le explica algo a la persona en `message` (regla 16: nunca se mezclan idiomas).
+
+    Se construye con el texto DIFERIDO (`message=Text("LLAVE", ...)` o una función que lo arma, p. ej.
+    `reason_text(code)`): `message` queda armado en el idioma de la petición (lo que viaja en `data`) y `text`
+    conserva el diferido para el sobre (`ok(result, result.text)`), que lo arma en cada idioma (`i18n`): así la
+    aplicación web cambia de idioma el aviso del resultado sin repetir la petición. Un resultado leído de un JSON (la
+    validación de la respuesta) trae `message` ya armado y su `text` es ese mismo texto."""
+
+    message: str
+    _text: LazyText | None = PrivateAttr(default=None)
+
+    @model_validator(mode="wrap")
+    @classmethod
+    def _keep_text(cls, values: Any, handler: ModelWrapValidatorHandler[Self]) -> Self:
+        lazy = values.get("message") if isinstance(values, dict) else None
+        if lazy is None or isinstance(lazy, str):
+            return handler(values)
+        model = handler({**values, "message": render_text(lazy)})
+        model._text = lazy
+        return model
+
+    @property
+    def text(self) -> LazyText:
+        """El texto diferido de `message` (el que se construyó; uno ya armado, tal cual)."""
+        if self._text is not None:
+            return self._text
+        message = self.message
+        return lambda: message
 
 
 @dataclass(frozen=True)
@@ -58,9 +90,23 @@ class EmployeeRef(BaseModel):
 
     id: int
     full_name: str
-    employee_number: str
+    #: Opcional (migración 0076): null si el empleado no tiene número.
+    employee_number: str | None = None
     #: En «Eliminados»: el historial lo sigue nombrando con la marca «Eliminado».
     deleted: bool = False
+    #: Ruta versionada de su foto de perfil (`/users/{id}/avatar?v=...`) o None (sin foto o en «Eliminados»): la app
+    #: la dibuja con `Avatar` y, sin ella, las iniciales. La integración no la recibe (sus esquemas son otros).
+    avatar: str | None = None
 
 
-__all__ = ["ApiResponse", "Deletion", "EmployeeRef", "ErrorItem", "ErrorResponse", "Page", "PageParams", "deletion_of"]
+__all__ = [
+    "ApiResponse",
+    "Deletion",
+    "EmployeeRef",
+    "ErrorItem",
+    "ErrorResponse",
+    "Explained",
+    "Page",
+    "PageParams",
+    "deletion_of",
+]

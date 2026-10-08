@@ -48,7 +48,8 @@ def set_policy(client, company_headers, **changes):
 
 def test_policy_defaults_and_permissions(client, company_headers):
     policy = client.get(URL, headers=company_headers).json()["data"]
-    assert policy["block_glasses"] and policy["block_headwear"] and policy["block_mask"]
+    # Lentes permitidos (regla retirada, decisión del dueño, 2026-10-07); gorra y cubrebocas se exigen por omisión.
+    assert policy["block_glasses"] is False and policy["block_headwear"] and policy["block_mask"]
     assert policy["liveness_challenge"] and policy["anti_spoofing"] and policy["qr_enabled"]
 
     assert create_employee(client, company_headers).status_code == 201
@@ -60,7 +61,7 @@ def test_policy_defaults_and_permissions(client, company_headers):
     assert client.put(url, json={"block_mask": False}, headers=company_headers).status_code == 403
 
     updated = set_policy(client, company_headers, block_mask=False)
-    assert updated["block_mask"] is False and updated["block_glasses"] is True
+    assert updated["block_mask"] is False and updated["block_glasses"] is False
     assert updated["updated_by"] == ADMIN_EMAIL  # en la consola de la plataforma...
     assert client.get(URL, headers=company_headers).json()["data"]["updated_by"] is None  # ...no fuera de ella
 
@@ -78,7 +79,10 @@ def test_company_can_allow_accessories(client, company_headers):
 
     set_policy(client, company_headers, block_mask=False)
     assert _verify(client, headers, frontal=masked).json()["data"]["verified"] is True
+    # Lentes: apagados por omisión (decisión del dueño, 2026-10-07); encendidos por el ADMIN, se respetan.
     glasses = (b"glasses:juan",) * 3
+    assert _verify(client, headers, frontal=glasses).json()["data"]["verified"] is True
+    assert set_policy(client, company_headers, block_glasses=True)["block_glasses"] is True
     assert _verify(client, headers, frontal=glasses).json()["code"] == "ACCESSORIES_DETECTED"
 
 

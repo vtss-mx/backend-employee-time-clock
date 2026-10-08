@@ -28,7 +28,6 @@ FLASH_UNPACED (medida, nunca un rechazo). Límite honesto (§2.3): el cliente si
 obliga a la inyección a ser en tiempo real, no la impide.
 """
 
-import base64
 import hashlib
 import hmac
 import json
@@ -38,10 +37,11 @@ from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from typing import Any
 
-from cryptography.fernet import Fernet, InvalidToken, MultiFernet
+from cryptography.fernet import InvalidToken
 
 from app.core.config import settings
 from app.core.exceptions import UnprocessableError
+from app.core.sealed import sealer
 from app.facial_recognition.photometry import FLASH_PALETTE, flash_hex
 from app.services.face_signals import PaceOutcome, PaceVerdict
 from app.services.liveness_service import Challenge
@@ -52,13 +52,8 @@ DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _PURPOSE = b"flash-pacing"
 
 
-def _fernet(secret: str) -> Fernet:
-    digest = hmac.new(secret.encode(), _PURPOSE, hashlib.sha256).digest()
-    return Fernet(base64.urlsafe_b64encode(digest))
-
-
 #: La llave vigente sella; las anteriores (DATA_ENCRYPTION_PREVIOUS_KEYS) solo abren: rotar no rompe un reto en curso.
-_SEAL = MultiFernet([_fernet(key) for key in settings.data_encryption_keys])
+_SEAL = sealer(_PURPOSE)
 
 
 class FlashTokenInvalid(UnprocessableError):
@@ -141,7 +136,9 @@ def start_token(challenge: Challenge) -> str:
     return seal(
         PaceState(
             challenge_id=challenge.id,
-            user_id=challenge.user_id,
+            # Un reto de la API pública (sin cuenta) nunca se dicta: no hay canal en vivo (`issue_challenge`). 0 no es
+            # una cuenta: un token así jamás abriría para nadie.
+            user_id=challenge.user_id or 0,
             total=len(challenge.flash),
             expires=int(challenge.expires_at.timestamp()),
             fallback=challenge.flash,

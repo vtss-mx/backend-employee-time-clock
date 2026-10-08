@@ -48,8 +48,11 @@ class DepartmentPerson(BaseModel):
 
     employee_id: int
     full_name: str
-    employee_number: str
+    #: Opcional (migración 0076): null si el empleado no tiene número.
+    employee_number: str | None = None
     active: bool
+    #: Su foto de perfil (ruta versionada) o None: la app muestra las iniciales.
+    avatar: str | None = None
 
 
 class DepartmentRead(Deletion):

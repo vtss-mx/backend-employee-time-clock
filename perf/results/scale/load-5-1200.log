@@ -1,0 +1,35 @@
+ Container timeclock-scale-k6-run-160e11886356 Creating 
+ Container timeclock-scale-k6-run-160e11886356 Created 
+
+
+  █ TOTAL RESULTS 
+
+    checks_total.......: 23871  1138.851191/s
+    checks_succeeded...: 49.44% 11802 out of 23871
+    checks_failed......: 50.55% 12069 out of 23871
+
+    ✗ respuesta 200
+      ↳  49% — ✓ 11802 / ✗ 12069
+
+    CUSTOM
+    shed_503.......................: 12069  575.794689/s
+
+    HTTP
+    http_req_duration..............: avg=508.76ms p(50)=170.11ms p(95)=2.41s p(99)=5.01s max=5.9s
+      { expected_response:true }...: avg=638.08ms p(50)=376.23ms p(95)=2.07s p(99)=4.32s max=5.9s
+    http_req_failed................: 50.55% 12069 out of 23872
+    http_reqs......................: 23872  1138.8989/s
+
+    EXECUTION
+    dropped_iterations.............: 130    6.202114/s
+    iteration_duration.............: avg=508.97ms p(50)=170.27ms p(95)=2.41s p(99)=5.01s max=5.9s
+    iterations.....................: 23871  1138.851191/s
+    vus............................: 10     min=10             max=952 
+    vus_max........................: 1070   min=1000           max=1070
+
+    NETWORK
+    data_received..................: 120 MB 5.7 MB/s
+    data_sent......................: 13 MB  627 kB/s
+
+
+

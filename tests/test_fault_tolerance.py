@@ -2,6 +2,7 @@
 (responde con su código y el sobre de siempre, sigue atendiendo lo demás y no pierde datos)."""
 
 import json
+import logging
 from typing import Annotated
 
 import pytest
@@ -190,6 +191,7 @@ def test_one_failing_purge_does_not_stop_the_others(monkeypatch):
         "jornadas sin salida",
         "umbrales recalibrados",
         maintenance_service.PERF_ROLLUPS,
+        maintenance_service.DRIFT_ROWS,
         *(name for name, _ in billing_jobs.TASKS),
         storage_jobs.DELETED,
         # Antifraude: la evidencia vencida y los casos decididos viejos (en lotes, con su bucket).
@@ -212,9 +214,44 @@ def test_catalogs_survive_a_database_blip(monkeypatch):
     def down(_db):
         raise OperationalError("SELECT", {}, Exception("conexión rechazada"))
 
-    monkeypatch.setattr(catalog_service, "load_catalogs", down)
+    monkeypatch.setattr(catalog_service, "read_catalog_data", down)
     monkeypatch.setattr(settings, "CATALOG_CACHE_SECONDS", 0)
     assert catalog_service.get_catalogs() is first  # se sirven los anteriores
+
+
+def test_redis_failing_in_the_middle_of_a_request_never_breaks_it(client, company_headers, monkeypatch, caplog):
+    """La caché compartida se cae ENTRE dos operaciones de la misma petición (leyó bien, al escribir ya no
+    responde): la petición termina bien con la base, el límite de peticiones sigue por proceso y la caída se
+    registra una sola vez como error del sistema."""
+    from app.core.cache import use_cache
+    from app.middleware import rate_limit
+    from tests.redis_support import FakeRedis, shared
+
+    server = FakeRedis()
+    cache = shared(server)
+    use_cache(cache)
+    monkeypatch.setattr(rate_limit, "limiter", rate_limit.RedisRateLimiter(cache=cache))
+    real_set = server.set
+
+    def set_and_die(*args, **kwargs):
+        written = real_set(*args, **kwargs)
+        server.down = True  # a partir de aquí Redis ya no responde
+        return written
+
+    server.set = set_and_die
+    try:
+        catalog_service.clear_catalog_cache()
+        with caplog.at_level(logging.ERROR):
+            response = client.get("/api/catalogs", headers=company_headers)  # recarga: Redis (fallo) → base → set
+        assert response.status_code == 200 and response.json()["data"]["roles"]
+        assert server.down and len(server.store) == 1  # la instantánea alcanzó a escribirse; luego Redis cayó
+        catalog_service.clear_catalog_cache()  # el borrado compartido falla en silencio (circuito abierto)
+        assert client.get("/api/catalogs", headers=company_headers).status_code == 200  # de la base
+        assert client.get("/api/users/me", headers=company_headers).status_code == 200
+        assert client.post("/api/auth/login", json={"email": "x@y.z", "password": "Mal12345"}).status_code == 401
+        assert sum("Redis (fake:6379/0) no responde" in r.message for r in caplog.records) == 1
+    finally:
+        use_cache(None)
 
 
 def _app_raising(error: Exception) -> TestClient:
@@ -781,3 +818,30 @@ def test_a_wal_backlog_reaches_the_admin_and_the_monitor_never_breaks(monkeypatc
     assert "39 % del guardián" in found["app.pitr.wal_backlog"] and "Última falla" in found["app.pitr.archive_lag"]
     monitor.engine = _Engine(OperationalError("SELECT", {}, Exception("server closed the connection")))
     assert [alert.key for alert in monitor.check()] == ["archive_unreadable", "wal_dropped"]
+
+
+def test_the_mobile_api_with_the_face_engine_down_keeps_its_challenge(client, company_headers):
+    """API pública de verificación (SDK móviles): con el motor facial caído responde 503 reintentable ANTES de consumir
+    el reto o recordar las capturas, así el SDK reintenta la MISMA petición tras `Retry-After` (contrato §4)."""
+    from app.dependencies import get_pipeline
+    from app.main import app
+    from app.services.catalog_service import face_error_text
+    from tests.conftest import FakePipeline
+    from tests.test_api_keys import new_key
+    from tests.test_verification_api import attempt, challenge
+
+    approved_employee(client, company_headers)
+    secret = new_key(client, company_headers, scopes=["VERIFICATION"])["secret"]
+    issued = challenge(client, secret).json()["data"]
+
+    def down() -> None:
+        raise ServiceUnavailableError(
+            face_error_text("FACE_SERVICE_UNAVAILABLE"), code="FACE_SERVICE_UNAVAILABLE", retry_after=5
+        )
+
+    app.dependency_overrides[get_pipeline] = down
+    failed = attempt(client, secret, issued=issued)
+    assert failed.status_code == 503 and failed.json()["code"] == "FACE_SERVICE_UNAVAILABLE"
+    assert failed.headers["Retry-After"] == "5"
+    app.dependency_overrides[get_pipeline] = FakePipeline
+    assert attempt(client, secret, issued=issued).json()["data"]["decision"] == "ALLOW"

@@ -15,6 +15,7 @@ MESSAGES: Messages = {
     "COMPANY_DOCUMENT_FILE": "Document",
     "COMPANY_DOCUMENT_RESTORED": "Document restored",
     "COMPANY_DOCUMENT_UPLOADED": "Document saved",
+    "DOCUMENT_CONFIRMED": "The company already reviewed this document and you can't delete it.",
     "DOCUMENT_DAMAGED": "The file is damaged or incomplete. Choose another one.",
     "DOCUMENT_EMPTY": "The file is empty. Choose another one.",
     "DOCUMENT_FORMAT_NOT_ALLOWED": "The file must be a PDF, Word, Excel, XML, JPG, or PNG file",
@@ -27,4 +28,15 @@ MESSAGES: Messages = {
         "The platform uploaded this document. Only its administrator can delete or restore it."
     ),
     "DOCUMENT_XML_UNSAFE": "The XML declares a document type or entities (DTD). Upload the XML without a DTD.",
+    "EMPLOYEE_DOCUMENTS": {
+        "one": "{count} document",
+        "other": "{count} documents",
+    },
+    "EMPLOYEE_DOCUMENT_DATA_SAVED": "Document details saved",
+    "EMPLOYEE_DOCUMENT_DELETED": "Document deleted",
+    "EMPLOYEE_DOCUMENT_FILE": "Document",
+    "EMPLOYEE_DOCUMENT_REQUIREMENTS": "Required documents",
+    "EMPLOYEE_DOCUMENT_RESTORED": "Document restored",
+    "EMPLOYEE_DOCUMENT_TOO_LARGE": "The file is larger than the maximum size of {size}",
+    "EMPLOYEE_DOCUMENT_UPLOADED": "Document uploaded",
 }

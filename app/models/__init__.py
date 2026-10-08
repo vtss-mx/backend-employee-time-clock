@@ -41,6 +41,7 @@ from app.models.catalog import (
     CatalogDiscountRecurrence,
     CatalogDiscountType,
     CatalogEmployeeDeviceMode,
+    CatalogEmployeeDocumentType,
     CatalogEnrollmentFlag,
     CatalogEnrollmentRejectionReason,
     CatalogEnrollmentStatus,
@@ -78,6 +79,8 @@ from app.models.catalog import (
     CatalogValidatorMode,
     CatalogVerificationMethod,
     CatalogVerificationReason,
+    CatalogVoiceProfile,
+    CatalogVoiceQuestion,
     CatalogWorkMode,
     CatalogWorkSessionStatus,
     MenuModuleScreen,
@@ -88,10 +91,14 @@ from app.models.company import Company
 from app.models.company_api_key import CompanyApiKey, CompanyApiKeyScope
 from app.models.company_document import CompanyDocument
 from app.models.department import Department, DepartmentManager
+from app.models.drift import CompanyFraudWeekly, EngineVersion, SignalDrift
 from app.models.employee import Employee
 from app.models.employee_device import EmployeeDevice
+from app.models.employee_document import EmployeeDocument
 from app.models.employee_qr import EmployeeQr
 from app.models.employee_status_event import EmployeeStatusEvent
+from app.models.enrollment_draft import FaceEnrollmentDraft
+from app.models.enrollment_voice import EnrollmentVoiceAnswer
 from app.models.enums import (
     ApiKeyStatus,
     ApiScope,
@@ -133,6 +140,7 @@ from app.models.enums import (
     UserRole,
     ValidatorMode,
     VerificationMethod,
+    VoiceQuestion,
     WorkMode,
     WorkSessionStatus,
 )
@@ -152,6 +160,7 @@ from app.models.fraud import (
     RiskAssessment,
     RiskSignalStat,
 )
+from app.models.passkey import Passkey, PasskeyChallenge
 from app.models.performance import PerfDay, PerfHour, PerfMinute, SlowRequestAlert
 from app.models.remembered_account import RememberedAccount
 from app.models.shift import Shift, ShiftAssignment, ShiftChangeRequest, ShiftSite, WorkSite
@@ -201,6 +210,7 @@ __all__ = [
     "CatalogDiscountRecurrence",
     "CatalogDiscountType",
     "CatalogEmployeeDeviceMode",
+    "CatalogEmployeeDocumentType",
     "CatalogEnrollmentFlag",
     "CatalogEnrollmentRejectionReason",
     "CatalogEnrollmentStatus",
@@ -238,6 +248,8 @@ __all__ = [
     "CatalogValidatorMode",
     "CatalogVerificationMethod",
     "CatalogVerificationReason",
+    "CatalogVoiceProfile",
+    "CatalogVoiceQuestion",
     "CatalogWorkMode",
     "CatalogWorkSessionStatus",
     "Charge",
@@ -247,6 +259,7 @@ __all__ = [
     "CompanyApiKey",
     "CompanyApiKeyScope",
     "CompanyDocument",
+    "CompanyFraudWeekly",
     "CompanyHoliday",
     "Currency",
     "DailyTask",
@@ -259,10 +272,13 @@ __all__ = [
     "EmployeeAbsence",
     "EmployeeDevice",
     "EmployeeDeviceMode",
+    "EmployeeDocument",
     "EmployeeQr",
     "EmployeeStatusEvent",
     "EmployeeWorkday",
+    "EngineVersion",
     "EnrollmentStatus",
+    "EnrollmentVoiceAnswer",
     "ErrorOccurrence",
     "ErrorReport",
     "ErrorSeverity",
@@ -271,6 +287,7 @@ __all__ = [
     "FaceChallenge",
     "FaceEmbedding",
     "FaceEnrollment",
+    "FaceEnrollmentDraft",
     "FaceEnrollmentFlag",
     "FaceStatus",
     "FlashMode",
@@ -283,6 +300,8 @@ __all__ = [
     "FraudKind",
     "HeadcountDay",
     "MenuModuleScreen",
+    "Passkey",
+    "PasskeyChallenge",
     "Payment",
     "PaymentAllocation",
     "PaymentStatus",
@@ -311,6 +330,7 @@ __all__ = [
     "ShiftChangeRequest",
     "ShiftRequestStatus",
     "ShiftSite",
+    "SignalDrift",
     "SignalMode",
     "SiteKiosk",
     "SlowAlertStatus",
@@ -334,6 +354,7 @@ __all__ = [
     "VerificationLog",
     "VerificationMethod",
     "VerificationPolicy",
+    "VoiceQuestion",
     "WorkBreak",
     "WorkMode",
     "WorkSession",

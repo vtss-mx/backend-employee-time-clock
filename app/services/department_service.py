@@ -20,10 +20,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import ConflictError, NotFoundError
-from app.i18n import t
+from app.i18n import Text
 from app.models import Department, Employee, User
 from app.repositories.department_repository import DepartmentRepository
 from app.repositories.employee_repository import EmployeeRepository
+from app.schemas.avatar import employee_avatar
 from app.schemas.common import PageParams, deletion_of
 from app.schemas.department import DepartmentCreate, DepartmentList, DepartmentPerson, DepartmentRead, clean_name
 from app.services.availability_service import Availability
@@ -58,13 +59,13 @@ class DepartmentService:
         """Validación en vivo del nombre (mismo contrato que los demás campos únicos)."""
         name = clean_name(value)
         if not name:
-            return Availability("department_name", value, None, False, False, "EMPTY", t("NAME_REQUIRED"))
+            return Availability("department_name", value, None, False, False, "EMPTY", Text("NAME_REQUIRED"))
         if len(name) > 100:
-            message = t("NAME_TOO_LONG", {"count": 100})
-            return Availability("department_name", value, None, False, False, "INVALID_FORMAT", message)
+            too_long = Text("NAME_TOO_LONG", {"count": 100})
+            return Availability("department_name", value, None, False, False, "INVALID_FORMAT", too_long)
         if self.repo.name_exists(name, exclude_id):
-            return Availability("department_name", value, name, True, False, "TAKEN", t("DEPARTMENT_NAME_TAKEN"))
-        return Availability("department_name", value, name, True, True, "AVAILABLE", t("NAME_AVAILABLE"))
+            return Availability("department_name", value, name, True, False, "TAKEN", Text("DEPARTMENT_NAME_TAKEN"))
+        return Availability("department_name", value, name, True, True, "AVAILABLE", Text("NAME_AVAILABLE"))
 
     # ---------- Comandos ----------
 
@@ -164,7 +165,12 @@ class DepartmentService:
                 employee_count=counts.get(d.id, 0),
                 managers=[
                     DepartmentPerson(
-                        employee_id=e.id, full_name=e.full_name, employee_number=e.employee_number, active=e.active
+                        employee_id=e.id,
+                        full_name=e.full_name,
+                        employee_number=e.employee_number,
+                        active=e.active,
+                        # La cuenta viene con el empleado (JOIN de su carga): sin consultas de más.
+                        avatar=employee_avatar(e),
                     )
                     for e in managers.get(d.id, [])
                 ],

@@ -106,7 +106,7 @@ class FraudCaseService:
     def _reads(self, cases: Sequence[FraudCase]) -> list[FraudCaseRead]:
         """Empresas, empleados y cuentas de la página en tres consultas (sin una por caso)."""
         companies = CompanyRepository(self.db).names_by_ids({c.company_id for c in cases})
-        people = self.repo.employees([c.employee_id for c in cases if c.employee_id is not None])
+        people, versions = self.repo.employees([c.employee_id for c in cases if c.employee_id is not None])
         emails = UserRepository(self.db).emails_by_ids(c.actor_id for c in cases if c.actor_id)
         return [
             FraudCaseRead(
@@ -117,7 +117,7 @@ class FraudCaseService:
                 kind=case.kind,
                 reason=case.reason,
                 reason_name=reason_name(case.reason),
-                employee=employee_ref(people[case.employee_id]) if case.employee_id in people else None,
+                employee=employee_ref(people[case.employee_id], versions) if case.employee_id in people else None,
                 actor=emails.get(case.actor_id or 0),
                 attempts=case.attempts,
                 max_score=case.max_score,

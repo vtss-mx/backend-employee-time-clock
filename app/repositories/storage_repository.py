@@ -4,15 +4,15 @@ Genéricas por tipo de imagen (`StoredImage` del registro `STORED_IMAGES`): cada
 la referencia de su objeto (sus bytes nunca están en la BD). Así un tipo nuevo no escribe SQL nuevo.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import ColumnElement, Select, delete, func, literal, select
+from sqlalchemy import ColumnElement, delete, func, literal, select
 from sqlalchemy.orm import InstrumentedAttribute, Session
 
-from app.core.soft_delete import INCLUDE_DELETED, with_deleted
+from app.core.soft_delete import with_deleted
 from app.models import StorageDeletion, StorageStatus
 from app.repositories.aggregates import affected_rows, dialect_insert
 
@@ -37,7 +37,7 @@ class StoredImage:
 
     #: Identificador estable (metadato del objeto y su renglón en el estado del ADMIN).
     kind: str
-    #: Para el ADMIN y el log.
+    #: Llave de su nombre en el catálogo de mensajes (el estado del ADMIN lo muestra en el idioma de quien lo lee).
     label: str
     #: Tabla dueña de la referencia.
     model: type[Any]
@@ -69,16 +69,18 @@ class StorageRepository:
 
     # ------------------------------------------------------------------ conteos del estado del ADMIN
 
-    def count_stored(self, image: StoredImage, cap: int) -> int:
-        """Objetos de un tipo en el bucket (filas con referencia), contados hasta `cap`. También los de una fila en
-        «Eliminados» (borrado lógico): su objeto sigue en el bucket hasta que la depuración borra la fila."""
-        return self._count(with_deleted(select(image.key).where(image.object_name.is_not(None))), cap)
-
-    def _count(self, stmt: Select[Any], cap: int) -> int:
-        count = select(func.count()).select_from(stmt.limit(cap).subquery())
-        if stmt.get_execution_options().get(INCLUDE_DELETED):  # lo eliminado también se cuenta (como `paginate`)
-            count = with_deleted(count)
-        return int(self.db.scalar(count) or 0)
+    def count_stored(self, images: Sequence[StoredImage], cap: int) -> list[int]:
+        """Objetos de cada tipo en el bucket (filas con referencia), cada uno contado hasta `cap`, en UNA consulta (un
+        subconteo con tope por tipo, en el orden de `images`): un tipo nuevo en `STORED_IMAGES` no agrega consultas al
+        estado del ADMIN. También los de una fila en «Eliminados» (borrado lógico): su objeto sigue en el bucket hasta
+        que la depuración borra la fila."""
+        counts = [
+            select(func.count())
+            .select_from(select(image.key).where(image.object_name.is_not(None)).limit(cap).subquery())
+            .scalar_subquery()
+            for image in images
+        ]
+        return [int(count or 0) for count in self.db.execute(with_deleted(select(*counts))).one()]
 
     # ------------------------------------------------------------------ cola de borrados del bucket
 
@@ -116,7 +118,9 @@ class StorageRepository:
         affected_rows(self.db, delete(StorageDeletion).where(StorageDeletion.object_name == name))
 
     def count_deletions(self, cap: int) -> int:
-        return self._count(select(StorageDeletion.object_name), cap)
+        """Objetos en la cola de borrado, contados hasta `cap`."""
+        count = select(func.count()).select_from(select(StorageDeletion.object_name).limit(cap).subquery())
+        return int(self.db.scalar(count) or 0)
 
     # ------------------------------------------------------------------ estado de las tareas
 

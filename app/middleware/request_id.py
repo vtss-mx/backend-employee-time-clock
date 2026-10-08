@@ -11,7 +11,9 @@ un resultado normal y queda en el log del proceso con su código y traceId (`app
 También resuelve el idioma de la petición (regla 16): `Accept-Language` (en el canal en vivo, `?lang=` y si no, la
 cabecera) → `current_locale()` para toda la petición, y cada respuesta JSON dice en qué idioma va
 (`Content-Language`) y que depende de esa cabecera (`Vary: Accept-Language`, para que ningún caché mezcle idiomas).
-Se lee en la misma vuelta por las cabeceras que el X-Request-ID: cuesta microsegundos y ninguna consulta.
+Se lee en la misma vuelta por las cabeceras que el X-Request-ID: cuesta microsegundos y ninguna consulta. En una
+petición que cambia algo (no GET) enciende además la anotación de los textos de `data`, que el sobre arma en cada
+idioma (`i18n[idioma].texts`: una respuesta así no se puede volver a pedir al cambiar de idioma).
 
 Middleware ASGI puro: no usa BaseHTTPMiddleware (que crea tareas y streams adicionales por
 petición y reduce el rendimiento con alta concurrencia).
@@ -28,7 +30,7 @@ from fastapi import FastAPI
 from starlette.datastructures import MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from app.core.admission import is_face_route
+from app.core.admission import is_face_route, is_ocr_route, is_voice_route
 from app.core.config import settings
 from app.core.error_context import CAPTURE_LIMIT, BodyCapture, headers_of, parse_body, query_of
 from app.core.error_events import ErrorEvent, is_recorded, route_of, severity_for
@@ -38,12 +40,14 @@ from app.core.observability import RequestTimer, request_timer_var
 from app.core.perf_meter import perf_meter, slow_requests
 from app.core.request_context import RequestInfo, request_id_var, request_info_var
 from app.core.responses import new_trace_id
-from app.i18n import Locale, locale_of, negotiate, reset_locale, set_locale
+from app.i18n import Locale, locale_of, negotiate, reset_locale, set_locale, start_recording, stop_recording
 from app.services.error_reporter import error_reporter
 from app.services.usage_meter import OTHER_ROUTE, usage_meter
 
 logger = logging.getLogger("app.access")
 _VALID_ID = re.compile(r"^[A-Za-z0-9._-]{8,64}$")
+#: Lo que se puede volver a pedir: sus textos de `data` no se anotan para `i18n[idioma].texts` (la app la repite).
+_REPEATABLE = frozenset({"GET", "HEAD", "OPTIONS"})
 
 
 class _Exchange:
@@ -124,6 +128,8 @@ class RequestIdMiddleware:
         token = request_id_var.set(rid)
         locale = negotiate(languages)
         locale_token = set_locale(locale)
+        # Una petición que cambia algo no se puede repetir: los textos de su `data` viajan en cada idioma.
+        texts_token = start_recording(scope.get("method") not in _REPEATABLE)
         info = RequestInfo(method=scope.get("method"), path=scope.get("path"))
         info_token = request_info_var.set(info)
         # Tiempo y sentencias de la BD de ESTA petición (los suman los eventos del motor; mismo objeto en los hilos).
@@ -168,6 +174,7 @@ class RequestIdMiddleware:
             _account(scope, info, crash, rid, exchange, elapsed, timer)
             request_timer_var.reset(timer_token)
             request_info_var.reset(info_token)
+            stop_recording(texts_token)
             reset_locale(locale_token)
             request_id_var.reset(token)
 
@@ -351,12 +358,23 @@ def _observe(
 
 def slow_threshold_ms(scope: Scope, elapsed_ms: float) -> int | None:
     """El umbral de la regla 18 que esta petición pasó, o None si no es lenta. Las rutas faciales
-    (`admission.FACE_PREFIXES`, decisión del dueño del 2026-10-06) usan `SLOW_REQUEST_FACE_THRESHOLD_MS`; las demás,
-    `SLOW_REQUEST_THRESHOLD_MS`. Lo rápido sale con una comparación (la ruta solo se clasifica si pasó el menor)."""
+    (`admission.FACE_PREFIXES`, decisión del dueño del 2026-10-06) usan `SLOW_REQUEST_FACE_THRESHOLD_MS`; las de la
+    verificación por voz (`VOICE_PREFIXES`: transcriben), `SLOW_REQUEST_VOICE_THRESHOLD_MS`; las que corren OCR al subir
+    un documento (`OCR_PREFIXES`), `SLOW_REQUEST_OCR_THRESHOLD_MS`; las demás, `SLOW_REQUEST_THRESHOLD_MS`. Lo rápido
+    sale con una comparación (la ruta solo se clasifica si pasó el menor)."""
     general, face = settings.SLOW_REQUEST_THRESHOLD_MS, settings.SLOW_REQUEST_FACE_THRESHOLD_MS
-    if elapsed_ms <= min(general, face):
+    voice, ocr = settings.SLOW_REQUEST_VOICE_THRESHOLD_MS, settings.SLOW_REQUEST_OCR_THRESHOLD_MS
+    if elapsed_ms <= min(general, face, voice, ocr):
         return None
-    threshold = face if is_face_route(scope.get("method", ""), scope.get("path", "")) else general
+    method, path = scope.get("method", ""), scope.get("path", "")
+    if is_voice_route(method, path):
+        threshold = voice
+    elif is_face_route(method, path):
+        threshold = face
+    elif is_ocr_route(method, path):
+        threshold = ocr
+    else:
+        threshold = general
     return threshold if elapsed_ms > threshold else None
 
 

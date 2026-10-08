@@ -25,10 +25,10 @@ from typing import Any, Self
 
 from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
 
-from app.i18n import LocalizedValueError
+from app.i18n import LazyText, LocalizedValueError
 from app.models.company import RFC_TAX_ID_TYPE, TaxId
 from app.schemas.validators import luhn_valid, normalize_company_rfc
-from app.services.catalog_service import get_catalogs
+from app.services.catalog_service import catalog_name_text, get_catalogs
 
 #: País fiscal cuando llega el número sin él (el de la plataforma; la aplicación web lo propone igual).
 DEFAULT_TAX_COUNTRY = "MX"
@@ -149,7 +149,7 @@ def tax_id_type(code: str, country: str | None) -> str:
     if row is None or not row["active"]:
         raise LocalizedValueError("TAX_ID_TYPE_INVALID")
     if country is not None and row["country_code"] not in (None, country):
-        params = {"name": row["short_name"], "country": catalogs.name("countries", country)}
+        params = {"name": tax_id_name(code), "country": catalog_name_text("countries", country)}
         raise LocalizedValueError("TAX_ID_TYPE_COUNTRY", params)
     return code
 
@@ -163,7 +163,7 @@ def normalize_tax_id(type_code: str, value: str) -> str:
     row = get_catalogs().get(_TAX_ID_TYPES, type_code)
     if row is None:  # quien llama ya validó el tipo; si el catálogo cambió a la mitad, no hay regla con qué medirlo
         raise LocalizedValueError("TAX_ID_TYPE_INVALID")
-    name, low, high = row["short_name"], row["min_length"], row["max_length"]
+    name, low, high = tax_id_name(type_code), row["min_length"], row["max_length"]
     if not low <= len(number) <= high:
         if low == high:
             raise LocalizedValueError("TAX_ID_LENGTH_EXACT", {"name": name, "length": low})
@@ -193,10 +193,10 @@ def resolve_tax_id(country: str | None, type_code: str | None, number: str) -> T
     return TaxId(resolved_country, resolved_type, normalize_tax_id(resolved_type, number))
 
 
-def tax_id_name(type_code: str) -> str:
-    """La sigla del tipo en el idioma de la petición («RFC», «EIN»); el código si ya no está en el catálogo."""
-    row = get_catalogs().get(_TAX_ID_TYPES, type_code)
-    return row["short_name"] if row else type_code
+def tax_id_name(type_code: str) -> LazyText:
+    """La sigla del tipo («RFC», «EIN»; el código si ya no está en el catálogo), diferida: dentro de un mensaje se arma
+    en el idioma de ese mensaje (el sobre lo arma en cada idioma)."""
+    return catalog_name_text(_TAX_ID_TYPES, type_code, "short_name")
 
 
 # ---------- Contrato de la API (alta y edición de empresas) ----------

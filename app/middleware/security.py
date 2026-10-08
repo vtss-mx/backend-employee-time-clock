@@ -6,7 +6,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.core.config import settings
 from app.core.exceptions import BodyTooLargeError, error_response
-from app.i18n import Megabytes, Text, t
+from app.i18n import Megabytes, Text
 
 _DOCS_PATHS = ("/docs", "/redoc", "/openapi.json")
 
@@ -44,13 +44,13 @@ class SecurityMiddleware:
             try:
                 too_large = int(content_length) > self.max_body
             except ValueError:
-                await error_response(status.HTTP_400_BAD_REQUEST, "BAD_REQUEST", t("CONTENT_LENGTH_INVALID"))(
+                await error_response(status.HTTP_400_BAD_REQUEST, "BAD_REQUEST", Text("CONTENT_LENGTH_INVALID"))(
                     scope, receive, send
                 )
                 return
             if too_large:
                 response = error_response(
-                    status.HTTP_413_CONTENT_TOO_LARGE, "PAYLOAD_TOO_LARGE", str(_too_large(self.max_body))
+                    status.HTTP_413_CONTENT_TOO_LARGE, "PAYLOAD_TOO_LARGE", _too_large(self.max_body)
                 )
                 await response(scope, receive, send)
                 return

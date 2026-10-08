@@ -10,6 +10,12 @@ import re
 from typing import Literal
 
 DeviceKind = Literal["phone", "tablet", "desktop"]
+#: Plataforma gruesa de un intento facial (deriva de señales, antifraude fase 3): en iOS todo navegador es WebKit
+#: (iPhone y iPad: "IOS_SAFARI"); en Android casi todos son Chromium (Chrome, Edge, Samsung Internet:
+#: "ANDROID_CHROME") salvo Firefox; una computadora es "DESKTOP"; lo que no se reconoce (o sin User-Agent), "OTHER".
+#: Nunca la persona.
+Platform = Literal["IOS_SAFARI", "ANDROID_CHROME", "DESKTOP", "OTHER"]
+PLATFORMS: tuple[Platform, ...] = ("IOS_SAFARI", "ANDROID_CHROME", "DESKTOP", "OTHER")
 
 # iPadOS moderno se presenta como Mac de escritorio ("Macintosh"): queda como computadora, lo
 # cual también la excluye. Los iPad antiguos y Firefox en tabletas Android sí se identifican.
@@ -17,6 +23,22 @@ _TABLET = re.compile(r"iPad|Tablet|PlayBook|Kindle|Silk/", re.IGNORECASE)
 # "Mobi" es la marca recomendada (MDN) para teléfonos; Android sin "Mobile" es una tableta.
 _PHONE = re.compile(r"iPhone|iPod|Mobi|Windows Phone|BlackBerry|BB10|Opera Mini", re.IGNORECASE)
 _ANDROID = re.compile(r"Android", re.IGNORECASE)
+_IOS = re.compile(r"iPhone|iPad|iPod", re.IGNORECASE)
+_DESKTOP_OS = re.compile(r"Windows|Macintosh|Mac OS X|CrOS|Linux", re.IGNORECASE)
+_FIREFOX = re.compile(r"Firefox/", re.IGNORECASE)
+
+
+def platform_of(user_agent: str | None) -> Platform:
+    """La plataforma gruesa del navegador (`Platform`), para agrupar las señales del motor sin guardar nada de la
+    persona. iPadOS moderno se presenta como Mac: cae en DESKTOP (lo mismo que `classify_device`)."""
+    ua = user_agent or ""
+    if _IOS.search(ua):
+        return "IOS_SAFARI"
+    if _ANDROID.search(ua):
+        return "OTHER" if _FIREFOX.search(ua) else "ANDROID_CHROME"
+    if _DESKTOP_OS.search(ua):
+        return "DESKTOP"
+    return "OTHER"
 
 
 def classify_device(user_agent: str | None, ch_mobile: str | None = None) -> DeviceKind:

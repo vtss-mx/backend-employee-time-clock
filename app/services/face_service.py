@@ -13,32 +13,32 @@ import numpy as np
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.core.crypto import encrypt_bytes, try_decrypt
+from app.core.crypto import encrypt_bytes
 from app.core.exceptions import ServiceUnavailableError, UnprocessableError
 from app.core.object_storage import StorageError
 from app.facial_recognition import FaceAnalysis, FacePipeline, FacePolicy, FaceValidationError
-from app.facial_recognition.matcher import embedding_from_bytes, embedding_to_bytes
+from app.facial_recognition.matcher import embedding_to_bytes, readable_embedding
 from app.facial_recognition.pipeline import Accessory, accessory_consensus
-from app.i18n import t
+from app.i18n import LazyText, Text
 from app.models import Employee, EnrollmentStatus, FaceEmbedding, FaceEnrollment
 from app.repositories.enrollment_repository import FaceEnrollmentRepository
 from app.repositories.face_repository import FaceEmbeddingRepository
 from app.services import face_signals, image_storage
-from app.services.catalog_service import get_catalogs
+from app.services.catalog_service import accessories_text, face_error_text
 from app.services.image_storage import FACE_ENROLLMENT_PHOTOS, ImageUnreadable
 
 logger = logging.getLogger(__name__)
 
 
-def _of_photo(message: str, photo: int | None) -> str:
+def _of_photo(message: LazyText, photo: int | None) -> LazyText:
     """El mensaje de una captura; con varias, dice de cuál foto se trata («Foto 2: …»)."""
-    return message if photo is None else t("PHOTO_ERROR", {"number": photo, "message": message})
+    return message if photo is None else Text("PHOTO_ERROR", {"number": photo, "message": message})
 
 
 def face_rejection(code: str, details: Mapping[str, Any] | None = None, photo: int | None = None) -> UnprocessableError:
     """422 de la captura facial con el mensaje del catálogo `face_errors` (el motor solo informa el código), en el
     idioma de la petición."""
-    message = _of_photo(get_catalogs().face_error_message(code, details), photo)
+    message = _of_photo(face_error_text(code, details), photo)
     return UnprocessableError(message, code=code, details=dict(details) if details else None)
 
 
@@ -69,16 +69,14 @@ class SuspiciousCapture(UnprocessableError):
     """
 
     def __init__(self, code: str, details: Mapping[str, Any] | None = None) -> None:
-        super().__init__(
-            get_catalogs().face_error_message(code, details), code=code, details=dict(details) if details else None
-        )
+        super().__init__(face_error_text(code, details), code=code, details=dict(details) if details else None)
 
 
 def accessories_rejection(found: Sequence[Accessory | str], photo: int | None = None) -> UnprocessableError:
-    """422 "Quítate los lentes para continuar": los nombres salen del catálogo de accesorios
+    """422 "Quítate el cubrebocas para continuar": los nombres salen del catálogo de accesorios
     (el motor facial corre en otros procesos, sin base de datos, y solo informa los códigos)."""
     codes = [str(a) for a in found]
-    message = _of_photo(get_catalogs().accessories_message(codes), photo)
+    message = _of_photo(accessories_text(codes), photo)
     return UnprocessableError(message, code="ACCESSORIES_DETECTED", details={"accessories": codes})
 
 
@@ -104,9 +102,7 @@ def engine_failure() -> ServiceUnavailableError:
     """Un fallo inesperado del motor (ONNX, memoria...) es un 503 con su código, nunca un 500 opaco
     ni la caída del servicio. Se llama desde un `except` (registra el stack trace)."""
     logger.exception("Error en el motor de reconocimiento facial")
-    return ServiceUnavailableError(
-        get_catalogs().face_error_message("FACE_PROCESSING_ERROR"), code="FACE_PROCESSING_ERROR"
-    )
+    return ServiceUnavailableError(face_error_text("FACE_PROCESSING_ERROR"), code="FACE_PROCESSING_ERROR")
 
 
 #: Marca de posible suplantación (catalog.enrollment_flags), junto a las de accesorios.
@@ -161,20 +157,6 @@ def analyze_frames(
     if spoof:
         raise SuspiciousCapture("SPOOF_DETECTED")
     return analyses, flags
-
-
-def readable_embedding(sample_id: int, encrypted: bytes, dimension: int) -> np.ndarray | None:
-    """El vector de una muestra, o None (y un registro en el log) si es ilegible."""
-    data = try_decrypt(encrypted)
-    vector = None
-    if data is not None:
-        try:
-            vector = embedding_from_bytes(data, dimension)
-        except ValueError:
-            vector = None
-    if vector is None:
-        logger.error("Muestra facial %s ilegible (dañada o de otra llave de cifrado): se omite", sample_id)
-    return vector
 
 
 #: Empleados cuya foto aprobada no se pudo migrar al modelo actual, y hasta cuándo no se reintenta:

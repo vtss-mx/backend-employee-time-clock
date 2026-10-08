@@ -94,6 +94,23 @@ def nonce_state(subject: int, nonce: str, *, purpose: str = "") -> NonceState:
     return NonceState.VALID if expires >= time.time() else NonceState.EXPIRED
 
 
+def _api_purpose(device_hash: str) -> str:
+    """Espacio de nombres del reto de un dispositivo de la API pública de verificación (SDK móviles, migración 0084): el
+    sujeto es la llave de la API y el propósito lleva la huella de la llave del dispositivo. El reto de un teléfono no
+    sirve en otro, ni el de una llave con otra, ni como el de una cuenta o un kiosco con el mismo número."""
+    return f"api-device:{device_hash}"
+
+
+def issue_api_nonce(key_id: int, device_hash: str) -> str:
+    """El reto que firma un dispositivo de la API (viaja con cada reto de prueba de vida que pide)."""
+    return issue_nonce(key_id, purpose=_api_purpose(device_hash))
+
+
+def api_nonce_state(key_id: int, device_hash: str, nonce: str) -> NonceState:
+    """Si el reto lo emitió el servidor para esta llave y este dispositivo, y si sigue vigente."""
+    return nonce_state(key_id, nonce, purpose=_api_purpose(device_hash))
+
+
 def nonce_is_valid(user_id: int, nonce: str) -> bool:
     return nonce_state(user_id, nonce) == NonceState.VALID
 

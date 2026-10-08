@@ -208,7 +208,8 @@ class FraudCase(Base):
     last_attempt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     status: Mapped[str] = mapped_column(String(20), ForeignKey(f"{CATALOG}.fraud_case_statuses.code"), nullable=False)
     kind: Mapped[str] = mapped_column(String(30), ForeignKey(f"{CATALOG}.fraud_kinds.code"), nullable=False)
-    #: De quién es: "employee:<id>" o "actor:<cuenta>" (un validador sin saber a quién identificaba).
+    #: De quién es: "employee:<id>", "actor:<cuenta>" (un validador sin saber a quién identificaba) o "device:<huella>"
+    #: (un dispositivo de la API pública de verificación, migración 0084).
     subject: Mapped[str] = mapped_column(String(40), nullable=False)
     employee_id: Mapped[int | None] = mapped_column()
     #: La cuenta que operó la cámara (un validador sin saber a quién identificaba); su índice es el de su FK.

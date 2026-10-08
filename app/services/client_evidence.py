@@ -20,7 +20,7 @@ from pydantic import ValidationError
 from app.core.config import settings
 from app.core.devices import classify_device
 from app.models import RiskSignal
-from app.schemas.capture import CaptureTelemetry, ScreenTelemetry, TrackTelemetry
+from app.schemas.capture import CaptureTelemetry, FrameTelemetry, ScreenTelemetry, TrackTelemetry
 from app.services.risk_rules import Hit
 
 #: Una pantalla de teléfono no pasa de este ancho o alto en px CSS (los más grandes rondan 1 000).
@@ -107,14 +107,40 @@ def parse_telemetry(raw: str | None) -> TelemetryReading:
         return TelemetryReading(invalid=True)
 
 
+def _sides(first: int | None, second: int | None) -> tuple[int | None, int | None]:
+    """Los dos lados de mayor a menor si se conocen los dos (si falta uno, tal como llegaron)."""
+    if first is None or second is None:
+        return first, second
+    return (first, second) if first >= second else (second, first)
+
+
 def track_problems(track: TrackTelemetry | None) -> int:
     """Incoherencias de la pista: lo que reporta fuera de lo que dice poder (resolución o cuadros por segundo) o sin
-    `deviceId` (una cámara real lo tiene)."""
+    `deviceId` (una cámara real lo tiene).
+
+    La resolución se compara por LADOS (el mayor con el mayor, el menor con el menor), no por ancho y alto: un teléfono
+    en vertical reporta la pista girada (720 × 1280) mientras sus capacidades siguen en horizontal (1920 × 1080 como
+    máximo), y eso es la orientación del dispositivo, no una cámara que dice más de lo que puede. Una cámara virtual que
+    reporta 1920 × 1080 con capacidades de 1280 × 720 sigue marcándose (sus dos lados se pasan)."""
     if track is None:
         return 0
-    pairs = ((track.width, track.width_max), (track.height, track.height_max), (track.frame_rate, track.frame_rate_max))
+    sides = _sides(track.width, track.height)
+    limits = _sides(track.width_max, track.height_max)
+    pairs = (*zip(sides, limits, strict=True), (track.frame_rate, track.frame_rate_max))
     over = sum(1 for value, limit in pairs if value is not None and limit is not None and value > limit + 0.5)
     return over + (0 if track.device_id else 1)
+
+
+def frames_synthetic(frames: FrameTelemetry) -> bool:
+    """El ritmo de los cuadros es demasiado exacto para una cámara real (FRAME_TIMING_SYNTHETIC).
+
+    Solo se juzga con el reloj de LLEGADA de cada cuadro (`clock = presentation`). Con el reloj del dibujo (`render`, o
+    sin decirlo: una app anterior) la señal NO se puede medir: ese reloj va alineado al refresco de la pantalla y una
+    cámara real de 30 cuadros en fase con una pantalla de 60 Hz da intervalos idénticos (33.3 ms), lo mismo que una
+    cámara virtual. Lo que no se puede medir nunca cuenta como sospechoso (se queda sin señal)."""
+    if frames.clock != "presentation":
+        return False
+    return frames.count >= settings.RISK_FRAME_TIMING_MIN_FRAMES and frames.cv < settings.RISK_FRAME_TIMING_MIN_CV
 
 
 def screen_problems(screen: ScreenTelemetry | None, user_agent: str | None) -> int:
@@ -144,9 +170,8 @@ def telemetry_hits(reading: TelemetryReading | None, user_agent: str | None) -> 
         hits.append(Hit(RiskSignal.VIRTUAL_CAMERA_PRESENT))
     if track := track_problems(data.track):
         hits.append(Hit(RiskSignal.TRACK_INCONSISTENT, float(track)))
-    frames, steady = data.frames, settings.RISK_FRAME_TIMING_MIN_CV
-    if frames and frames.count >= settings.RISK_FRAME_TIMING_MIN_FRAMES and frames.cv < steady:
-        hits.append(Hit(RiskSignal.FRAME_TIMING_SYNTHETIC, round(frames.cv, 5), steady))
+    if (frames := data.frames) is not None and frames_synthetic(frames):
+        hits.append(Hit(RiskSignal.FRAME_TIMING_SYNTHETIC, round(frames.cv, 5), settings.RISK_FRAME_TIMING_MIN_CV))
     if screen := screen_problems(data.screen, user_agent):
         hits.append(Hit(RiskSignal.SCREEN_INCOHERENT, float(screen)))
     return hits

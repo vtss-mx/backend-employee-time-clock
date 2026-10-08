@@ -135,6 +135,15 @@ class WorkSession(Base):
             postgresql_where=text("reviewed_by_id IS NOT NULL"),
             sqlite_where=text("reviewed_by_id IS NOT NULL"),
         ),
+        # Deriva de señales (antifraude fase 3, migración 0081): las revisiones decididas en una ventana, por empresa
+        # (`reviewed_at` en el rango; parcial: casi ninguna jornada se revisa), para medir las aprobadas sin mirar.
+        Index(
+            "ix_work_sessions_reviewed",
+            "reviewed_at",
+            "company_id",
+            postgresql_where=text("reviewed_at IS NOT NULL"),
+            sqlite_where=text("reviewed_at IS NOT NULL"),
+        ),
         CheckConstraint("scheduled_end > scheduled_start", name="schedule"),
         CheckConstraint("check_out_at IS NULL OR check_out_at >= check_in_at", name="check_out"),
         {"schema": ATTENDANCE},

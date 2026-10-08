@@ -43,9 +43,7 @@ def _break(monkeypatch, owner, name: str, error: type[Exception], *args, **kwarg
 
 def _database_down(monkeypatch, owner, name: str) -> None:
     """503 DATABASE_UNAVAILABLE controlado: una falla del servidor que sí va a la bandeja (ERROR)."""
-    _break(
-        monkeypatch, owner, name, ServiceUnavailableError, "La base de datos no responde", code="DATABASE_UNAVAILABLE"
-    )
+    _break(monkeypatch, owner, name, ServiceUnavailableError, code="DATABASE_UNAVAILABLE")
 
 
 def test_server_failures_are_recorded_and_grouped(client, admin_headers, company_headers, monkeypatch):
@@ -356,7 +354,7 @@ def test_uploaded_photos_are_summarized_never_stored(client, admin_headers, comp
     tamaño; los campos de texto del formulario sí se guardan."""
 
     def engine_down():
-        raise ServiceUnavailableError("Motor facial no disponible", code="FACE_SERVICE_UNAVAILABLE")
+        raise ServiceUnavailableError(code="FACE_SERVICE_UNAVAILABLE", key="SERVICE_UNAVAILABLE")
 
     app.dependency_overrides[get_pipeline] = engine_down
     files = [("images", (f"f{i}.jpg", b"noface", "image/jpeg")) for i in range(3)]

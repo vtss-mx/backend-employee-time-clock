@@ -22,7 +22,7 @@ accessories_of (registro con muchas fotos: CLIP solo en las referencias elegidas
 import hashlib
 import logging
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 
 import cv2
@@ -85,7 +85,9 @@ def accessory_consensus(per_frame: Sequence[Sequence[Accessory]]) -> tuple[Acces
 class FacePolicy:
     """Qué exige la empresa en cada captura (lo configura el ADMIN de la plataforma en su política)."""
 
-    block_glasses: bool = True
+    #: Lentes: apagado por omisión (decisión del dueño, 2026-10-07); el ADMIN lo enciende por empresa como cualquier
+    #: otra regla y el servidor lo respeta.
+    block_glasses: bool = False
     block_headwear: bool = True
     block_mask: bool = True
     anti_spoofing: bool = True
@@ -98,6 +100,9 @@ class FacePolicy:
     #: Calidad mínima de una captura frontal (0 = sin mínimo; ISO/IEC 29794-5: una imagen pobre
     #: compara mal y facilita los engaños).
     min_quality: float = 0.0
+    #: Medir los accesorios aunque la empresa no bloquee ninguno (la validación previa los informa a la app, que los
+    #: muestra como insignias; decisión del dueño, 2026-10-07). Solo cambia si CLIP corre, nunca qué se bloquea.
+    report_accessories: bool = False
 
     def blocks(self, accessory: Accessory) -> bool:
         return {
@@ -108,7 +113,8 @@ class FacePolicy:
 
     @property
     def any_accessory(self) -> bool:
-        return self.block_glasses or self.block_headwear or self.block_mask
+        """Corre CLIP con alguna regla encendida o si se pide informar los accesorios."""
+        return self.block_glasses or self.block_headwear or self.block_mask or self.report_accessories
 
 
 DEFAULT_POLICY = FacePolicy()
@@ -151,8 +157,10 @@ class FaceAnalysis:
     accessories: AccessoryScores | None = None
     #: Fracción de piel visible en nariz/mejillas (None si no se pudo medir).
     lower_face_skin: float | None = None
-    #: Accesorios detectados en ESTA captura (la decisión final se toma por consenso).
+    #: Accesorios detectados en ESTA captura que la empresa BLOQUEA (la decisión final se toma por consenso).
     accessories_found: tuple[Accessory, ...] = ()
+    #: Todos los accesorios detectados en esta captura, bloqueados o no (la app los muestra como insignias).
+    accessories_detected: tuple[Accessory, ...] = ()
     #: Probabilidad de rostro real (anti-spoofing). None si está desactivado.
     real_probability: float | None = None
     #: Huella de la captura (SHA-256 de sus píxeles): detecta capturas repetidas o reenviadas.
@@ -306,7 +314,8 @@ class FacePipeline:
         if sharpness < self.t.min_sharpness:
             raise FaceValidationError("TOO_BLURRY")
 
-        scores, skin, found = self._detect_accessories(image, face, policy=policy)
+        scores, skin, detected = self._detect_accessories(image, face, policy=policy)
+        found = tuple(a for a in detected if policy.blocks(a))
         if found and enforce_accessories:
             raise accessories_error(found)
         quality = self._quality_score(face.score, sharpness, brightness)
@@ -327,6 +336,7 @@ class FacePipeline:
             accessories=scores,
             lower_face_skin=skin,
             accessories_found=found,
+            accessories_detected=detected,
             real_probability=real,
             capture_digest=traits.digest,
             face_thumb=traits.thumb,
@@ -403,7 +413,20 @@ class FacePipeline:
             return None, None, ()
         image = self._decode(image_bytes, policy)
         face = self._single_face(image, min_score=self.t.min_detection_score)
-        return self._detect_accessories(image, face, policy=policy)
+        scores, skin, detected = self._detect_accessories(image, face, policy=policy)
+        return scores, skin, tuple(a for a in detected if policy.blocks(a))
+
+    @observed("face.identity")
+    def identity_of(self, image_bytes: bytes) -> np.ndarray | None:
+        """Solo el vector facial de un fotograma (el video de la verificación por voz): un único rostro con la confianza
+        secundaria (la persona habla y se mueve), sin pose, calidad ni accesorios; None sin rostro o con varios. El
+        fotograma lo codificó el servidor (sin metadatos): no se juzga su origen."""
+        image = self._decode(image_bytes, replace(DEFAULT_POLICY, reject_foreign_images=False))
+        faces = self.engine.detect(image, min_score=self.t.secondary_detection_score)
+        if len(faces) != 1:
+            return None
+        face = faces[0]
+        return self._represent(image, face, self._align(image, face))
 
     @observed("face.burst")
     def analyze_burst(self, data: bytes, layout: BurstLayout, rules: BurstRules) -> BurstAnalysis:
@@ -503,27 +526,29 @@ class FacePipeline:
     def _detect_accessories(
         self, image: np.ndarray, face: DetectedFace, *, policy: FacePolicy
     ) -> tuple[AccessoryScores | None, float | None, tuple[Accessory, ...]]:
-        # Si la empresa permite todos los accesorios, no se ejecuta CLIP (ahorra CPU).
+        """(puntajes, piel de nariz y mejillas, TODOS los accesorios detectados: lentes, gorra o sombrero y cubrebocas,
+        bloqueados o no; quien llama decide cuáles bloquea con `policy.blocks`). Si la empresa permite todos los
+        accesorios y nadie pide informarlos, no se ejecuta CLIP (ahorra CPU)."""
         if self.accessories is None or not policy.any_accessory:
             return None, None, ()
         scores = self.accessories.score(image, face)
         skin = lower_face_skin_ratio(image, face) if scores.mask >= self.t.mask_threshold else None
-        detected = {
+        present = {
             Accessory.GLASSES: scores.glasses >= self.t.glasses_threshold,
             Accessory.HEADWEAR: scores.headwear >= self.t.headwear_threshold,
             Accessory.MASK: self._mask_confirmed(scores.mask, skin),
         }
-        found = [a for a, present in detected.items() if present and policy.blocks(a)]
-        if found or max(scores.glasses, scores.headwear, scores.mask) >= 0.2:
+        detected = tuple(a for a, seen in present.items() if seen)
+        if detected or max(scores.glasses, scores.headwear, scores.mask) >= 0.2:
             logger.info(
                 "Accesorios: lentes=%.2f gorra=%.2f cubrebocas=%.2f piel_nariz=%s → %s",
                 scores.glasses,
                 scores.headwear,
                 scores.mask,
                 "n/d" if skin is None else f"{skin:.2f}",
-                [a.value for a in found] or "ninguno",
+                [a.value for a in detected] or "ninguno",
             )
-        return scores, skin, tuple(found)
+        return scores, skin, detected
 
     def _mask_confirmed(self, clip_probability: float, skin_ratio: float | None) -> bool:
         """CLIP sospecha + la nariz y mejillas están físicamente cubiertas (sin piel visible)."""

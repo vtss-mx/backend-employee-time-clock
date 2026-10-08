@@ -3,8 +3,11 @@
 from app.services.catalog_service import get_catalogs
 from tests.conftest import (
     approved_employee,
+    complete_voice,
     create_company,
     create_employee,
+    enrollment_challenge,
+    initial_photo,
     login,
     submit_enrollment,
     turn_files,
@@ -44,7 +47,10 @@ def test_full_enrollment_review_flow(client, company_headers):
 
     submitted = submit_enrollment(client, headers)
     assert submitted.status_code == 201
-    assert submitted.json()["data"]["face_status"] == "PENDING_REVIEW"
+    # Las fotos no terminan el registro (siguen las preguntas en video, que el helper responde): la respuesta de las
+    # fotos trae la sesión de voz y el empleado sigue sin registro hasta pasarlas.
+    assert submitted.json()["data"]["face_status"] == "NOT_ENROLLED" and submitted.json()["data"]["voice"]["questions"]
+    assert client.get("/api/users/me", headers=headers).json()["data"]["employee"]["face_status"] == "PENDING_REVIEW"
     assert submit_enrollment(client, headers).json()["code"] == "ENROLLMENT_PENDING"
 
     # Pendiente: sigue sin poder verificarse ni generar su QR.
@@ -141,12 +147,12 @@ def test_company_requests_reverification_from_all_employees(client, admin_header
 # ---------------- Validaciones del registro ----------------
 
 
-def test_enrollment_rejects_glasses_inconsistency_and_bad_liveness(client, company_headers):
+def test_enrollment_rejects_mask_inconsistency_and_bad_liveness(client, company_headers):
     create_employee(client, company_headers)
     headers = login(client, "juan@empresa.com", "Empleado123")
-    response = submit_enrollment(client, headers, frontal=(b"glasses:juan", b"face:juan", b"glasses:juan"))
+    response = submit_enrollment(client, headers, frontal=(b"mask:juan", b"face:juan", b"mask:juan"))
     assert response.status_code == 422 and response.json()["code"] == "ACCESSORIES_DETECTED"
-    assert response.json()["message"] == "Quítate los lentes para continuar"
+    assert response.json()["message"] == "Quítate el cubrebocas para continuar"
     # Con muchas fotos, una mala se descarta; con menos útiles que FACE_ENROLL_MIN_USABLE, el motivo más frecuente.
     response = submit_enrollment(client, headers, frontal=(b"face:juan", b"noface", b"noface"))
     assert response.json()["code"] == "NO_FACE" and response.json()["message"] == face_message("NO_FACE")
@@ -175,8 +181,12 @@ def test_face_verification_rejects_other_person(client, company_headers):
 
 def test_face_verification_accessories_block(client, company_headers):
     headers = approved_employee(client, company_headers)
-    response = _verify(client, headers, frontal=(b"glasses:juan",))
-    assert response.status_code == 422 and response.json()["message"] == "Quítate los lentes para continuar"
+    response = _verify(client, headers, frontal=(b"mask:juan",))
+    assert response.status_code == 422 and response.json()["message"] == "Quítate el cubrebocas para continuar"
+    # Lentes: apagados por omisión (decisión del dueño, 2026-10-07): pasan, y la validación previa los informa.
+    assert _verify(client, headers, frontal=(b"glasses:juan", b"glasses:juan")).json()["data"]["verified"] is True
+    glasses = client.post("/api/face/check", files={"image": ("c.jpg", b"glasses:juan", "image/jpeg")}, headers=headers)
+    assert glasses.status_code == 200 and glasses.json()["data"]["accessories"] == ["GLASSES"]
     check = client.post("/api/face/check", files={"image": ("c.jpg", b"hat:juan", "image/jpeg")}, headers=headers)
     assert check.status_code == 422 and check.json()["errors"][0]["details"]["accessories"] == ["HEADWEAR"]
 
@@ -246,12 +256,14 @@ def test_enrollment_accessory_review_flags_for_admin(client, company_headers):
     frontal = (b"mask:juan", b"mask:juan", b"face:juan")
     assert submit_enrollment(client, headers, frontal=frontal).json()["code"] == "ACCESSORIES_DETECTED"
 
-    challenge = client.post("/api/face/challenge", headers=headers).json()["data"]
+    assert initial_photo(client, headers).status_code == 201
+    challenge = enrollment_challenge(client, headers)
     files = [("images", (f"f{i}.jpg", f, "image/jpeg")) for i, f in enumerate(frontal)]
     files += turn_files(challenge)
     data = {"challenge_id": challenge["challenge_id"], "accessory_review": "true"}
     submitted = client.post("/api/enrollment/face", data=data, files=files, headers=headers)
     assert submitted.status_code == 201, submitted.text
+    complete_voice(client, headers, submitted.json()["data"])
     enrollment_id = submitted.json()["data"]["enrollment_id"]
     detail = client.get(f"/api/enrollments/{enrollment_id}", headers=company_headers).json()["data"]
     assert detail["flagged_accessories"] == ["MASK"]

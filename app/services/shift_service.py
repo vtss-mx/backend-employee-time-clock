@@ -26,6 +26,7 @@ pueden restaurar; restaurar un turno exige su nombre libre y sus sitios vigentes
 vuelve a aplicar las MISMAS reglas que asignar (`_plans`).
 """
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
@@ -38,6 +39,7 @@ from app.i18n import Params, Text
 from app.models import AssignmentState, Employee, Shift, ShiftAssignment, User, WorkSite
 from app.repositories.employee_repository import EmployeeRepository
 from app.repositories.shift_repository import ShiftRepository
+from app.schemas.avatar import person_avatar
 from app.schemas.bulk import BulkOutcome, BulkResult, BulkResultCode
 from app.schemas.common import EmployeeRef, PageParams, deletion_of
 from app.schemas.shift import (
@@ -60,12 +62,17 @@ from app.services.trash import commit_restore, ensure_deleted, ensure_live, ensu
 ASSIGNMENT_NOTICE_DAYS = 1
 
 
-def employee_ref(employee: Employee) -> EmployeeRef:
+def employee_ref(employee: Employee, versions: Mapping[int, str | None] | None = None) -> EmployeeRef:
+    """El empleado resumido con su foto de perfil. La versión de la foto viaja con la cuenta, que se carga junto con el
+    empleado (JOIN): ninguna consulta de más. Donde la consulta evita ese JOIN a propósito (el tablero, los casos de
+    fraude), `versions` trae la de cada cuenta de la página, leída en UNA consulta."""
+    version = employee.user.avatar_version if versions is None else versions.get(employee.user_id)
     return EmployeeRef(
         id=employee.id,
         full_name=employee.full_name,
         employee_number=employee.employee_number,
         deleted=employee.deleted,
+        avatar=person_avatar(employee.user_id, version, deleted=employee.deleted),
     )
 
 

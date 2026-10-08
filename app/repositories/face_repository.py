@@ -3,10 +3,21 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+import numpy as np
 from sqlalchemy import ColumnElement, Select, delete, func, select, true, update
 from sqlalchemy.orm import Session
 
-from app.models import CaptureTrace, Employee, FaceEmbedding, FaceEnrollment, FaceStatus, FraudEvidence
+from app.facial_recognition.matcher import readable_embedding
+from app.models import (
+    CaptureTrace,
+    Employee,
+    EnrollmentVoiceAnswer,
+    FaceEmbedding,
+    FaceEnrollment,
+    FaceEnrollmentDraft,
+    FaceStatus,
+    FraudEvidence,
+)
 from app.repositories.aggregates import affected_rows, insert_many
 
 #: (muestra, empleado, embedding cifrado, dimensión) de una fila de la galería.
@@ -222,11 +233,19 @@ class FaceEmbeddingRepository:
 
     def erase_employee(self, company_id: int, employee_id: int) -> None:
         """Borrado DE VERDAD de lo biométrico de un empleado que se elimina (regla 13; LFPDPPP, datos sensibles): sus
-        plantillas, sus registros faciales (con sus marcas; las fotos ya se encolaron para salir del bucket), las
-        huellas perceptuales de sus capturas (llevan su embedding) y los fotogramas de evidencia de sus casos de
+        plantillas, sus registros faciales (con sus marcas; las fotos ya se encolaron para salir del bucket), la foto
+        inicial de un registro a medias (su borrador, con su plantilla), las huellas perceptuales de sus capturas
+        (llevan su embedding), los clips de su verificación por voz y los fotogramas de evidencia de sus casos de
         fraude. Una sentencia por tabla, sin cargar filas, cada una por su índice de empleado (la evidencia, que se
         depura a los 90 días, por la empresa). Su ficha y su historial de asistencia se conservan (borrado lógico)."""
-        models: tuple[Any, ...] = (FaceEmbedding, FaceEnrollment, CaptureTrace, FraudEvidence)
+        models: tuple[Any, ...] = (
+            FaceEmbedding,
+            EnrollmentVoiceAnswer,
+            FaceEnrollment,
+            FaceEnrollmentDraft,
+            CaptureTrace,
+            FraudEvidence,
+        )
         for model in models:
             stmt = delete(model).where(model.company_id == company_id, model.employee_id == employee_id)
             affected_rows(self.db, stmt)
@@ -241,6 +260,13 @@ class FaceEmbeddingRepository:
         for item in self.db.scalars(select(FaceEmbedding).where(FaceEmbedding.enrollment_id == enrollment_id)):
             item.active = True
         self.db.flush()
+
+    def vectors_of_enrollment(self, enrollment_id: int) -> list[np.ndarray]:
+        """Los vectores (descifrados) de las muestras de un registro, activas o no: el rostro del video de la
+        verificación por voz se compara con las fotos de ESE registro, aún sin aprobar (índice `enrollment_id`)."""
+        rows = self.db.scalars(select(FaceEmbedding).where(FaceEmbedding.enrollment_id == enrollment_id))
+        vectors = (readable_embedding(row.id, row.embedding_encrypted, row.dimension) for row in rows)
+        return [vector for vector in vectors if vector is not None]
 
     def delete_enrollment(self, enrollment_id: int) -> None:
         for item in self.db.scalars(select(FaceEmbedding).where(FaceEmbedding.enrollment_id == enrollment_id)):

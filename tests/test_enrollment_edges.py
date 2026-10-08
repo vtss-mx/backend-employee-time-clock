@@ -13,13 +13,17 @@ from app.core.config import settings
 from app.core.database import SessionLocal
 from app.core.exceptions import PermissionDeniedError, UnprocessableError
 from app.models import FaceEnrollment, User
-from app.services.enrollment_service import EnrollmentService, _image_type
+from app.services.enrollment_service import EnrollmentService
+from app.services.image_storage import image_type
 from app.services.liveness_service import NO_RESPONSE
 from tests.conftest import (
     COMPANY_EMAIL,
     FakePipeline,
     approved_employee,
+    complete_voice,
     create_employee,
+    enrollment_challenge,
+    initial_photo,
     login,
     submit_enrollment,
     turn_files,
@@ -42,7 +46,7 @@ def test_the_reference_photo_keeps_its_real_format():
     image = np.full((8, 8, 3), 128, dtype=np.uint8)
     for extension, content_type in ((".png", "image/png"), (".webp", "image/webp"), (".jpg", "image/jpeg")):
         ok, encoded = cv2.imencode(extension, image)
-        assert ok and _image_type(encoded.tobytes()) == content_type
+        assert ok and image_type(encoded.tobytes()) == content_type
 
 
 def test_only_active_employees_of_the_company_enroll(client, company_headers):
@@ -62,6 +66,7 @@ def test_an_enrollment_takes_one_to_the_configured_number_of_photos(client, comp
     """Desde una foto (una app anterior manda 5) hasta FACE_ENROLL_MAX_PHOTOS (36): la ruta ya lo limita; el servicio
     lo vuelve a revisar."""
     assert create_employee(client, company_headers).status_code == 201
+    assert initial_photo(client, login(client, "juan@empresa.com", "Empleado123")).status_code == 201
     for images in ([], [b"face:juan"] * (settings.FACE_ENROLL_MAX_PHOTOS + 1)):
         with pytest.raises(UnprocessableError) as error:
             _submit("juan@empresa.com", images)
@@ -97,13 +102,15 @@ def test_a_screen_seen_only_in_the_turn_is_flagged_for_the_reviewer(client, comp
     assert create_employee(client, company_headers).status_code == 201
     headers = login(client, "juan@empresa.com", "Empleado123")
     frontal = (b"face:juan", b"spoof:juan", b"face:juan")
-    challenge = client.post("/api/face/challenge", headers=headers).json()["data"]
+    assert initial_photo(client, headers).status_code == 201
+    challenge = enrollment_challenge(client, headers)
     files = [("images", (f"f{i}.jpg", f, "image/jpeg")) for i, f in enumerate(frontal)]
     files += turn_files(challenge, "juan", image="spoof-turn:{person}")
     submitted = client.post(
         "/api/enrollment/face", data={"challenge_id": challenge["challenge_id"]}, files=files, headers=headers
     )
     assert submitted.status_code == 201, submitted.text
+    complete_voice(client, headers, submitted.json()["data"])
     detail = client.get(f"/api/enrollments/{submitted.json()['data']['enrollment_id']}", headers=company_headers)
     assert detail.json()["data"]["flagged_accessories"] == ["SPOOF"]
 

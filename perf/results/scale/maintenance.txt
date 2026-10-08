@@ -1,11 +1,13 @@
 Las réplicas intentan la vuelta a la vez (cada una sostiene el candado 4 s si lo obtiene):
-678152b8a514 tomó el candado
-d7bb10b2ed56 se saltó la vuelta (otra instancia tiene el candado)
-a54c61cb1a45 se saltó la vuelta (otra instancia tiene el candado)
-678152b8a514 trabajó
+d474f76ec51b se saltó la vuelta (otra instancia tiene el candado)
+e7135316ade1 se saltó la vuelta (otra instancia tiene el candado)
+85601e42d44d tomó el candado
+b6707964e920 se saltó la vuelta (otra instancia tiene el candado)
+866fd55e0dd3 se saltó la vuelta (otra instancia tiene el candado)
+85601e42d44d trabajó
 Un proceso con el candado muere a la mitad (kill -9): ¿queda pegado en PgBouncer?
-a54c61cb1a45 tomó el candado
-d7bb10b2ed56 tomó el candado
-d7bb10b2ed56 trabajó
+866fd55e0dd3 tomó el candado
+e7135316ade1 tomó el candado
+e7135316ade1 trabajó
 Vueltas programadas (MAINTENANCE_INTERVAL_SECONDS=5) en el log de cada réplica:
   fallas del mantenimiento: 0

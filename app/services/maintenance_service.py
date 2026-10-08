@@ -54,12 +54,16 @@ from app.models import (
     Charge,
     Company,
     CompanyDocument,
+    CompanyFraudWeekly,
     CompanyHoliday,
     DailyTask,
     Department,
     Employee,
+    EmployeeDocument,
     EmployeeQr,
     EmployeeWorkday,
+    EngineVersion,
+    EnrollmentVoiceAnswer,
     ErrorOccurrence,
     ErrorReport,
     ErrorStatus,
@@ -67,7 +71,9 @@ from app.models import (
     FaceChallenge,
     FaceEmbedding,
     FaceEnrollment,
+    FaceEnrollmentDraft,
     HeadcountDay,
+    PasskeyChallenge,
     Payment,
     PerfDay,
     PerfHour,
@@ -78,6 +84,7 @@ from app.models import (
     Shift,
     ShiftAssignment,
     ShiftSite,
+    SignalDrift,
     SiteKiosk,
     SlowAlertStatus,
     SlowRequestAlert,
@@ -95,7 +102,7 @@ from app.repositories import partition_repository
 from app.repositories.attendance_repository import close_missed_checkouts
 from app.repositories.maintenance_repository import PurgeKey, delete_batch
 from app.repositories.performance_repository import ALL_KINDS
-from app.services import billing_jobs, fraud_case_service, ip_database, perf_rollup, storage_jobs
+from app.services import billing_jobs, drift_service, fraud_case_service, ip_database, perf_rollup, storage_jobs
 from app.services.face_security import recalibrate_if_due
 
 logger = logging.getLogger(__name__)
@@ -120,10 +127,59 @@ def _days_ago(now: datetime, days: int) -> date:
     return (now - timedelta(days=days)).date()
 
 
+def _unfinished_enrollment(now: datetime) -> ColumnElement[bool]:
+    """Un registro facial que esperaba sus respuestas en video y ya no llegarán: el paso 3 se retoma otro día
+    (decisión del dueño, 2026-10-07), así que un registro a medias vive `FACE_ENROLLMENT_DRAFT_HOURS`, lo mismo que la
+    foto inicial; después se borra con su foto y sus respuestas. Por su índice parcial
+    `ix_face_enrollments_voice_pending` (la columna booleana tal cual, nunca `IS true`: con `IS TRUE` PostgreSQL no
+    deduce el predicado del índice y recorría la tabla)."""
+    return and_(
+        FaceEnrollment.voice_required,
+        FaceEnrollment.voice_passed_at.is_(None),
+        FaceEnrollment.submitted_at < now - timedelta(hours=settings.FACE_ENROLLMENT_DRAFT_HOURS),
+    )
+
+
 #: Qué se depura y desde cuándo (las retenciones viven en la configuración).
 PURGES: tuple[Purge, ...] = (
     Purge("sesiones", AuthSession.id, lambda now: AuthSession.expires_at < now - timedelta(days=1)),
     Purge("retos de prueba de vida", FaceChallenge.id, lambda now: FaceChallenge.expires_at <= now),
+    # Llaves de acceso (antifraude fase 3): los retos sellados ya usados sobran en cuanto vencen.
+    Purge("retos de llaves de acceso usados", PasskeyChallenge.digest, lambda now: PasskeyChallenge.expires_at <= now),
+    # Verificación por voz del registro facial (decisión del dueño, 2026-10-06): los videos se conservan cifrados
+    # FACE_VIDEO_RETENTION_DAYS (como la evidencia de fraude) y salen del bucket con su fila; un registro que nunca
+    # terminó sus respuestas (la persona cerró la app) se borra al doble de la vida de su sesión: primero las
+    # respuestas que sí pasaron (sus clips a la cola), luego el registro con su foto (sus muestras, en cascada).
+    Purge(
+        "videos de la verificación por voz",
+        EnrollmentVoiceAnswer.id,
+        lambda now: EnrollmentVoiceAnswer.created_at < now - timedelta(days=settings.FACE_VIDEO_RETENTION_DAYS),
+        objects=EnrollmentVoiceAnswer.object_name,
+    ),
+    Purge(
+        "respuestas de registros faciales sin terminar",
+        EnrollmentVoiceAnswer.id,
+        lambda now: exists().where(
+            FaceEnrollment.id == EnrollmentVoiceAnswer.enrollment_id,
+            FaceEnrollment.company_id == EnrollmentVoiceAnswer.company_id,
+            _unfinished_enrollment(now),
+        ),
+        objects=EnrollmentVoiceAnswer.object_name,
+    ),
+    Purge(
+        "registros faciales sin terminar",
+        FaceEnrollment.id,
+        _unfinished_enrollment,
+        objects=FaceEnrollment.photo_object,
+    ),
+    # La foto inicial del registro (paso 1 de 3, decisión del dueño 2026-10-07) vence a las FACE_ENROLLMENT_DRAFT_HOURS:
+    # el borrador sale con su objeto del bucket (índice `ix_face_enrollment_drafts_expires`).
+    Purge(
+        "fotos iniciales del registro facial vencidas",
+        FaceEnrollmentDraft.id,
+        lambda now: FaceEnrollmentDraft.expires_at <= now,
+        objects=FaceEnrollmentDraft.photo_object,
+    ),
     Purge(
         "huellas de capturas",
         CaptureFingerprint.digest,
@@ -223,6 +279,22 @@ PURGES: tuple[Purge, ...] = (
         (PerfDay.kind, PerfDay.day, PerfDay.name),
         lambda now: and_(PerfDay.kind.in_(ALL_KINDS), PerfDay.day < _days_ago(now, settings.PERF_DAY_RETENTION_DAYS)),
     ),
+    # Deriva de señales (antifraude fase 3): las ventanas y los cambios de versión más viejos que su retención.
+    Purge(
+        "deriva de señales",
+        SignalDrift.id,
+        lambda now: SignalDrift.week_start < _days_ago(now, settings.DRIFT_RETENTION_DAYS),
+    ),
+    Purge(
+        "deriva por empresa",
+        CompanyFraudWeekly.id,
+        lambda now: CompanyFraudWeekly.week_start < _days_ago(now, settings.DRIFT_RETENTION_DAYS),
+    ),
+    Purge(
+        "bitácora del motor",
+        EngineVersion.id,
+        lambda now: EngineVersion.noted_at < now - timedelta(days=settings.DRIFT_RETENTION_DAYS),
+    ),
     Purge(
         "alertas de peticiones lentas resueltas",
         SlowRequestAlert.id,
@@ -287,6 +359,17 @@ SOFT_DELETE_PURGES: tuple[Purge, ...] = (
     ),
     Purge("días laborables eliminados", EmployeeWorkday.id, lambda now: _deleted_before(EmployeeWorkday, now)),
     Purge("festivos eliminados", CompanyHoliday.id, lambda now: _deleted_before(CompanyHoliday, now)),
+    # Documentos de identidad del empleado (onboarding con OCR, 2026-10-07): SOLO los que el propio empleado eliminó de
+    # su lista (p. ej. al reemplazar un archivo), al vencer su retención. Al eliminar al empleado sus documentos se
+    # borran DE VERDAD con la persona (regla 13, LFPDPPP: una identificación lleva su foto y sus datos;
+    # `person_erasure.erase_employee_documents`), así que un empleado eliminado ya no tiene ninguno: no hay que
+    # depurarlos antes que a él. Cada lote encola sus objetos para salir del bucket en su misma transacción.
+    Purge(
+        "documentos de empleados eliminados",
+        EmployeeDocument.id,
+        lambda now: _deleted_before(EmployeeDocument, now),
+        objects=EmployeeDocument.object_name,
+    ),
     # Con su asistencia, bitácora, ausencias, solicitudes, dispositivos y casos de fraude (CASCADE): lo que la LFT pide
     # conservar hasta un año después de la baja. Sus datos biométricos ya se habían borrado al eliminarlo.
     Purge("empleados eliminados", Employee.id, lambda now: _deleted_before(Employee, now)),
@@ -387,6 +470,7 @@ def purge_expired(db: Session, *, batch_size: int | None = None, now: datetime |
     removed["jornadas sin salida"] = _close_missed_checkouts(db, moment)
     removed.update(_fraud(db, moment, size))
     removed["umbrales recalibrados"] = _recalibrate(db, moment)
+    removed[DRIFT_ROWS] = _drift(db, moment)
     removed[PERF_ROLLUPS] = _rollup_performance(db, moment)
     # Cobranza y consumo: plantilla diaria, cargos, suspensión por falta de pago, pronósticos y la foto
     # del almacenamiento (cada tarea falla sola).
@@ -450,6 +534,21 @@ def _fraud(db: Session, now: datetime, batch: int) -> dict[str, int]:
         db.rollback()
         logger.exception("Falló la depuración de los casos de fraude (se reintenta en la siguiente vuelta)")
         return {}
+
+
+#: Lo que reporta el monitoreo de deriva (filas calculadas de la última ventana completa que faltaba).
+DRIFT_ROWS = "deriva de señales calculada"
+
+
+def _drift(db: Session, now: datetime) -> int:
+    """La deriva de las señales (antifraude fase 3, `drift_service`), si falta la última ventana completa; falla sola
+    (no detiene el resto del mantenimiento) y la siguiente vuelta lo vuelve a intentar."""
+    try:
+        return drift_service.run_if_due(db, now)
+    except SQLAlchemyError:
+        db.rollback()
+        logger.exception("Falló el monitoreo de deriva de las señales (se reintenta en la siguiente vuelta)")
+        return 0
 
 
 def _recalibrate(db: Session, now: datetime) -> int:

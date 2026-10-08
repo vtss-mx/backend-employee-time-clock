@@ -1,30 +1,30 @@
- Container timeclock-scale-k6-run-ada97240c443 Creating 
- Container timeclock-scale-k6-run-ada97240c443 Created 
+ Container timeclock-scale-k6-run-18f0b1fb3491 Creating 
+ Container timeclock-scale-k6-run-18f0b1fb3491 Created 
 
 
   █ TOTAL RESULTS 
 
     CUSTOM
-    ok.............................: 10550  132.996113/s
-    ok_after_retry.................: 1      0.012606/s
-    transient_first_try............: 1      0.012606/s
+    ok.............................: 10457  127.327431/s
+    ok_after_retry.................: 1      0.012176/s
+    transient_first_try............: 1      0.012176/s
 
     HTTP
-    http_req_duration..............: avg=53.71ms  p(50)=8.42ms p(95)=100.47ms p(99)=706.42ms max=19.45s
-      { expected_response:true }...: avg=53.71ms  p(50)=8.42ms p(95)=100.51ms p(99)=706.42ms max=19.45s
-    http_req_failed................: 0.00%  1 out of 10552
-    http_reqs......................: 10552  133.021326/s
+    http_req_duration..............: avg=127.89ms p(50)=15.1ms  p(95)=673.64ms p(99)=2.58s max=22.37s
+      { expected_response:true }...: avg=127.9ms  p(50)=15.1ms  p(95)=673.67ms p(99)=2.58s max=22.37s
+    http_req_failed................: 0.00%  1 out of 10459
+    http_reqs......................: 10459  127.351784/s
 
     EXECUTION
-    dropped_iterations.............: 3029   38.184382/s
-    iteration_duration.............: avg=139.61ms p(50)=8.51ms p(95)=102.99ms p(99)=714.48ms max=28.43s
-    iterations.....................: 10550  132.996113/s
-    vus............................: 202    min=0          max=202
-    vus_max........................: 202    min=200        max=202
+    dropped_iterations.............: 4554   55.45081/s
+    iteration_duration.............: avg=138.91ms p(50)=15.26ms p(95)=677.91ms p(99)=2.66s max=24.32s
+    iterations.....................: 10457  127.327431/s
+    vus............................: 91     min=1          max=268
+    vus_max........................: 273    min=200        max=273
 
     NETWORK
-    data_received..................: 249 MB 3.1 MB/s
-    data_sent......................: 5.8 MB 73 kB/s
+    data_received..................: 264 MB 3.2 MB/s
+    data_sent......................: 5.7 MB 70 kB/s
 
 
 

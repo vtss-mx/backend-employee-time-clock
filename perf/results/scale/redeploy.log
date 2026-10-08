@@ -1,31 +1,31 @@
- Container timeclock-scale-k6-run-23f91e2ebde6 Creating 
- Container timeclock-scale-k6-run-23f91e2ebde6 Created 
+ Container timeclock-scale-k6-run-36f10ef33f8d Creating 
+ Container timeclock-scale-k6-run-36f10ef33f8d Created 
 
 
   █ TOTAL RESULTS 
 
     CUSTOM
-    failed_after_retry.............: 1425   18.978396/s
-    ok.............................: 13220  176.066246/s
-    ok_after_retry.................: 292    3.888906/s
-    transient_first_try............: 1717   22.867303/s
+    failed_after_retry.............: 3631   48.293772/s
+    ok.............................: 10963  145.812344/s
+    ok_after_retry.................: 300    3.990122/s
+    transient_first_try............: 3931   52.283893/s
 
     HTTP
-    http_req_duration..............: avg=23.4ms   p(50)=4.56ms p(95)=11.27ms p(99)=679.72ms max=1.48s
-      { expected_response:true }...: avg=31.61ms  p(50)=7.32ms p(95)=56.04ms p(99)=773.07ms max=1.48s
-    http_req_failed................: 26.47% 4760 out of 17981
-    http_reqs......................: 17981  239.474068/s
+    http_req_duration..............: avg=6.71ms   p(50)=1.65ms  p(95)=17.1ms  p(99)=86.49ms  max=314.94ms
+      { expected_response:true }...: avg=13.36ms  p(50)=9.14ms  p(95)=26.66ms p(99)=143.14ms max=314.94ms
+    http_req_failed................: 50.95% 11393 out of 22357
+    http_reqs......................: 22357  297.357163/s
 
     EXECUTION
-    dropped_iterations.............: 356    4.74127/s
-    iteration_duration.............: avg=344.04ms p(50)=7.68ms p(95)=3s      p(99)=3s       max=3.14s
-    iterations.....................: 14645  195.044643/s
-    vus............................: 2      min=1             max=554
-    vus_max........................: 556    min=200           max=556
+    dropped_iterations.............: 407    5.413265/s
+    iteration_duration.............: avg=781.32ms p(50)=10.98ms p(95)=3s      p(99)=3s       max=3.03s   
+    iterations.....................: 14594  194.106116/s
+    vus............................: 3      min=1              max=597
+    vus_max........................: 599    min=200            max=599
 
     NETWORK
-    data_received..................: 311 MB 4.1 MB/s
-    data_sent......................: 9.8 MB 131 kB/s
+    data_received..................: 287 MB 3.8 MB/s
+    data_sent......................: 12 MB  163 kB/s
 
 
 

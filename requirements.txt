@@ -2,7 +2,7 @@
 fastapi==0.142.2
 uvicorn[standard]==0.54.0
 python-multipart==0.0.32
-pydantic==2.13.5
+pydantic==2.13.5   # fija pydantic-core==2.46.5: pydantic-core no se sube aparte (2.49.0 es para una pydantic aún no publicada)
 pydantic-settings==2.15.0
 email-validator==2.3.0
 phonenumberslite==9.0.40   # teléfonos internacionales (libphonenumber de Google, sin datos de geocodificación)
@@ -12,10 +12,19 @@ SQLAlchemy==2.1.3
 psycopg[binary]==3.3.6
 alembic==1.20.0
 
+# --- Caché compartida entre réplicas (Redis; app/core/cache.py) ---
+# Cliente oficial (redis-py) con pool de conexiones por proceso. Solo guarda los catálogos (instantánea versionada) y los
+# contadores de límites de peticiones; nada personal en claro. Con REDIS_HOST/REDIS_URL vacíos no se usa (topología
+# mínima) y, si Redis se cae, la capa corta el circuito y la aplicación sigue con su caché local (nunca tumba nada).
+redis==8.1.0
+
 # --- Seguridad ---
 PyJWT==2.15.1
 argon2-cffi==25.1.0
 cryptography==50.0.2
+# Llaves de acceso (WebAuthn / passkeys, antifraude fase 3): verificación de registros y firmas en el servidor (py_webauthn,
+# BSD-3; trae cbor2 y pyOpenSSL). Sin attestation obligatoria: las passkeys sincronizadas de Apple y Google no la dan.
+webauthn==3.0.1
 
 # --- Reconocimiento facial / imágenes ---
 opencv-python-headless==5.0.0.93   # YuNet/SFace validados contra 4.14: misma detección, embedding con similitud 0.9998
@@ -23,8 +32,19 @@ numpy==2.5.3
 pillow==12.3.0
 onnxruntime==1.30.0   # CLIP (detección de lentes / gorra / cubrebocas)
 
-# --- Reportes ---
+# --- Voz a texto en el servidor (verificación por voz y video del registro facial; el audio nunca sale de la plataforma) ---
+# Whisper en CTranslate2 (int8, CPU). Trae ctranslate2, tokenizers, huggingface-hub (solo para resolver nombres: los modelos
+# se bajan al construir la imagen con su SHA-256, `app/speech/model_store.py`, sin pasar por esa librería) y PyAV (FFmpeg
+# incluido), con el que también se decodifican los clips WebM/MP4 del navegador y se muestrean sus fotogramas: una sola
+# dependencia para audio y video. huggingface-hub se queda en 1.x (hoy 1.33.0) aunque exista 2.x: `tokenizers` exige
+# `huggingface-hub<2.0` y aquí no se usa para descargar; se retira la nota cuando tokenizers la permita.
+faster-whisper==1.2.1
 
+# --- OCR de los documentos del empleado EN ESTE SERVIDOR (onboarding; los datos de la empresa nunca salen, regla 13) ---
+# Envoltorio delgado (Apache 2.0) del binario Tesseract, que se instala con apt al construir la imagen (el Dockerfile:
+# `tesseract-ocr` y `tesseract-ocr-<idioma>`); solo usa Pillow, que ya está arriba. La extracción es de mejor esfuerzo
+# (`app/ocr`): una lectura imperfecta nunca bloquea, la empresa confirma o corrige.
+pytesseract==0.3.13
 
 # --- Almacenamiento de imágenes cifradas (bucket de Google Cloud Storage / Firebase Storage) ---
 google-cloud-storage==3.16.0   # cliente oficial: tiempos límite, reintentos idempotentes y MD5 de cada subida

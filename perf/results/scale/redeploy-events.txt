@@ -1,2 +1,2 @@
-05:09:41 dc up -d --force-recreate --no-deps --scale backend=3 backend
-05:09:47 terminó: 0 réplicas sanas
+18:10:15 dc up -d --force-recreate --no-deps --scale backend=5 backend
+18:10:22 terminó: 0 réplicas sanas

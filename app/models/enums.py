@@ -17,6 +17,9 @@ class VerificationMethod(StrEnum):
     QR = "QR"
     #: Doble factor (validador): el QR indica quién es y el rostro lo confirma.
     QR_FACE = "QR_FACE"
+    #: Rostro por la API pública de verificación (SDK de Android o iOS con la llave de la empresa, migración 0084): la
+    #: bitácora distingue lo que vino de la aplicación de la empresa de lo que pasó en la aplicación web.
+    API_FACE = "API_FACE"
 
 
 class ValidatorMode(StrEnum):
@@ -79,6 +82,9 @@ class ApiScope(StrEnum):
     EMPLOYEES_READ = "EMPLOYEES_READ"
     ATTENDANCE_READ = "ATTENDANCE_READ"
     VALIDATORS_READ = "VALIDATORS_READ"
+    #: Verificación e identificación facial desde la aplicación móvil de la empresa (SDK; migración 0084). SOLO abre
+    #: `/integrations/v1/verification/*`: no lee empleados, asistencia ni validadores.
+    VERIFICATION = "VERIFICATION"
 
 
 class ErrorStatus(StrEnum):
@@ -281,6 +287,41 @@ class EnrollmentStatus(StrEnum):
     REJECTED = "REJECTED"
 
 
+class VoiceQuestion(StrEnum):
+    """Preguntas de la verificación por voz y video del registro facial (catalog.voice_questions): sobre datos que el
+    empleado tiene registrados y conoce, más una suma al azar como prueba cognitiva (decisión del dueño del producto,
+    2026-10-06; repertorio ampliado el 2026-10-07). `app/services/voice_questions` decide cuáles son elegibles para
+    cada empleado y elige `VOICE_QUESTIONS_PER_SESSION` al azar, sin repetir el mismo tipo en una sesión.
+
+    Variedad (todo validado en el servidor, `app/speech/matching.py`):
+    - Nombre: `FIRST_NAME` (solo el nombre), `SURNAMES` (los apellidos completos), `FULL_NAME` (nombre y apellidos) y,
+      SOLO cuando `last_name` se separa en EXACTAMENTE dos palabras (el caso común «Pérez López»), `FIRST_SURNAME` y
+      `SECOND_SURNAME`; con un apellido compuesto («De la Cruz») no se puede partir con certeza, así que esas dos se
+      omiten y se usa `SURNAMES`.
+    - Fecha de nacimiento: `BIRTH_DATE` (completa), `BIRTH_MONTH` (mes, por nombre o cifra), `BIRTH_YEAR` (año, completo
+      o sus dos últimas cifras) y `BIRTH_DAY` (día).
+    - Empresa: `COMPANY_NAME`; número de empleado: `EMPLOYEE_NUMBER` (solo si lo tiene); departamento y sitio:
+      `DEPARTMENT`, `WORK_SITE` (solo si están asignados y vigentes).
+    - `ARITHMETIC_SUM`: la suma de dos números pequeños al azar que genera el servidor; NO es un dato de identidad (es
+      una prueba cognitiva y antirreplay: cambia en cada intento).
+    """
+
+    FULL_NAME = "FULL_NAME"
+    BIRTH_DATE = "BIRTH_DATE"
+    COMPANY_NAME = "COMPANY_NAME"
+    EMPLOYEE_NUMBER = "EMPLOYEE_NUMBER"
+    DEPARTMENT = "DEPARTMENT"
+    WORK_SITE = "WORK_SITE"
+    FIRST_NAME = "FIRST_NAME"
+    SURNAMES = "SURNAMES"
+    FIRST_SURNAME = "FIRST_SURNAME"
+    SECOND_SURNAME = "SECOND_SURNAME"
+    BIRTH_MONTH = "BIRTH_MONTH"
+    BIRTH_YEAR = "BIRTH_YEAR"
+    BIRTH_DAY = "BIRTH_DAY"
+    ARITHMETIC_SUM = "ARITHMETIC_SUM"
+
+
 class FraudKind(StrEnum):
     """Tipo de fraude de un caso y familia de las señales del motor de riesgo (catalog.fraud_kinds)."""
 
@@ -441,6 +482,8 @@ class Screen(StrEnum):
     ADMIN_BILLING = "ADMIN_BILLING"
     ADMIN_USAGE = "ADMIN_USAGE"
     ADMIN_PERFORMANCE = "ADMIN_PERFORMANCE"
+    #: Deriva de las señales del motor facial (antifraude fase 3): por señal, plataforma y empresa, cada semana.
+    ADMIN_DRIFT = "ADMIN_DRIFT"
     COMPANY_DASHBOARD = "COMPANY_DASHBOARD"
     COMPANY_EMPLOYEES = "COMPANY_EMPLOYEES"
     COMPANY_DEPARTMENTS = "COMPANY_DEPARTMENTS"
@@ -452,9 +495,13 @@ class Screen(StrEnum):
     COMPANY_CALENDAR = "COMPANY_CALENDAR"
     COMPANY_SITES = "COMPANY_SITES"
     COMPANY_ATTENDANCE = "COMPANY_ATTENDANCE"
+    #: Verificaciones de identidad con su ubicación en el mapa (decisión del dueño, 2026-10-07; migración 0085).
+    COMPANY_VERIFICATIONS = "COMPANY_VERIFICATIONS"
     VALIDATOR_CHECKPOINT = "VALIDATOR_CHECKPOINT"
     EMPLOYEE_ATTENDANCE = "EMPLOYEE_ATTENDANCE"
     EMPLOYEE_ENROLL = "EMPLOYEE_ENROLL"
+    #: Documentos de identidad del onboarding (decisión del dueño, 2026-10-07): solo si la empresa los exige.
+    EMPLOYEE_DOCUMENTS = "EMPLOYEE_DOCUMENTS"
     EMPLOYEE_PENDING = "EMPLOYEE_PENDING"
     EMPLOYEE_VERIFY = "EMPLOYEE_VERIFY"
     EMPLOYEE_QR = "EMPLOYEE_QR"

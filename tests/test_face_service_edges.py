@@ -108,9 +108,9 @@ def test_an_engine_that_rejects_accessories_by_itself_answers_like_the_consensus
             return super().analyze_frontal(image_bytes, policy=policy, enforce_accessories=True)
 
     with pytest.raises(UnprocessableError) as error:
-        analyze_frames(StrictPipeline(), [b"face:juan", b"glasses:juan"], policy=DEFAULT_POLICY)
-    assert error.value.code == "ACCESSORIES_DETECTED" and error.value.details == {"accessories": ["GLASSES"]}
-    assert error.value.message == "Foto 2: " + get_catalogs().accessories_message(["GLASSES"])
+        analyze_frames(StrictPipeline(), [b"face:juan", b"mask:juan"], policy=DEFAULT_POLICY)
+    assert error.value.code == "ACCESSORIES_DETECTED" and error.value.details == {"accessories": ["MASK"]}
+    assert error.value.message == "Foto 2: " + get_catalogs().accessories_message(["MASK"])
 
 
 # ---------------------------------------------------------------- cantidad de capturas

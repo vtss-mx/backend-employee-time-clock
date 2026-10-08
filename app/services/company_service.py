@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.core.exceptions import ConflictError, NotFoundError
 from app.core.passwords import hash_password
-from app.i18n import t
+from app.i18n import Text, error_text
 from app.models import Company, Employee, SessionRevocationReason, User, UserRole
 from app.models.company import TaxId
 from app.repositories.billing_repository import BillingRepository
@@ -27,6 +27,7 @@ from app.repositories.employee_repository import EmployeeRepository
 from app.repositories.face_repository import NO_SAMPLES, FaceEmbeddingRepository
 from app.repositories.user_repository import UserRepository
 from app.repositories.validator_repository import ValidatorRepository
+from app.schemas.avatar import employee_avatar
 from app.schemas.common import PageParams
 from app.schemas.company import (
     CompanyAdminCreate,
@@ -55,7 +56,15 @@ from app.services.policy_service import PolicyService, clear_policy_cache
 from app.services.session_service import SessionService
 from app.services.trash import commit_restore, ensure_deleted, ensure_live
 
-_COMPANY_FIELDS = ("name", "legal_name", "phone", "max_employees", "max_validators", "api_enabled")
+_COMPANY_FIELDS = (
+    "name",
+    "legal_name",
+    "phone",
+    "max_employees",
+    "max_validators",
+    "api_enabled",
+    "require_employee_documents",
+)
 #: Lo que un null explícito BORRA al editar: el límite de empleados (sin límite). En los demás datos un null no cambia
 #: nada. El identificador fiscal (opcional) va aparte: país, tipo y número juntos (`Company.set_tax`).
 _CLEARABLE_FIELDS = ("max_employees",)
@@ -110,14 +119,14 @@ class CompanyService:
         validación en vivo de empleados (el frontend la trata igual)."""
         raw = (value or "").strip()
         if not raw:
-            return Availability(field, value, None, False, False, "EMPTY", t("EMAIL_REQUIRED"))
+            return Availability(field, value, None, False, False, "EMPTY", Text("EMAIL_REQUIRED"))
         try:
             normalized = normalize_email(raw)
         except ValueError as exc:
-            return Availability(field, value, None, False, False, "INVALID_FORMAT", str(exc))
+            return Availability(field, value, None, False, False, "INVALID_FORMAT", error_text(exc))
         if self.users.email_exists(normalized):
-            return Availability(field, value, normalized, True, False, "TAKEN", t("EMAIL_TAKEN"))
-        return Availability(field, value, normalized, True, True, "AVAILABLE", t("EMAIL_AVAILABLE"))
+            return Availability(field, value, normalized, True, False, "TAKEN", Text("EMAIL_TAKEN"))
+        return Availability(field, value, normalized, True, True, "AVAILABLE", Text("EMAIL_AVAILABLE"))
 
     def tax_id_availability(
         self, field: str, value: str, country: str | None, type_code: str | None, exclude_id: int | None = None
@@ -130,10 +139,10 @@ class CompanyService:
         try:
             tax = resolve_tax_id(country, type_code, value)
         except ValueError as exc:
-            return Availability(field, value, None, False, False, "INVALID_FORMAT", str(exc))
+            return Availability(field, value, None, False, False, "INVALID_FORMAT", error_text(exc))
         if self.companies.tax_id_exists(tax, exclude_id):
-            return Availability(field, value, tax.number, True, False, "TAKEN", t("COMPANY_TAX_ID_TAKEN"))
-        return Availability(field, value, tax.number, True, True, "AVAILABLE", t("TAX_ID_AVAILABLE"))
+            return Availability(field, value, tax.number, True, False, "TAKEN", Text("COMPANY_TAX_ID_TAKEN"))
+        return Availability(field, value, tax.number, True, True, "AVAILABLE", Text("TAX_ID_AVAILABLE"))
 
     # ---------- Comandos ----------
 
@@ -348,6 +357,8 @@ class CompanyService:
                     face_status=e.face_status,
                     face_learned_samples=learned.learned,
                     face_last_learned_at=learned.last_learned_at,
+                    # La cuenta ya viene con el empleado (JOIN): sin consultas de más.
+                    avatar=employee_avatar(e),
                 )
             )
         return reads

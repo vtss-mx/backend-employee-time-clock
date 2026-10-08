@@ -18,6 +18,13 @@ from tests.test_policy import admin_policy, set_policy
 SETTINGS_URL = "/api/settings/verification"
 
 
+@pytest.fixture(autouse=True)
+def two_person_rule_on(monkeypatch):
+    """La regla está apagada por omisión (un único ADMIN: todo aplica al momento, decisión del dueño 2026-10-06); estas
+    pruebas la encienden para seguir probando el mecanismo completo (pendiente, aprobar, rechazar, vencer)."""
+    monkeypatch.setattr(settings, "POLICY_TWO_PERSON_RULE", True)
+
+
 def put(client, url, admin, **changes):
     response = client.put(url, json=changes, headers=admin)
     assert response.status_code == 200, response.text
@@ -165,12 +172,30 @@ def test_without_the_two_person_rule_relaxing_applies_now(client, company_header
         ({"risk_medium_score": 70}, "RISK_SCORES_ORDER"),
         ({"risk_signals": {"INVENTADA": {"mode": "ENFORCE"}}}, "INVALID_RISK_SIGNAL"),
         ({"risk_signals": {"FLASH_FLAT": {"mode": "A_VECES"}}}, "INVALID_SIGNAL_MODE"),
+        ({"voice_profile": "ROBOTICA"}, "INVALID_VOICE_PROFILE"),
     ],
 )
 def test_the_policy_only_accepts_catalog_codes_and_ordered_scores(client, company_headers, changes, code):
     url, admin = admin_policy(client, company_headers)
     response = client.put(url, json=changes, headers=admin)
     assert response.status_code == 422 and response.json()["code"] == code
+
+
+def test_the_voice_guidance_is_configured_and_applies_at_once(client, company_headers):
+    """Guía por audio (decisión del dueño, 2026-10-08): apagada por omisión con la voz `FEMALE_WARM`; encenderla y
+    cambiar la voz son neutrales (no relajan), así que aplican al momento aunque la regla de dos personas esté activa,
+    y la empresa las lee en su política."""
+    url, admin = admin_policy(client, company_headers)
+    policy = client.get(url, headers=admin).json()["data"]
+    assert policy["voice_guidance_enabled"] is False and policy["voice_profile"] == "FEMALE_WARM"
+    company = client.get(SETTINGS_URL, headers=company_headers).json()["data"]
+    assert company["voice_guidance_enabled"] is False and company["voice_profile"] == "FEMALE_WARM"
+    body = put(client, url, admin, voice_guidance_enabled=True, voice_profile="MALE_DEEP")
+    assert body["code"] == "POLICY_UPDATED" and body["data"]["change"]["relaxes"] is False
+    new_policy = body["data"]["policy"]
+    assert new_policy["voice_guidance_enabled"] is True and new_policy["voice_profile"] == "MALE_DEEP"
+    updated = client.get(SETTINGS_URL, headers=company_headers).json()["data"]
+    assert updated["voice_guidance_enabled"] is True and updated["voice_profile"] == "MALE_DEEP"
 
 
 def test_each_risk_signal_is_adjusted_and_relaxing_it_needs_approval(client, company_headers):
@@ -201,7 +226,8 @@ def test_presets_go_through_the_same_path(client, company_headers):
     high = client.post(f"{url}/preset", json={"preset": "HIGH", "reason": "Fraude confirmado"}, headers=admin)
     assert high.status_code == 200 and high.json()["code"] == "POLICY_UPDATED"
     policy = high.json()["data"]["policy"]
-    assert policy["preset"] == "HIGH" and policy["liveness_steps"] == 3 and policy["flash_liveness"] == "ENFORCE"
+    # El destello se retiró (2026-10-06): ningún nivel lo enciende.
+    assert policy["preset"] == "HIGH" and policy["liveness_steps"] == 3 and policy["flash_liveness"] == "OFF"
     replay = next(s for s in policy["risk_signals"] if s["code"] == "REPLAY_PERCEPTUAL")
     assert replay["mode"] == "ENFORCE"
     assert high.json()["data"]["change"]["preset"] == "HIGH"
@@ -224,7 +250,10 @@ def test_presets_go_through_the_same_path(client, company_headers):
 
 PRESENCE = ("validator_signing", "validator_location", "site_codes")
 #: Las señales del protocolo de captura que Máximo exige (sin destello dictado o fuera de tiempo, alterado, sin ráfaga).
-PROTOCOL = ("FLASH_UNPACED", "FLASH_PACE_TIMING", "FLASH_PACE_MISMATCH", "BURST_MISSING")
+#: Antifraude 2a tras retirar el destello (2026-10-06): el nivel Máximo exige solo la ráfaga.
+PROTOCOL = ("BURST_MISSING",)
+#: Las señales del destello ya no las exige ningún nivel (sin destello nunca se miden).
+FLASH_SIGNALS = ("FLASH_UNPACED", "FLASH_PACE_TIMING", "FLASH_PACE_MISMATCH", "FLASH_FLAT")
 
 
 def test_maximum_requires_the_capture_protocol_and_the_presence_proofs(client, company_headers):
@@ -237,11 +266,18 @@ def test_maximum_requires_the_capture_protocol_and_the_presence_proofs(client, c
     maximum = client.post(f"{url}/preset", json={"preset": "MAXIMUM"}, headers=admin).json()
     assert maximum["code"] == "POLICY_UPDATED"  # endurece: aplica al momento
     applied = maximum["data"]["policy"]
-    assert applied["flash_paced"] is True and applied["capture_burst"] is True
+    assert applied["flash_paced"] is False and applied["capture_burst"] is True  # el destello, retirado; la ráfaga, sí
     assert [applied[field] for field in PRESENCE] == ["ENFORCE"] * 3
     signals = {s["code"]: s["mode"] for s in applied["risk_signals"]}
-    assert [signals[code] for code in PROTOCOL] == ["ENFORCE"] * 4
+    assert [signals[code] for code in PROTOCOL] == ["ENFORCE"]
+    assert all(signals[code] == "OBSERVE" for code in FLASH_SIGNALS)  # nunca se exigen: sin destello no se miden
     assert signals["BURST_FROZEN"] == "OBSERVE"  # lo que detecta la ráfaga sigue calibrándose
+    # 2026-10-08 (endurecimiento): Máximo activa el bloqueo de lentes, exige la ubicación de cada verificación, sube los
+    # umbrales a su extremo estricto y agrega la firma del validador como regla dura.
+    assert applied["block_glasses"] is True and applied["verification_location"] == "ENFORCE"
+    assert applied["min_capture_quality"] == 0.9 and applied["liveness_timeout_seconds"] == 20
+    assert (applied["lockout_max_failures"], applied["lockout_minutes"]) == (3, 1440)
+    assert applied["qr_lifetime_seconds"] == 15 and signals["VALIDATOR_SIGNATURE_INVALID"] == "ENFORCE"
     high = client.post(f"{url}/preset", json={"preset": "HIGH"}, headers=admin).json()
     assert high["code"] == "POLICY_CHANGE_PENDING" and high["data"]["policy"]["validator_signing"] == "ENFORCE"
     relaxed = {change["field"] for change in high["data"]["change"]["changes"] if change["relaxes"]}
@@ -250,7 +286,7 @@ def test_maximum_requires_the_capture_protocol_and_the_presence_proofs(client, c
         f"{url}/changes/{high['data']['change']['id']}/approve", headers=second_admin(client)
     ).json()["data"]["policy"]
     assert approved["preset"] == "HIGH" and [approved[field] for field in PRESENCE] == ["OBSERVE"] * 3
-    assert approved["flash_paced"] is True and approved["capture_burst"] is True  # el protocolo sigue midiendo
+    assert approved["flash_paced"] is False and approved["capture_burst"] is True  # la ráfaga sigue midiendo
     assert all(s["mode"] == "OBSERVE" for s in approved["risk_signals"] if s["code"] in PROTOCOL)
 
 

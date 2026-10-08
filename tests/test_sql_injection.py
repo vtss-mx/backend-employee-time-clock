@@ -21,7 +21,7 @@ buscan literales) y que un error de la base nunca le muestre SQL ni parámetros 
 import copy
 import json
 import re
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import quote
@@ -245,13 +245,15 @@ class Request:
             for path in SCHEMA.text_fields(self.body["schema"]):
                 yield ("body", *path)
 
-    def build(self, target: tuple | None, payload: str) -> dict[str, Any]:
+    def build(self, target: tuple | None, payload: str, ids: Mapping[str, object] | None = None) -> dict[str, Any]:
+        """`ids`: el valor de cada parámetro de la ruta por su nombre (sin él, "1"); `tests/test_api_language.py` lo
+        usa para llegar a los datos de verdad."""
         url = PREFIX + self.path
         query: dict[str, Any] = {}
         for parameter in self.parameters:
             hit = target == (parameter["in"], parameter["name"])
             if parameter["in"] == "path":
-                value = quote(payload, safe="") if hit else "1"
+                value = quote(payload, safe="") if hit else str((ids or {}).get(parameter["name"], "1"))
                 url = url.replace("{" + parameter["name"] + "}", value)
             elif hit:
                 query[parameter["name"]] = payload

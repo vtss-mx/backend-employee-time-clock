@@ -17,18 +17,18 @@ from app.models import Company, Employee, FaceStatus, SessionRevocationReason, U
 from app.repositories.billing_repository import BillingRepository
 from app.repositories.calendar_repository import CalendarRepository
 from app.repositories.department_repository import DepartmentRepository
-from app.repositories.employee_repository import EmployeeRepository, UniqueDocument
+from app.repositories.employee_repository import EmployeeRepository, UniqueField
 from app.repositories.enrollment_repository import FaceEnrollmentRepository
 from app.repositories.face_repository import NO_SAMPLES, FaceEmbeddingRepository, SampleStats
 from app.repositories.qr_repository import EmployeeQrRepository
 from app.repositories.shift_repository import ShiftRepository
 from app.repositories.user_repository import UserRepository
 from app.repositories.verification_repository import VerificationLogRepository
-from app.schemas.avatar import avatar_path
+from app.schemas.avatar import employee_avatar
 from app.schemas.bulk import BULK_MAX
 from app.schemas.common import PageParams, deletion_of
 from app.schemas.employee import (
-    OPTIONAL_DOCUMENTS,
+    OPTIONAL_FIELDS,
     DepartmentRef,
     EmployeeCreate,
     EmployeeIdList,
@@ -43,21 +43,27 @@ from app.schemas.validators import (
 from app.schemas.verification import VerificationLogList, VerificationLogRead
 from app.services.availability_service import CURP_TAKEN, NSS_TAKEN, NUMBER_TAKEN, RFC_TAKEN
 from app.services.people_service import SHARED_ACCOUNT, PeopleService, ensure_account_free
-from app.services.person_erasure import erase_account, erase_employee_biometrics
+from app.services.person_erasure import erase_account, erase_employee_biometrics, erase_employee_documents
 from app.services.session_service import SessionService
 from app.services.trash import commit_restore, ensure_deleted, ensure_live
 
 #: Lo que el sistema guarda como motivo (se traduce al leerse, en el idioma de quien lo lee: `app/i18n/stored.py`).
 RESET_BY_COMPANY = stored("ENROLLMENT_RESET_BY_COMPANY")
 REVERIFY_DEFAULT_REASON = stored("REVERIFY_DEFAULT_REASON")
-# Documentos únicos por persona: (campo, código de error y llave de su mensaje).
-_UNIQUE_DOCUMENTS: tuple[tuple[UniqueDocument, str], ...] = (
+# Datos únicos en la empresa, todos opcionales (`OPTIONAL_FIELDS`: sin capturar no se revisan): (campo, código).
+_UNIQUE_FIELDS: tuple[tuple[UniqueField, str], ...] = (
+    ("employee_number", NUMBER_TAKEN),
     ("rfc", RFC_TAKEN),
     ("curp", CURP_TAKEN),
     ("nss", NSS_TAKEN),
 )
 # Al restaurar: la llave del mensaje cuando otro empleado vigente ya tomó el dato.
-_RESTORE_KEYS = {"rfc": "RESTORE_RFC_TAKEN", "curp": "RESTORE_CURP_TAKEN", "nss": "RESTORE_NSS_TAKEN"}
+_RESTORE_KEYS = {
+    "employee_number": "RESTORE_EMPLOYEE_NUMBER_TAKEN",
+    "rfc": "RESTORE_RFC_TAKEN",
+    "curp": "RESTORE_CURP_TAKEN",
+    "nss": "RESTORE_NSS_TAKEN",
+}
 # Datos del empleado que se copian tal cual desde el alta o la edición.
 _EMPLOYEE_FIELDS = (
     "first_name",
@@ -166,10 +172,7 @@ class EmployeeService:
         """
         self._ensure_capacity()
         self._ensure_documents_match(data.rfc, data.curp, data.birth_date)
-        self._ensure_unique(
-            employee_number=data.employee_number,
-            documents={"rfc": data.rfc, "curp": data.curp, "nss": data.nss},
-        )
+        self._ensure_unique({field: getattr(data, field) for field in OPTIONAL_FIELDS})
         account = self.people.account_to_link(data.email, data.phone)
         if account is None and not data.password:
             raise UnprocessableError(code="PASSWORD_REQUIRED", field="password")
@@ -201,11 +204,11 @@ class EmployeeService:
 
     def update(self, employee_id: int, data: EmployeeUpdate) -> Employee:
         employee = self.get(employee_id)
-        # Un null no cambia nada, salvo en RFC, CURP y NSS (opcionales): ahí null o vacío borra el dato.
+        # Un null no cambia nada, salvo en número, RFC, CURP y NSS (opcionales): ahí null o vacío borra el dato.
         changes = {
             field: value
             for field, value in data.model_dump(exclude_unset=True).items()
-            if value is not None or field in OPTIONAL_DOCUMENTS
+            if value is not None or field in OPTIONAL_FIELDS
         }
         # RFC y CURP resultantes contra la fecha resultante (puede cambiar solo uno de los datos).
         self._ensure_documents_match(
@@ -213,11 +216,7 @@ class EmployeeService:
             changes.get("curp", employee.curp),
             changes.get("birth_date", employee.birth_date),
         )
-        self._ensure_unique(
-            employee_number=changes.get("employee_number"),
-            documents={field: changes.get(field) for field in OPTIONAL_DOCUMENTS},
-            exclude_employee=employee,
-        )
+        self._ensure_unique({field: changes.get(field) for field in OPTIONAL_FIELDS}, exclude_employee=employee)
         self._ensure_account_changes(employee, changes)
         for field in _EMPLOYEE_FIELDS:
             if field in changes:
@@ -257,11 +256,12 @@ class EmployeeService:
 
     def delete(self, employee_id: int, actor: User) -> None:
         """Manda el empleo en esta empresa a «Eliminados» (borrado lógico): sale de listados, tablero, galería facial,
-        conteos y del cobro desde hoy; su asistencia, bitácora y cobranza se conservan. Sus datos biométricos y fotos
-        se borran DE VERDAD (regla 13), sus solicitudes pendientes se cancelan y su QR deja de servir. Sus
-        departamentos dejan de mostrarlo como responsable sin borrar la relación (la oculta el borrado lógico): si se
-        restaura, vuelve a serlo. Su cuenta también va a «Eliminados» si no tiene otro empleo vigente (su correo y su
-        teléfono quedan libres; su foto de perfil se borra). Todo en una transacción."""
+        conteos y del cobro desde hoy; su asistencia, bitácora y cobranza se conservan. Sus datos biométricos, sus fotos
+        y sus documentos de identidad del onboarding (archivo + datos extraídos) se borran DE VERDAD (regla 13, LFPDPPP:
+        una identificación lleva la foto y los datos de la persona), sus solicitudes pendientes se cancelan y su QR deja
+        de servir. Sus departamentos dejan de mostrarlo como responsable sin borrar la relación (la oculta el borrado
+        lógico): si se restaura, vuelve a serlo. Su cuenta también va a «Eliminados» si no tiene otro empleo vigente (su
+        correo y su teléfono quedan libres; su foto de perfil se borra). Todo en una transacción."""
         employee = self.get(employee_id, include_deleted=True, lock=True)
         ensure_live(employee)
         user, now = employee.user, datetime.now(UTC)
@@ -276,6 +276,7 @@ class EmployeeService:
         if employee.active:  # deja de contar para el cobro desde hoy (los días que estuvo activo se cobran igual)
             BillingRepository(self.db).record_status(self.company_id, employee.id, False)
         erase_employee_biometrics(self.db, employee)
+        erase_employee_documents(self.db, employee)
         CalendarRepository(self.db, self.company_id).cancel_pending_absences(employee.id, actor.id, now)
         ShiftRepository(self.db, self.company_id).cancel_pending_requests(
             actor_id=actor.id, now=now, employee_id=employee.id
@@ -292,8 +293,8 @@ class EmployeeService:
         empleados del plan, que nadie vigente haya tomado su número, RFC, CURP o NSS y, si su cuenta también se
         eliminó, su correo y su teléfono (409 `RESTORE_CONFLICT` con el campo). Vuelve a contar para el cobro desde
         hoy si estaba activo y vuelve a ser responsable de los departamentos que dirigía (los que siguen vigentes; uno
-        en «Eliminados» lo vuelve a mostrar cuando también se restaure). Sus datos biométricos no regresan: registra su
-        rostro de nuevo."""
+        en «Eliminados» lo vuelve a mostrar cuando también se restaure). Sus datos biométricos y sus documentos de
+        identidad no regresan (se borraron de verdad): registra su rostro y sube sus documentos de nuevo."""
         employee = self.get(employee_id, include_deleted=True, lock=True)
         ensure_deleted(employee)
         self._ensure_capacity()
@@ -335,15 +336,9 @@ class EmployeeService:
     # ---------- Internos ----------
 
     def _ensure_identifiers_free(self, employee: Employee) -> None:
-        """Al restaurar: su número y sus documentos no los tiene ya otro empleado vigente de la empresa."""
-        if self.employees.number_exists(employee.employee_number):
-            raise ConflictError(
-                code="RESTORE_CONFLICT",
-                key="RESTORE_EMPLOYEE_NUMBER_TAKEN",
-                params={"value": employee.employee_number},
-                field="employee_number",
-            )
-        for field, _ in _UNIQUE_DOCUMENTS:
+        """Al restaurar: su número y sus documentos no los tiene ya otro empleado vigente de la empresa (solo los que
+        tiene: uno sin número no choca con otro sin número)."""
+        for field, _ in _UNIQUE_FIELDS:
             value = getattr(employee, field)
             if value and self.employees.unique_exists(field, value):
                 raise ConflictError(
@@ -371,22 +366,13 @@ class EmployeeService:
         for field in sorted(changed & checks.keys()):
             result = checks[field](str(changes[field]), exclude_user_id=user.id)
             if result.match == "TAKEN":
-                raise ConflictError(result.message, code=f"{field.upper()}_TAKEN", field=field)
+                raise ConflictError(result.text, code=f"{field.upper()}_TAKEN", field=field)
 
-    def _ensure_unique(
-        self,
-        *,
-        employee_number: str | None,
-        documents: dict[str, str | None] | None = None,
-        exclude_employee: Employee | None = None,
-    ) -> None:
-        if employee_number and self.employees.number_exists(
-            employee_number, exclude_id=exclude_employee.id if exclude_employee else None
-        ):
-            raise ConflictError(code=NUMBER_TAKEN, field="employee_number")
+    def _ensure_unique(self, values: dict[str, str | None], exclude_employee: Employee | None = None) -> None:
+        """Número, RFC, CURP y NSS que se capturan (los vacíos no se revisan) no los tiene otro empleado vigente."""
         exclude_id = exclude_employee.id if exclude_employee else None
-        for field, code in _UNIQUE_DOCUMENTS:
-            value = (documents or {}).get(field)
+        for field, code in _UNIQUE_FIELDS:
+            value = values.get(field)
             if value and self.employees.unique_exists(field, value, exclude_id=exclude_id):
                 raise ConflictError(code=code, field=field)
 
@@ -405,10 +391,10 @@ class EmployeeService:
         """RFC y CURP llevan la fecha de nacimiento: si se capturaron, deben coincidir con la registrada."""
         rfc_error = rfc_birth_date_error(rfc, birth_date) if rfc else None
         if rfc_error:
-            raise UnprocessableError(str(rfc_error), code="RFC_BIRTH_DATE_MISMATCH", field="rfc")
+            raise UnprocessableError(rfc_error, code="RFC_BIRTH_DATE_MISMATCH", field="rfc")
         curp_error = curp_birth_date_error(curp, birth_date) if curp else None
         if curp_error:
-            raise UnprocessableError(str(curp_error), code="CURP_BIRTH_DATE_MISMATCH", field="curp")
+            raise UnprocessableError(curp_error, code="CURP_BIRTH_DATE_MISMATCH", field="curp")
 
     @staticmethod
     def _to_read(
@@ -436,8 +422,9 @@ class EmployeeService:
             face_samples=samples.total,
             department_id=employee.department_id,
             department_name=department_name,
-            # La cuenta ya viene con el empleado (JOIN): la foto no cuesta otra consulta.
-            avatar=avatar_path(employee.user_id, employee.user.avatar_version) if employee.active else None,
+            # La cuenta ya viene con el empleado (JOIN): la foto no cuesta otra consulta. Activo o inactivo (decisión
+            # del dueño, 2026-10-06); en «Eliminados», sin foto.
+            avatar=employee_avatar(employee),
             created_at=employee.created_at,
             updated_at=employee.updated_at,
             **deletion_of(employee),

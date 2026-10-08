@@ -1,0 +1,2639 @@
+{
+  "roles": {
+    "ADMIN": {
+      "name": "Administrator",
+      "description": "Administrator der Plattform: legt Unternehmen an und verwaltet sie (sieht deren Mitarbeiter nicht)."
+    },
+    "COMPANY": {
+      "name": "Unternehmen",
+      "description": "Administrator eines Unternehmens: verwaltet dessen Mitarbeiter, Prüfgeräte und Prüfrichtlinie."
+    },
+    "EMPLOYEE": {
+      "name": "Mitarbeiter",
+      "description": "Mitarbeiter: registriert sein Gesicht und identifiziert sich per Gesicht oder QR-Code."
+    },
+    "VALIDATOR": {
+      "name": "Prüfgerät",
+      "description": "Prüfgerät für Identitäten: Tabletcomputer oder Telefon, das die Mitarbeiter seines Unternehmens identifiziert."
+    }
+  },
+  "verification_methods": {
+    "FACE": {
+      "name": "Gesicht",
+      "description": "Die Person blickt in die Kamera; gesucht wird im gesamten Personal"
+    },
+    "QR": {
+      "name": "QR",
+      "description": "Dynamischer Code auf dem Telefon des Mitarbeiters; nur einmal gültig"
+    },
+    "QR_FACE": {
+      "name": "QR + Gesicht",
+      "description": "Scannt den QR-Code und bestätigt, dass das Gesicht zum Inhaber gehört"
+    },
+    "API_FACE": {
+      "name": "Gesicht (mobile App)",
+      "description": "Verifizierung oder Identifizierung über die mobile App des Unternehmens mit dessen API-Schlüssel"
+    }
+  },
+  "validator_modes": {
+    "QR_OR_FACE": {
+      "name": "QR oder Gesicht",
+      "description": "Der Bediener wählt bei jeder Identifizierung: QR-Ausweis oder Gesichtserkennung."
+    },
+    "QR": {
+      "name": "Nur QR",
+      "description": "Scannt den QR-Code auf dem Ausweis des Mitarbeiters (gedruckt oder auf seinem Telefon)."
+    },
+    "FACE": {
+      "name": "Nur Gesicht",
+      "description": "Erkennt den Mitarbeiter an seinem Gesicht im gesamten Personal, ohne Ausweis."
+    },
+    "QR_AND_FACE": {
+      "name": "QR und Gesicht",
+      "description": "Höchste Sicherheit: scannt den QR-Code, und das Gesicht muss zum Inhaber gehören."
+    }
+  },
+  "face_statuses": {
+    "NOT_ENROLLED": {
+      "name": "Nicht registriert",
+      "description": "Der Mitarbeiter hat sein Gesicht noch nicht registriert. Er wird bei der nächsten Anmeldung dazu aufgefordert.",
+      "employee_note": "Sie registrieren Ihr Gesicht bei der Anmeldung"
+    },
+    "PENDING_REVIEW": {
+      "name": "In Prüfung",
+      "description": "Der Mitarbeiter hat sein Gesicht registriert und wartet auf Ihre Prüfung.",
+      "employee_note": "Ihre Identität wird geprüft"
+    },
+    "APPROVED": {
+      "name": "Bestätigt",
+      "description": "Kann sich per Gesicht oder QR-Code identifizieren.",
+      "employee_note": "Identität bestätigt"
+    },
+    "REJECTED": {
+      "name": "Abgelehnt",
+      "description": "Der Mitarbeiter muss sein Gesicht erneut registrieren.",
+      "employee_note": "Sie müssen Ihr Gesicht erneut registrieren"
+    }
+  },
+  "enrollment_statuses": {
+    "PENDING": {
+      "name": "Ausstehend",
+      "description": "Die Gesichtsregistrierung wartet auf die Prüfung."
+    },
+    "APPROVED": {
+      "name": "Angenommen",
+      "description": "Das Unternehmen hat die Gesichtsregistrierung angenommen."
+    },
+    "REJECTED": {
+      "name": "Abgelehnt",
+      "description": "Das Unternehmen hat die Gesichtsregistrierung abgelehnt."
+    }
+  },
+  "device_statuses": {
+    "PENDING": {
+      "name": "Freigabe ausstehend",
+      "description": "Das Prüfgerät hat sich auf diesem Gerät angemeldet und wartet auf die Freigabe durch das Unternehmen."
+    },
+    "APPROVED": {
+      "name": "Freigegeben",
+      "description": "Das Unternehmen hat das Gerät freigegeben: Das Prüfgerät kann darauf arbeiten."
+    },
+    "REJECTED": {
+      "name": "Abgelehnt",
+      "description": "Das Unternehmen hat das Gerät nicht freigegeben."
+    },
+    "REVOKED": {
+      "name": "Widerrufen",
+      "description": "Das Unternehmen hat die Freigabe zurückgezogen: Die Sitzungen auf dem Gerät wurden beendet."
+    }
+  },
+  "api_scopes": {
+    "EMPLOYEES_READ": {
+      "name": "Mitarbeiter",
+      "description": "Mitarbeiter abfragen (GET /employees und /employees/{id}): berufliche Daten und Kontaktdaten, Status und Gesichtsregistrierung. Niemals Fotos oder biometrische Daten."
+    },
+    "ATTENDANCE_READ": {
+      "name": "Identifizierungen",
+      "description": "Das Protokoll der Identifizierungen abfragen (GET /attendance): wer, wann, mit welcher Methode, an welchem Prüfgerät und mit welchem Ergebnis."
+    },
+    "VALIDATORS_READ": {
+      "name": "Prüfgeräte",
+      "description": "Die Prüfgeräte für Identitäten abfragen (GET /validators): Name, Modus, Adresse und Status."
+    },
+    "VERIFICATION": {
+      "name": "Verifizierung",
+      "description": "Das Gesicht eines Mitarbeiters über die mobile App des Unternehmens verifizieren oder identifizieren (POST /verification/*). Nur Verifizierung: fragt weder Mitarbeiter noch Identifizierungen ab."
+    }
+  },
+  "api_key_statuses": {
+    "ACTIVE": {
+      "name": "Aktiv",
+      "description": "Der Schlüssel gewährt Zugriff auf die API mit seinen Berechtigungen."
+    },
+    "EXPIRED": {
+      "name": "Abgelaufen",
+      "description": "Das Ablaufdatum ist erreicht: Er gewährt keinen Zugriff mehr."
+    },
+    "REVOKED": {
+      "name": "Widerrufen",
+      "description": "Das Unternehmen hat ihn widerrufen (oder erneuert): Er gewährt keinen Zugriff mehr."
+    }
+  },
+  "verification_reasons": {
+    "NO_MATCH": {
+      "name": "Gesicht stimmt nicht überein",
+      "message": "Gesicht nicht erkannt"
+    },
+    "LIVENESS_FAILED": {
+      "name": "Lebenderkennung nicht bestanden",
+      "message": "Die verlangte Bewegung wurde nicht erkannt. Versuchen Sie es erneut."
+    },
+    "LIVENESS_MISMATCH": {
+      "name": "Aufnahmen verschiedener Personen",
+      "message": "Die Aufnahmen gehören nicht zur selben Person. Versuchen Sie es erneut."
+    },
+    "FACE_NOT_REGISTERED": {
+      "name": "Kein bestätigtes Gesicht",
+      "message": "Das Gesicht des Mitarbeiters wurde vom Unternehmen noch nicht bestätigt"
+    },
+    "EMPTY_GALLERY": {
+      "name": "Keine registrierten Gesichter",
+      "message": "In diesem Unternehmen gibt es noch keine Mitarbeiter mit bestätigter Identität"
+    },
+    "AMBIGUOUS_MATCH": {
+      "name": "Ähnelt mehreren Personen",
+      "message": "Die Person konnte nicht sicher genug erkannt werden. Versuchen Sie es bei guter Beleuchtung erneut."
+    },
+    "INCONSISTENT_MATCH": {
+      "name": "Aufnahmen nicht eindeutig",
+      "message": "Die Aufnahmen stimmen nicht mit einer einzigen Person überein. Versuchen Sie es erneut."
+    },
+    "INVALID_FORMAT": {
+      "name": "Ungültiger QR-Code",
+      "message": "Ungültiger QR-Code"
+    },
+    "NOT_FOUND": {
+      "name": "QR-Code nicht erkannt",
+      "message": "QR-Code nicht erkannt"
+    },
+    "OTHER_COMPANY": {
+      "name": "QR-Code nicht erkannt",
+      "message": "QR-Code nicht erkannt"
+    },
+    "REVOKED": {
+      "name": "QR-Code ersetzt",
+      "description": "Der Mitarbeiter hat einen anderen Code erzeugt oder das Unternehmen hat diesen ungültig gemacht.",
+      "message": "Dieser QR-Code wurde bereits ersetzt. Bitten Sie den Mitarbeiter, den aktuellen Code auf seinem Telefon zu zeigen."
+    },
+    "EXPIRED": {
+      "name": "QR-Code abgelaufen",
+      "description": "Der dynamische Code ist nicht mehr gültig (oder die Zeit zur Bestätigung des Gesichts ist abgelaufen).",
+      "message": "Der QR-Code ist abgelaufen. Bitten Sie den Mitarbeiter, den aktualisierten Code auf seinem Telefon zu zeigen."
+    },
+    "OTHER_EMPLOYEE": {
+      "name": "QR-Code eines anderen Mitarbeiters",
+      "message": "QR-Code nicht erkannt"
+    },
+    "EMPLOYEE_INACTIVE": {
+      "name": "Mitarbeiter deaktiviert",
+      "message": "Der Mitarbeiter ist deaktiviert"
+    },
+    "SPOOF_DETECTED": {
+      "name": "Mögliches Foto oder möglicher Bildschirm",
+      "description": "Die Täuschungserkennung hat ein gedrucktes Foto, einen Bildschirm oder ein Video erkannt.",
+      "message": "Es konnte nicht bestätigt werden, dass Sie als Person vor der Kamera stehen. Versuchen Sie es erneut."
+    },
+    "IMAGE_NOT_FROM_CAMERA": {
+      "name": "Bild nicht von der Kamera",
+      "description": "Das Bild enthält Metadaten einer Kamera oder eines Bildbearbeitungsprogramms: Es ist eine hochgeladene Datei, keine Aufnahme in Echtzeit.",
+      "message": "Das Bild stammt nicht von der Kamera der App. Machen Sie die Aufnahme direkt vor der Kamera."
+    },
+    "STATIC_CAPTURE": {
+      "name": "Standbild",
+      "description": "Die Aufnahmen des Versuchs sind identisch: Eine echte Person liefert nie zwei gleiche Einzelbilder.",
+      "message": "Die Aufnahmen sind identisch, wie bei einem Standbild. Stellen Sie sich vor die Kamera und versuchen Sie es erneut."
+    },
+    "REPLAY_DETECTED": {
+      "name": "Wiederverwendete Aufnahme",
+      "description": "Die Aufnahme wurde bereits früher empfangen: Eine gespeicherte Aufnahme wurde erneut gesendet.",
+      "message": "Diese Aufnahme wurde bereits verwendet. Machen Sie eine neue vor der Kamera."
+    },
+    "CAPTURE_INCONSISTENT": {
+      "name": "Aufnahmen aus verschiedenen Durchgängen",
+      "description": "Die Aufnahmen stammen nicht von derselben Kamera, oder das Gesicht hat Größe oder Position auf unmögliche Weise geändert.",
+      "message": "Die Aufnahmen scheinen nicht aus demselben Durchgang zu stammen. Wechseln Sie während des Vorgangs weder die Kamera noch die Entfernung."
+    },
+    "VIRTUAL_CAMERA": {
+      "name": "Virtuelle Kamera",
+      "description": "Die verwendete Kamera ist ein Programm, das statt der echten Kamera ein Video oder ein Foto übertragen kann.",
+      "message": "Virtuelle Kameras sind nicht erlaubt. Verwenden Sie die Kamera des Geräts."
+    },
+    "CHALLENGE_TOO_FAST": {
+      "name": "Drehung zu schnell",
+      "description": "Die Aufnahme der Kopfdrehung kam früher an, als eine Person für die Drehung des Kopfes braucht.",
+      "message": "Die Drehung wurde zu schnell aufgenommen. Folgen Sie der Anweisung auf dem Bildschirm und versuchen Sie es erneut."
+    },
+    "ALREADY_USED": {
+      "name": "QR-Code bereits verwendet",
+      "description": "Jeder dynamische Code gilt nur einmal: Dieser wurde bereits gescannt.",
+      "message": "Dieser QR-Code wurde bereits verwendet. Bitten Sie den Mitarbeiter, den neuen Code auf seinem Telefon zu zeigen."
+    },
+    "STATIC_QR": {
+      "name": "Gedruckter QR-Code (nicht mehr gültig)",
+      "description": "Fester Code aus der vorherigen Version (gedruckter oder heruntergeladener Ausweis).",
+      "message": "Gedruckte QR-Codes sind nicht mehr gültig. Der Mitarbeiter muss seinen dynamischen Code auf dem Telefon zeigen."
+    },
+    "FLASH_MISMATCH": {
+      "name": "Gesicht hat den Blitz nicht reflektiert",
+      "description": "Verdächtiger Versuch: Die Farben des Bildschirms wurden nicht vom Gesicht reflektiert (eingeschleustes oder erzeugtes Video).",
+      "message": "Es konnte nicht bestätigt werden, dass Sie vor dem Bildschirm sind. Blicken Sie direkt in die Kamera und versuchen Sie es erneut."
+    },
+    "FLASH_INCONCLUSIVE": {
+      "name": "Blitz nicht messbar",
+      "description": "Zu viel Umgebungslicht: Die Farben des Bildschirms waren im Gesicht nicht zu erkennen.",
+      "message": "Die Spiegelung des Bildschirms in Ihrem Gesicht wurde nicht erkannt. Meiden Sie direktes Sonnenlicht, erhöhen Sie die Bildschirmhelligkeit und versuchen Sie es erneut."
+    },
+    "FLASH_FLAT": {
+      "name": "Flacher Blitz",
+      "message": "Es konnte nicht bestätigt werden, dass Sie vor dem Bildschirm sind. Blicken Sie direkt in die Kamera und versuchen Sie es erneut."
+    },
+    "REPLAY_PERCEPTUAL": {
+      "name": "Aufnahme fast identisch mit einer anderen",
+      "message": "Diese Aufnahme wurde bereits verwendet. Machen Sie eine neue vor der Kamera."
+    },
+    "KNOWN_ATTACK": {
+      "name": "Bekannter Angriff",
+      "message": "Ihre Identität konnte nicht bestätigt werden. Versuchen Sie es bei guter Beleuchtung erneut, mit Blick auf den Bildschirm."
+    },
+    "RISK_DENIED": {
+      "name": "Kritisches Risiko",
+      "message": "Ihre Identität konnte nicht bestätigt werden. Versuchen Sie es bei guter Beleuchtung erneut, mit Blick auf den Bildschirm."
+    },
+    "STEP_UP_REQUIRED": {
+      "name": "Zusätzlicher Schritt angefordert",
+      "message": "Führen Sie aus Sicherheitsgründen einen weiteren Schritt der Lebenderkennung aus"
+    }
+  },
+  "accessories": {
+    "GLASSES": {
+      "name": "Brille",
+      "phrase": "die Brille"
+    },
+    "HEADWEAR": {
+      "name": "Mütze",
+      "phrase": "die Mütze oder den Hut"
+    },
+    "MASK": {
+      "name": "Maske",
+      "phrase": "die Maske"
+    }
+  },
+  "liveness_actions": {
+    "TURN_LEFT": {
+      "name": "Nach links drehen",
+      "instruction": "Drehen Sie den Kopf langsam nach links"
+    },
+    "TURN_RIGHT": {
+      "name": "Nach rechts drehen",
+      "instruction": "Drehen Sie den Kopf langsam nach rechts"
+    },
+    "LOOK_UP": {
+      "name": "Nach oben blicken",
+      "instruction": "Heben Sie das Kinn leicht und blicken Sie nach oben"
+    },
+    "LOOK_DOWN": {
+      "name": "Nach unten blicken",
+      "instruction": "Senken Sie das Kinn leicht und blicken Sie nach unten"
+    },
+    "MOVE_CLOSER": {
+      "name": "Näher an die Kamera",
+      "instruction": "Bringen Sie Ihr Gesicht näher an die Kamera"
+    }
+  },
+  "countries": {
+    "MX": {
+      "name": "Mexiko"
+    },
+    "US": {
+      "name": "Vereinigte Staaten"
+    },
+    "CA": {
+      "name": "Kanada"
+    },
+    "GT": {
+      "name": "Guatemala"
+    },
+    "SV": {
+      "name": "El Salvador"
+    },
+    "HN": {
+      "name": "Honduras"
+    },
+    "CR": {
+      "name": "Costa Rica"
+    },
+    "PA": {
+      "name": "Panama"
+    },
+    "CO": {
+      "name": "Kolumbien"
+    },
+    "ES": {
+      "name": "Spanien"
+    },
+    "AF": {
+      "name": "Afghanistan"
+    },
+    "AL": {
+      "name": "Albanien"
+    },
+    "DE": {
+      "name": "Deutschland"
+    },
+    "AD": {
+      "name": "Andorra"
+    },
+    "AO": {
+      "name": "Angola"
+    },
+    "AI": {
+      "name": "Anguilla"
+    },
+    "AG": {
+      "name": "Antigua und Barbuda"
+    },
+    "SA": {
+      "name": "Saudi-Arabien"
+    },
+    "DZ": {
+      "name": "Algerien"
+    },
+    "AR": {
+      "name": "Argentinien"
+    },
+    "AM": {
+      "name": "Armenien"
+    },
+    "AW": {
+      "name": "Aruba"
+    },
+    "AU": {
+      "name": "Australien"
+    },
+    "AT": {
+      "name": "Österreich"
+    },
+    "AZ": {
+      "name": "Aserbaidschan"
+    },
+    "BS": {
+      "name": "Bahamas"
+    },
+    "BD": {
+      "name": "Bangladesch"
+    },
+    "BB": {
+      "name": "Barbados"
+    },
+    "BH": {
+      "name": "Bahrain"
+    },
+    "BE": {
+      "name": "Belgien"
+    },
+    "BZ": {
+      "name": "Belize"
+    },
+    "BJ": {
+      "name": "Benin"
+    },
+    "BM": {
+      "name": "Bermuda"
+    },
+    "BY": {
+      "name": "Belarus"
+    },
+    "BO": {
+      "name": "Bolivien"
+    },
+    "BA": {
+      "name": "Bosnien und Herzegowina"
+    },
+    "BW": {
+      "name": "Botsuana"
+    },
+    "BR": {
+      "name": "Brasilien"
+    },
+    "BN": {
+      "name": "Brunei"
+    },
+    "BG": {
+      "name": "Bulgarien"
+    },
+    "BF": {
+      "name": "Burkina Faso"
+    },
+    "BI": {
+      "name": "Burundi"
+    },
+    "BT": {
+      "name": "Bhutan"
+    },
+    "CV": {
+      "name": "Cabo Verde"
+    },
+    "KH": {
+      "name": "Kambodscha"
+    },
+    "CM": {
+      "name": "Kamerun"
+    },
+    "BQ": {
+      "name": "Karibische Niederlande"
+    },
+    "QA": {
+      "name": "Katar"
+    },
+    "TD": {
+      "name": "Tschad"
+    },
+    "CZ": {
+      "name": "Tschechien"
+    },
+    "CL": {
+      "name": "Chile"
+    },
+    "CN": {
+      "name": "China"
+    },
+    "CY": {
+      "name": "Zypern"
+    },
+    "VA": {
+      "name": "Vatikanstadt"
+    },
+    "KM": {
+      "name": "Komoren"
+    },
+    "CG": {
+      "name": "Republik Kongo"
+    },
+    "KP": {
+      "name": "Nordkorea"
+    },
+    "KR": {
+      "name": "Südkorea"
+    },
+    "CI": {
+      "name": "Côte d’Ivoire"
+    },
+    "HR": {
+      "name": "Kroatien"
+    },
+    "CU": {
+      "name": "Kuba"
+    },
+    "CW": {
+      "name": "Curaçao"
+    },
+    "DK": {
+      "name": "Dänemark"
+    },
+    "DM": {
+      "name": "Dominica"
+    },
+    "EC": {
+      "name": "Ecuador"
+    },
+    "EG": {
+      "name": "Ägypten"
+    },
+    "AE": {
+      "name": "Vereinigte Arabische Emirate"
+    },
+    "ER": {
+      "name": "Eritrea"
+    },
+    "SK": {
+      "name": "Slowakei"
+    },
+    "SI": {
+      "name": "Slowenien"
+    },
+    "EE": {
+      "name": "Estland"
+    },
+    "SZ": {
+      "name": "Eswatini"
+    },
+    "ET": {
+      "name": "Äthiopien"
+    },
+    "PH": {
+      "name": "Philippinen"
+    },
+    "FI": {
+      "name": "Finnland"
+    },
+    "FJ": {
+      "name": "Fidschi"
+    },
+    "FR": {
+      "name": "Frankreich"
+    },
+    "GA": {
+      "name": "Gabun"
+    },
+    "GM": {
+      "name": "Gambia"
+    },
+    "GE": {
+      "name": "Georgien"
+    },
+    "GH": {
+      "name": "Ghana"
+    },
+    "GI": {
+      "name": "Gibraltar"
+    },
+    "GD": {
+      "name": "Grenada"
+    },
+    "GR": {
+      "name": "Griechenland"
+    },
+    "GL": {
+      "name": "Grönland"
+    },
+    "GP": {
+      "name": "Guadeloupe"
+    },
+    "GU": {
+      "name": "Guam"
+    },
+    "GF": {
+      "name": "Französisch-Guayana"
+    },
+    "GG": {
+      "name": "Guernsey"
+    },
+    "GN": {
+      "name": "Guinea"
+    },
+    "GQ": {
+      "name": "Äquatorialguinea"
+    },
+    "GW": {
+      "name": "Guinea-Bissau"
+    },
+    "GY": {
+      "name": "Guyana"
+    },
+    "HT": {
+      "name": "Haiti"
+    },
+    "HU": {
+      "name": "Ungarn"
+    },
+    "IN": {
+      "name": "Indien"
+    },
+    "ID": {
+      "name": "Indonesien"
+    },
+    "IQ": {
+      "name": "Irak"
+    },
+    "IR": {
+      "name": "Iran"
+    },
+    "IE": {
+      "name": "Irland"
+    },
+    "AC": {
+      "name": "Ascension"
+    },
+    "IM": {
+      "name": "Insel Man"
+    },
+    "CX": {
+      "name": "Weihnachtsinsel"
+    },
+    "NF": {
+      "name": "Norfolkinsel"
+    },
+    "IS": {
+      "name": "Island"
+    },
+    "AX": {
+      "name": "Ålandinseln"
+    },
+    "KY": {
+      "name": "Kaimaninseln"
+    },
+    "CC": {
+      "name": "Kokosinseln"
+    },
+    "CK": {
+      "name": "Cookinseln"
+    },
+    "FO": {
+      "name": "Färöer"
+    },
+    "FK": {
+      "name": "Falklandinseln"
+    },
+    "MP": {
+      "name": "Nördliche Marianen"
+    },
+    "MH": {
+      "name": "Marshallinseln"
+    },
+    "SB": {
+      "name": "Salomonen"
+    },
+    "TC": {
+      "name": "Turks- und Caicosinseln"
+    },
+    "VG": {
+      "name": "Britische Jungferninseln"
+    },
+    "VI": {
+      "name": "Amerikanische Jungferninseln"
+    },
+    "IL": {
+      "name": "Israel"
+    },
+    "IT": {
+      "name": "Italien"
+    },
+    "JM": {
+      "name": "Jamaika"
+    },
+    "JP": {
+      "name": "Japan"
+    },
+    "JE": {
+      "name": "Jersey"
+    },
+    "JO": {
+      "name": "Jordanien"
+    },
+    "KZ": {
+      "name": "Kasachstan"
+    },
+    "KE": {
+      "name": "Kenia"
+    },
+    "KG": {
+      "name": "Kirgisistan"
+    },
+    "KI": {
+      "name": "Kiribati"
+    },
+    "XK": {
+      "name": "Kosovo"
+    },
+    "KW": {
+      "name": "Kuwait"
+    },
+    "LA": {
+      "name": "Laos"
+    },
+    "LS": {
+      "name": "Lesotho"
+    },
+    "LV": {
+      "name": "Lettland"
+    },
+    "LB": {
+      "name": "Libanon"
+    },
+    "LR": {
+      "name": "Liberia"
+    },
+    "LY": {
+      "name": "Libyen"
+    },
+    "LI": {
+      "name": "Liechtenstein"
+    },
+    "LT": {
+      "name": "Litauen"
+    },
+    "LU": {
+      "name": "Luxemburg"
+    },
+    "MK": {
+      "name": "Nordmazedonien"
+    },
+    "MG": {
+      "name": "Madagaskar"
+    },
+    "MY": {
+      "name": "Malaysia"
+    },
+    "MW": {
+      "name": "Malawi"
+    },
+    "MV": {
+      "name": "Malediven"
+    },
+    "ML": {
+      "name": "Mali"
+    },
+    "MT": {
+      "name": "Malta"
+    },
+    "MA": {
+      "name": "Marokko"
+    },
+    "MQ": {
+      "name": "Martinique"
+    },
+    "MU": {
+      "name": "Mauritius"
+    },
+    "MR": {
+      "name": "Mauretanien"
+    },
+    "YT": {
+      "name": "Mayotte"
+    },
+    "FM": {
+      "name": "Mikronesien"
+    },
+    "MD": {
+      "name": "Republik Moldau"
+    },
+    "MC": {
+      "name": "Monaco"
+    },
+    "MN": {
+      "name": "Mongolei"
+    },
+    "ME": {
+      "name": "Montenegro"
+    },
+    "MS": {
+      "name": "Montserrat"
+    },
+    "MZ": {
+      "name": "Mosambik"
+    },
+    "MM": {
+      "name": "Myanmar"
+    },
+    "NA": {
+      "name": "Namibia"
+    },
+    "NR": {
+      "name": "Nauru"
+    },
+    "NP": {
+      "name": "Nepal"
+    },
+    "NI": {
+      "name": "Nicaragua"
+    },
+    "NE": {
+      "name": "Niger"
+    },
+    "NG": {
+      "name": "Nigeria"
+    },
+    "NU": {
+      "name": "Niue"
+    },
+    "NO": {
+      "name": "Norwegen"
+    },
+    "NC": {
+      "name": "Neukaledonien"
+    },
+    "NZ": {
+      "name": "Neuseeland"
+    },
+    "OM": {
+      "name": "Oman"
+    },
+    "NL": {
+      "name": "Niederlande"
+    },
+    "PK": {
+      "name": "Pakistan"
+    },
+    "PW": {
+      "name": "Palau"
+    },
+    "PG": {
+      "name": "Papua-Neuguinea"
+    },
+    "PY": {
+      "name": "Paraguay"
+    },
+    "PE": {
+      "name": "Peru"
+    },
+    "PF": {
+      "name": "Französisch-Polynesien"
+    },
+    "PL": {
+      "name": "Polen"
+    },
+    "PT": {
+      "name": "Portugal"
+    },
+    "PR": {
+      "name": "Puerto Rico"
+    },
+    "HK": {
+      "name": "Hongkong"
+    },
+    "MO": {
+      "name": "Macao"
+    },
+    "GB": {
+      "name": "Vereinigtes Königreich"
+    },
+    "CF": {
+      "name": "Zentralafrikanische Republik"
+    },
+    "CD": {
+      "name": "Demokratische Republik Kongo"
+    },
+    "DO": {
+      "name": "Dominikanische Republik"
+    },
+    "RE": {
+      "name": "Réunion"
+    },
+    "RW": {
+      "name": "Ruanda"
+    },
+    "RO": {
+      "name": "Rumänien"
+    },
+    "RU": {
+      "name": "Russland"
+    },
+    "EH": {
+      "name": "Westsahara"
+    },
+    "WS": {
+      "name": "Samoa"
+    },
+    "AS": {
+      "name": "Amerikanisch-Samoa"
+    },
+    "BL": {
+      "name": "St. Barthélemy"
+    },
+    "KN": {
+      "name": "St. Kitts und Nevis"
+    },
+    "SM": {
+      "name": "San Marino"
+    },
+    "MF": {
+      "name": "St. Martin"
+    },
+    "PM": {
+      "name": "St. Pierre und Miquelon"
+    },
+    "VC": {
+      "name": "St. Vincent und die Grenadinen"
+    },
+    "SH": {
+      "name": "St. Helena"
+    },
+    "LC": {
+      "name": "St. Lucia"
+    },
+    "ST": {
+      "name": "São Tomé und Príncipe"
+    },
+    "SN": {
+      "name": "Senegal"
+    },
+    "RS": {
+      "name": "Serbien"
+    },
+    "SC": {
+      "name": "Seychellen"
+    },
+    "SL": {
+      "name": "Sierra Leone"
+    },
+    "SG": {
+      "name": "Singapur"
+    },
+    "SX": {
+      "name": "Sint Maarten"
+    },
+    "SY": {
+      "name": "Syrien"
+    },
+    "SO": {
+      "name": "Somalia"
+    },
+    "LK": {
+      "name": "Sri Lanka"
+    },
+    "ZA": {
+      "name": "Südafrika"
+    },
+    "SD": {
+      "name": "Sudan"
+    },
+    "SS": {
+      "name": "Südsudan"
+    },
+    "SE": {
+      "name": "Schweden"
+    },
+    "CH": {
+      "name": "Schweiz"
+    },
+    "SR": {
+      "name": "Suriname"
+    },
+    "SJ": {
+      "name": "Spitzbergen und Jan Mayen"
+    },
+    "TH": {
+      "name": "Thailand"
+    },
+    "TW": {
+      "name": "Taiwan"
+    },
+    "TZ": {
+      "name": "Tansania"
+    },
+    "TJ": {
+      "name": "Tadschikistan"
+    },
+    "IO": {
+      "name": "Britisches Territorium im Indischen Ozean"
+    },
+    "PS": {
+      "name": "Palästinensische Autonomiegebiete"
+    },
+    "TL": {
+      "name": "Timor-Leste"
+    },
+    "TG": {
+      "name": "Togo"
+    },
+    "TK": {
+      "name": "Tokelau"
+    },
+    "TO": {
+      "name": "Tonga"
+    },
+    "TT": {
+      "name": "Trinidad und Tobago"
+    },
+    "TA": {
+      "name": "Tristan da Cunha"
+    },
+    "TN": {
+      "name": "Tunesien"
+    },
+    "TM": {
+      "name": "Turkmenistan"
+    },
+    "TR": {
+      "name": "Türkei"
+    },
+    "TV": {
+      "name": "Tuvalu"
+    },
+    "UA": {
+      "name": "Ukraine"
+    },
+    "UG": {
+      "name": "Uganda"
+    },
+    "UY": {
+      "name": "Uruguay"
+    },
+    "UZ": {
+      "name": "Usbekistan"
+    },
+    "VU": {
+      "name": "Vanuatu"
+    },
+    "VE": {
+      "name": "Venezuela"
+    },
+    "VN": {
+      "name": "Vietnam"
+    },
+    "WF": {
+      "name": "Wallis und Futuna"
+    },
+    "YE": {
+      "name": "Jemen"
+    },
+    "DJ": {
+      "name": "Dschibuti"
+    },
+    "ZM": {
+      "name": "Sambia"
+    },
+    "ZW": {
+      "name": "Simbabwe"
+    }
+  },
+  "tax_id_types": {
+    "MX_RFC": {
+      "name": "Bundesregister der Steuerpflichtigen",
+      "description": "12 Zeichen (juristische Person) oder 13 (natürliche Person)",
+      "short_name": "RFC"
+    },
+    "US_EIN": {
+      "name": "Arbeitgeber-Identifikationsnummer",
+      "description": "9 Ziffern",
+      "short_name": "EIN"
+    },
+    "CA_BN": {
+      "name": "Unternehmensnummer",
+      "description": "9 Ziffern, mit oder ohne Programmkonto (z. B. RT0001)",
+      "short_name": "BN"
+    },
+    "ES_NIF": {
+      "name": "Steuer-Identifikationsnummer (früher CIF)",
+      "description": "9 Zeichen: Buchstaben und Ziffern",
+      "short_name": "NIF"
+    },
+    "CO_NIT": {
+      "name": "Steuer-Identifikationsnummer",
+      "description": "7 bis 16 Ziffern, am Ende die Prüfziffer",
+      "short_name": "NIT"
+    },
+    "AR_CUIT": {
+      "name": "Einheitlicher Steuer-Identifikationscode",
+      "description": "11 Ziffern, am Ende die Prüfziffer",
+      "short_name": "CUIT"
+    },
+    "CL_RUT": {
+      "name": "Einheitliches Steuerregister",
+      "description": "8 bis 9 Zeichen: die Nummer und ihre Prüfziffer (0 bis 9 oder K)",
+      "short_name": "RUT"
+    },
+    "PE_RUC": {
+      "name": "Einheitliches Register der Steuerpflichtigen",
+      "description": "11 Ziffern; beginnt mit 10, 15, 16, 17 oder 20",
+      "short_name": "RUC"
+    },
+    "BR_CNPJ": {
+      "name": "Nationales Register juristischer Personen",
+      "description": "14 Zeichen: 12 Buchstaben oder Ziffern und 2 Prüfziffern",
+      "short_name": "CNPJ"
+    },
+    "GB_VAT": {
+      "name": "Umsatzsteuernummer",
+      "description": "GB und 9 oder 12 Ziffern",
+      "short_name": "VAT"
+    },
+    "GB_CRN": {
+      "name": "Handelsregisternummer",
+      "description": "8 Zeichen: 8 Ziffern oder 2 Buchstaben und 6 Ziffern",
+      "short_name": "CRN"
+    },
+    "DE_VAT": {
+      "name": "Umsatzsteuer-Identifikationsnummer",
+      "description": "DE und 9 Ziffern",
+      "short_name": "USt-IdNr."
+    },
+    "FR_SIREN": {
+      "name": "SIREN-Nummer des Unternehmens",
+      "description": "9 Ziffern",
+      "short_name": "SIREN"
+    },
+    "FR_SIRET": {
+      "name": "SIRET-Nummer der Niederlassung",
+      "description": "14 Ziffern: die SIREN und 5 für die Niederlassung",
+      "short_name": "SIRET"
+    },
+    "OTHER": {
+      "name": "Andere Steuernummer",
+      "description": "3 bis 30 Buchstaben oder Ziffern",
+      "short_name": "Steuer-ID"
+    }
+  },
+  "enrollment_rejection_reasons": {
+    "PERSON_MISMATCH": {
+      "name": "Die Person auf dem Foto ist nicht der Mitarbeiter"
+    },
+    "UNCLEAR_PHOTO": {
+      "name": "Das Foto ist nicht deutlich"
+    },
+    "SPOOFING": {
+      "name": "Täuschung erkannt (Foto eines Fotos oder eines Bildschirms)"
+    },
+    "WRONG_DATA": {
+      "name": "Falsche Daten des Mitarbeiters"
+    }
+  },
+  "reverification_reasons": {
+    "PERIODIC": {
+      "name": "Regelmäßige Aktualisierung der Identität"
+    },
+    "APPEARANCE_CHANGE": {
+      "name": "Deutliche Veränderung des Aussehens"
+    },
+    "FREQUENT_FAILURES": {
+      "name": "Häufige Fehler bei der Identifizierung"
+    },
+    "SUSPECTED_SPOOFING": {
+      "name": "Verdacht auf Identitätstäuschung"
+    }
+  },
+  "confidence_levels": {
+    "80": {
+      "name": "Flexibel"
+    },
+    "81": {
+      "name": "Flexibel"
+    },
+    "82": {
+      "name": "Flexibel"
+    },
+    "83": {
+      "name": "Flexibel"
+    },
+    "84": {
+      "name": "Flexibel"
+    },
+    "85": {
+      "name": "Flexibel"
+    },
+    "86": {
+      "name": "Flexibel"
+    },
+    "87": {
+      "name": "Flexibel"
+    },
+    "88": {
+      "name": "Flexibel"
+    },
+    "89": {
+      "name": "Flexibel"
+    },
+    "90": {
+      "name": "Ausgewogen"
+    },
+    "91": {
+      "name": "Ausgewogen"
+    },
+    "92": {
+      "name": "Ausgewogen"
+    },
+    "93": {
+      "name": "Ausgewogen"
+    },
+    "94": {
+      "name": "Ausgewogen"
+    },
+    "95": {
+      "name": "Hoch"
+    },
+    "96": {
+      "name": "Hoch"
+    },
+    "97": {
+      "name": "Hoch"
+    },
+    "98": {
+      "name": "Hoch"
+    },
+    "99": {
+      "name": "Streng"
+    },
+    "100": {
+      "name": "Maximal"
+    }
+  },
+  "antispoof_levels": {
+    "STANDARD": {
+      "name": "Standard",
+      "description": "Lehnt ab, wenn die meisten Aufnahmen wie ein Foto, ein Bildschirm oder ein Video aussehen. Für fast alle Kameras empfohlen."
+    },
+    "HIGH": {
+      "name": "Hoch",
+      "description": "Empfindlicher: lehnt schon bei mäßigen Anzeichen eines Fotos oder Bildschirms ab. Bei wenig Licht oder Kameras geringer Qualität kann eine neue Aufnahme nötig sein."
+    },
+    "MAXIMUM": {
+      "name": "Maximal",
+      "description": "Lehnt ab, wenn eine einzige Aufnahme wie ein Foto oder ein Bildschirm aussieht. Erfordert gute Beleuchtung und eine hochwertige Kamera."
+    }
+  },
+  "flash_modes": {
+    "OFF": {
+      "name": "Aus",
+      "description": "Der Bildschirm blitzt während der Lebenderkennung keine Farben auf."
+    },
+    "OBSERVE": {
+      "name": "Nur messen",
+      "description": "Der Bildschirm blitzt Farben auf, und es wird gemessen, wie das Gesicht sie reflektiert, ohne jemanden zu blockieren. Dient zur Kalibrierung mit echten Aufnahmen, bevor es verlangt wird."
+    },
+    "ENFORCE": {
+      "name": "Verpflichtend",
+      "description": "Das Gesicht muss die Farben des Bildschirms reflektieren: Ein eingeschleustes oder erzeugtes Video reflektiert sie nicht. Bei direktem Sonnenlicht kann eine Wiederholung nötig sein. Aktivieren Sie es nach der Kalibrierung."
+    }
+  },
+  "session_revocation_reasons": {
+    "LOGOUT": {
+      "name": "Abmeldung",
+      "description": "Die Person hat sich abgemeldet.",
+      "message": "Ihre Sitzung ist nicht mehr gültig. Melden Sie sich erneut an."
+    },
+    "LOGOUT_ALL": {
+      "name": "Abmeldung auf allen Geräten",
+      "description": "Die Person hat sich auf allen ihren Geräten abgemeldet.",
+      "message": "Ihre Sitzung ist nicht mehr gültig. Melden Sie sich erneut an."
+    },
+    "REVOKED_BY_USER": {
+      "name": "Von einer anderen Sitzung aus beendet",
+      "description": "Die Person hat diese Sitzung in ihrer Liste aktiver Sitzungen beendet.",
+      "message": "Ihre Sitzung ist nicht mehr gültig. Melden Sie sich erneut an."
+    },
+    "PASSWORD_CHANGED": {
+      "name": "Passwort geändert",
+      "description": "Das Passwort wurde geändert: Die übrigen Sitzungen werden beendet.",
+      "message": "Ihre Sitzung ist nicht mehr gültig. Melden Sie sich erneut an."
+    },
+    "PASSWORD_RESET": {
+      "name": "Passwort zurückgesetzt",
+      "description": "Ein Administrator hat das Passwort zurückgesetzt.",
+      "message": "Ihre Sitzung ist nicht mehr gültig. Melden Sie sich erneut an."
+    },
+    "ACCOUNT_DEACTIVATED": {
+      "name": "Konto deaktiviert",
+      "description": "Das Konto (oder die Beschäftigung in diesem Unternehmen) wurde deaktiviert.",
+      "message": "Ihre Sitzung ist nicht mehr gültig. Melden Sie sich erneut an."
+    },
+    "COMPANY_DEACTIVATED": {
+      "name": "Unternehmen deaktiviert",
+      "description": "Das Unternehmen wurde deaktiviert: Die Sitzungen seines Personals werden beendet.",
+      "message": "Ihre Sitzung ist nicht mehr gültig. Melden Sie sich erneut an."
+    },
+    "EMPLOYEE_REMOVED": {
+      "name": "Aus dem Unternehmen ausgeschieden",
+      "description": "Die Person ist nicht mehr bei diesem Unternehmen beschäftigt.",
+      "message": "Ihre Sitzung ist nicht mehr gültig. Melden Sie sich erneut an."
+    },
+    "SIGNED_IN_ELSEWHERE": {
+      "name": "Anmeldung auf einem anderen Gerät",
+      "description": "Eine neue Anmeldung hat diese ersetzt (nur eine aktive Sitzung pro Person).",
+      "message": "Mit Ihrem Konto hat sich jemand auf einem anderen Gerät angemeldet. Sie können nur eine aktive Sitzung gleichzeitig haben."
+    },
+    "REFRESH_REUSE_DETECTED": {
+      "name": "Möglicher Sitzungsdiebstahl",
+      "description": "Ein bereits verwendeter Erneuerungsschlüssel wurde vorgelegt: Es wird von Diebstahl ausgegangen und die Sitzung beendet.",
+      "message": "Ihre Sitzung ist nicht mehr gültig. Melden Sie sich erneut an."
+    },
+    "LOCATION_POLICY_CHANGED": {
+      "name": "Erlaubter Standort geändert",
+      "description": "Das Unternehmen hat den Einsatzort des Prüfgeräts vorgeschrieben oder geändert.",
+      "message": "Ihr Unternehmen hat den Ort geändert, an dem Sie arbeiten können. Melden Sie sich an diesem Ort erneut an."
+    },
+    "DEVICE_REVOKED": {
+      "name": "Gerät widerrufen",
+      "description": "Das Unternehmen hat die Freigabe des Geräts zurückgezogen, auf dem das Prüfgerät arbeitet.",
+      "message": "Ihr Unternehmen hat die Freigabe dieses Geräts zurückgezogen. Bitten Sie um eine erneute Freigabe."
+    },
+    "COMPANY_SUSPENDED": {
+      "name": "Unternehmen gesperrt",
+      "description": "Der Administrator der Plattform hat das Unternehmen gesperrt (Zahlungsverzug oder manuelle Entscheidung).",
+      "message": "Ihr Unternehmen ist gesperrt. Wenden Sie sich an den Administrator der Plattform, um es wieder zu aktivieren."
+    },
+    "ACCOUNT_DELETED": {
+      "name": "Konto gelöscht",
+      "description": "Das Konto oder sein Unternehmen wurde gelöscht: Die zugehörigen Sitzungen werden beendet.",
+      "message": "Ihr Konto wurde gelöscht. Wenden Sie sich an Ihr Unternehmen, wenn Sie das für einen Fehler halten."
+    }
+  },
+  "face_errors": {
+    "EMPTY_IMAGE": {
+      "name": "Kein Bild",
+      "message": "Es wurde kein Bild empfangen"
+    },
+    "INVALID_IMAGE_FORMAT": {
+      "name": "Format nicht zulässig",
+      "message": "Bildformat nicht zulässig (verwenden Sie JPEG, PNG oder WEBP)"
+    },
+    "IMAGE_TOO_SMALL": {
+      "name": "Bild zu klein",
+      "message": "Das Bild muss auf jeder Seite mindestens {min_dimension} px messen"
+    },
+    "IMAGE_TOO_LARGE": {
+      "name": "Bild zu groß",
+      "message": "Das Bild überschreitet auf mindestens einer Seite {max_dimension} px"
+    },
+    "INVALID_IMAGE": {
+      "name": "Ungültiges Bild",
+      "message": "Das Bild konnte nicht verarbeitet werden. Machen Sie ein anderes Foto."
+    },
+    "NO_FACE": {
+      "name": "Kein Gesicht",
+      "message": "Im Bild wurde kein Gesicht erkannt"
+    },
+    "MULTIPLE_FACES": {
+      "name": "Mehrere Personen",
+      "message": "Es wurde mehr als eine Person erkannt. Nur ein Gesicht darf zu sehen sein."
+    },
+    "LOW_DETECTION_SCORE": {
+      "name": "Gesicht undeutlich",
+      "message": "Das Gesicht ist nicht deutlich zu erkennen. Blicken Sie direkt in die Kamera."
+    },
+    "FACE_TOO_SMALL": {
+      "name": "Gesicht zu weit entfernt",
+      "message": "Das Gesicht ist zu weit entfernt. Gehen Sie näher an die Kamera."
+    },
+    "FACE_CUT_OFF": {
+      "name": "Gesicht unvollständig",
+      "message": "Das Gesicht ist unvollständig. Zentrieren Sie es im Kamerabild."
+    },
+    "POSE_NOT_FRONTAL": {
+      "name": "Kopf gedreht",
+      "message": "Blicken Sie direkt in die Kamera, ohne den Kopf zu drehen"
+    },
+    "POSE_TILTED": {
+      "name": "Kopf geneigt",
+      "message": "Halten Sie den Kopf gerade, ohne ihn zu neigen"
+    },
+    "POSE_PITCH": {
+      "name": "Kopf nach oben oder unten",
+      "message": "Blicken Sie direkt in die Kamera, ohne den Kopf zu heben oder zu senken"
+    },
+    "TOO_DARK": {
+      "name": "Zu dunkel",
+      "message": "Das Bild ist zu dunkel. Sorgen Sie für bessere Beleuchtung."
+    },
+    "TOO_BRIGHT": {
+      "name": "Überbelichtet",
+      "message": "Das Bild ist überbelichtet. Vermeiden Sie direktes Licht."
+    },
+    "TOO_BLURRY": {
+      "name": "Unscharf",
+      "message": "Das Bild ist unscharf. Halten Sie still."
+    },
+    "ACCESSORIES_DETECTED": {
+      "name": "Accessoires",
+      "description": "{accessories} wird aus den Formulierungen im Katalog der Accessoires gebildet.",
+      "message": "Nehmen Sie {accessories} ab, um fortzufahren"
+    },
+    "SPOOF_DETECTED": {
+      "name": "Mögliche Täuschung",
+      "message": "Es konnte nicht bestätigt werden, dass Sie als Person vor der Kamera stehen. Vermeiden Sie Spiegelungen und Bildschirme und zeigen Sie Ihr echtes Gesicht (kein Foto oder Video)."
+    },
+    "ENROLL_INCONSISTENT": {
+      "name": "Widersprüchliche Aufnahmen",
+      "message": "Die Fotos stimmen nicht miteinander überein. Wiederholen Sie die Aufnahme mit nur einer Person, frontal und bei guter Beleuchtung."
+    },
+    "LIVENESS_REQUIRED": {
+      "name": "Lebenderkennung fehlt",
+      "message": "Schließen Sie die Lebenderkennung ab, um fortzufahren"
+    },
+    "CHALLENGE_INVALID": {
+      "name": "Aufgabe abgelaufen",
+      "message": "Die Prüfaufgabe ist abgelaufen oder ungültig. Versuchen Sie es erneut."
+    },
+    "LIVENESS_FAILED": {
+      "name": "Lebenderkennung nicht bestanden",
+      "description": "Bei der Gesichtsregistrierung (bei der Identifizierung gelten die Gründe der Prüfung).",
+      "message": "Die verlangte Bewegung wurde nicht erkannt. Versuchen Sie es erneut."
+    },
+    "LIVENESS_MISMATCH": {
+      "name": "Andere Person bei der Aufgabe",
+      "description": "Bei der Gesichtsregistrierung (bei der Identifizierung gelten die Gründe der Prüfung).",
+      "message": "Die Aufnahmen gehören nicht zur selben Person. Versuchen Sie es erneut."
+    },
+    "FACE_NOT_REGISTERED": {
+      "name": "Keine Gesichtsregistrierung",
+      "description": "Der Mitarbeiter versucht sich zu verifizieren, ohne sein Gesicht registriert zu haben.",
+      "message": "Sie haben keine Gesichtsregistrierung. Wenden Sie sich an Ihr Unternehmen."
+    },
+    "FACE_SERVICE_BUSY": {
+      "name": "Gesichtserkennung ausgelastet",
+      "message": "Gerade gibt es viele Anfragen zur Gesichtserkennung. Versuchen Sie es in einigen Sekunden erneut."
+    },
+    "FACE_SERVICE_UNAVAILABLE": {
+      "name": "Gesichtserkennung nicht verfügbar",
+      "message": "Die Gesichtserkennung ist vorübergehend nicht verfügbar. Sie können sich per QR-Code identifizieren."
+    },
+    "FACE_PROCESSING_ERROR": {
+      "name": "Fehler der Gesichtserkennung",
+      "message": "Das Gesicht konnte gerade nicht verarbeitet werden. Versuchen Sie es erneut."
+    },
+    "IMAGE_NOT_FROM_CAMERA": {
+      "name": "Bild nicht von der Kamera",
+      "description": "Das Bild enthält Metadaten einer Kamera oder eines Bildbearbeitungsprogramms: Es ist eine hochgeladene Datei, keine Aufnahme in Echtzeit.",
+      "message": "Das Bild stammt nicht von der Kamera der App. Machen Sie die Aufnahme direkt vor der Kamera."
+    },
+    "STATIC_CAPTURE": {
+      "name": "Standbild",
+      "description": "Die Aufnahmen des Versuchs sind identisch: Eine echte Person liefert nie zwei gleiche Einzelbilder.",
+      "message": "Die Aufnahmen sind identisch, wie bei einem Standbild. Stellen Sie sich vor die Kamera und versuchen Sie es erneut."
+    },
+    "REPLAY_DETECTED": {
+      "name": "Wiederverwendete Aufnahme",
+      "description": "Die Aufnahme wurde bereits früher empfangen: Eine gespeicherte Aufnahme wurde erneut gesendet.",
+      "message": "Diese Aufnahme wurde bereits verwendet. Machen Sie eine neue vor der Kamera."
+    },
+    "CAPTURE_INCONSISTENT": {
+      "name": "Aufnahmen aus verschiedenen Durchgängen",
+      "description": "Die Aufnahmen stammen nicht von derselben Kamera, oder das Gesicht hat Größe oder Position auf unmögliche Weise geändert.",
+      "message": "Die Aufnahmen scheinen nicht aus demselben Durchgang zu stammen. Wechseln Sie während des Vorgangs weder die Kamera noch die Entfernung."
+    },
+    "VIRTUAL_CAMERA": {
+      "name": "Virtuelle Kamera",
+      "description": "Die verwendete Kamera ist ein Programm, das statt der echten Kamera ein Video oder ein Foto übertragen kann.",
+      "message": "Virtuelle Kameras sind nicht erlaubt. Verwenden Sie die Kamera des Geräts."
+    },
+    "CHALLENGE_TOO_FAST": {
+      "name": "Drehung zu schnell",
+      "description": "Die Aufnahme der Kopfdrehung kam früher an, als eine Person für die Drehung des Kopfes braucht.",
+      "message": "Die Drehung wurde zu schnell aufgenommen. Folgen Sie der Anweisung auf dem Bildschirm und versuchen Sie es erneut."
+    },
+    "FACE_ALREADY_REGISTERED": {
+      "name": "Gesicht bereits registriert",
+      "description": "Das Gesicht ist bereits als anderer Mitarbeiter des Unternehmens registriert.",
+      "message": "Dieses Gesicht ist bereits als anderer Mitarbeiter des Unternehmens registriert"
+    },
+    "FACE_LOCKED": {
+      "name": "Sperre nach Fehlversuchen",
+      "description": "Zu viele fehlgeschlagene oder verdächtige Versuche hintereinander.",
+      "message": "Zu viele fehlgeschlagene Versuche. Warten Sie aus Sicherheitsgründen {minutes} min und versuchen Sie es erneut."
+    },
+    "LOW_QUALITY": {
+      "name": "Unzureichende Qualität",
+      "description": "Die Aufnahme erreicht nicht die Mindestqualität der Richtlinie (Erkennung, Schärfe und Licht).",
+      "message": "Das Foto hat keine ausreichende Qualität. Sorgen Sie für gutes Licht, reinigen Sie die Kamera und halten Sie still."
+    },
+    "FLASH_MISMATCH": {
+      "name": "Gesicht hat den Blitz nicht reflektiert",
+      "description": "Die vom Bildschirm erzeugten Farben wurden nicht vom Gesicht reflektiert: Das Bild stammt nicht von einer Person vor dem Bildschirm (eingeschleustes oder erzeugtes Video).",
+      "message": "Es konnte nicht bestätigt werden, dass Sie vor dem Bildschirm sind. Blicken Sie ohne Filter und ohne andere Kamera direkt in die Kamera und versuchen Sie es erneut."
+    },
+    "FLASH_FLAT": {
+      "name": "Flacher Blitz",
+      "message": "Es konnte nicht bestätigt werden, dass Sie vor dem Bildschirm sind. Blicken Sie ohne Filter und ohne andere Kamera direkt in die Kamera und versuchen Sie es erneut."
+    },
+    "REPLAY_PERCEPTUAL": {
+      "name": "Aufnahme fast identisch mit einer anderen",
+      "message": "Diese Aufnahme wurde bereits verwendet. Machen Sie eine neue vor der Kamera."
+    },
+    "KNOWN_ATTACK": {
+      "name": "Bekannter Angriff",
+      "message": "Ihre Identität konnte nicht bestätigt werden. Versuchen Sie es bei guter Beleuchtung erneut, mit Blick auf den Bildschirm."
+    },
+    "RISK_DENIED": {
+      "name": "Kritisches Risiko",
+      "message": "Ihre Identität konnte nicht bestätigt werden. Versuchen Sie es bei guter Beleuchtung erneut, mit Blick auf den Bildschirm."
+    },
+    "STEP_UP_REQUIRED": {
+      "name": "Zusätzlicher Schritt",
+      "message": "Führen Sie aus Sicherheitsgründen einen weiteren Schritt aus: Folgen Sie den Anweisungen auf dem Bildschirm"
+    }
+  },
+  "enrollment_flags": {
+    "GLASSES": {
+      "name": "Mögliche Brille",
+      "description": "Das System hat eine mögliche Brille erkannt, und der Mitarbeiter hat angegeben, keine zu tragen."
+    },
+    "HEADWEAR": {
+      "name": "Mögliche Mütze oder möglicher Hut",
+      "description": "Das System hat eine mögliche Mütze oder einen möglichen Hut erkannt, und der Mitarbeiter hat angegeben, keine Kopfbedeckung zu tragen."
+    },
+    "MASK": {
+      "name": "Mögliche Maske",
+      "description": "Das System hat eine mögliche Maske erkannt, und der Mitarbeiter hat angegeben, keine zu tragen."
+    },
+    "SPOOF": {
+      "name": "Mögliches Foto oder möglicher Bildschirm",
+      "description": "Die Täuschungserkennung deutet darauf hin, dass die Aufnahmen von einem Foto oder einem Bildschirm stammen könnten."
+    },
+    "DUPLICATE_FACE": {
+      "name": "Gesicht bereits bei einem anderen Mitarbeiter registriert",
+      "description": "Das Gesicht ähnelt der freigegebenen Registrierung eines anderen Mitarbeiters des Unternehmens: Stellen Sie sicher, dass es nicht dieselbe Person mit zwei Konten ist."
+    },
+    "POSSIBLE_DUPLICATE": {
+      "name": "Ähnlichkeit mit einem anderen Mitarbeiter",
+      "description": "Gemessen an der Verdachtsstufe des Unternehmens ähnelt das Gesicht dem eines anderen freigegebenen Mitarbeiters: Prüfen Sie vor der Freigabe die ähnlichsten Treffer."
+    },
+    "VOICE_RETRIES": {
+      "name": "Wiederholte Antworten im Video",
+      "description": "Bei der Stimmprüfung brauchte eine Frage mehr als einen Versuch: Sehen Sie sich das Video an, bevor Sie annehmen."
+    },
+    "VIDEO_FACE_MISMATCH": {
+      "name": "Anderes Gesicht in einem Video",
+      "description": "Bei einem Versuch der Stimmprüfung stimmte das Gesicht im Video nicht mit den Fotos der Registrierung überein: Sehen Sie sich das Video an, bevor Sie annehmen."
+    }
+  },
+  "error_statuses": {
+    "PENDING": {
+      "name": "Offen",
+      "description": "Noch hat sich niemand darum gekümmert (oder der Fehler ist nach der Behebung erneut aufgetreten)."
+    },
+    "IN_PROGRESS": {
+      "name": "In Bearbeitung",
+      "description": "Jemand arbeitet an der Ursache."
+    },
+    "IN_REVIEW": {
+      "name": "In Prüfung",
+      "description": "Die Korrektur ist erfolgt und wird überprüft."
+    },
+    "RESOLVED": {
+      "name": "Behoben",
+      "description": "Korrigiert. Tritt der Fehler erneut auf, wird er automatisch wieder als offen markiert."
+    }
+  },
+  "error_severities": {
+    "CRITICAL": {
+      "name": "Kritisch",
+      "description": "Nicht behandelter Fehler (500) oder Fehler in einem Hintergrundprozess."
+    },
+    "ERROR": {
+      "name": "Fehler",
+      "description": "Dienst nicht verfügbar oder ausgelastet (behandelter Fehler 5xx)."
+    },
+    "WARNING": {
+      "name": "Warnung",
+      "description": "Nur Verlauf: früher erfasste abgelehnte Anfragen (4xx). Sie werden nicht mehr erfasst."
+    }
+  },
+  "work_modes": {
+    "ON_SITE": {
+      "name": "Am Standort",
+      "description": "Innerhalb der Geozone eines seiner Standorte."
+    },
+    "REMOTE": {
+      "name": "Telearbeit",
+      "description": "Von einem beliebigen Ort aus, an einem Tag, an dem das Unternehmen Telearbeit erlaubt."
+    },
+    "VALIDATOR": {
+      "name": "Prüfgerät",
+      "description": "Bei der Identifizierung an einem Prüfgerät (zählt als am Standort)."
+    },
+    "COMPANY": {
+      "name": "Vom Unternehmen erfasst",
+      "description": "Das Unternehmen hat den Eintrag erfasst oder korrigiert (ohne Gesicht und Position), mit Begründung."
+    }
+  },
+  "attendance_actions": {
+    "CHECK_IN": {
+      "name": "Kommen",
+      "description": "Beginn des Arbeitstags der Schicht."
+    },
+    "BREAK_START": {
+      "name": "Pausenbeginn",
+      "description": "Eine der Pausen der Schicht beginnt."
+    },
+    "BREAK_END": {
+      "name": "Pausenende",
+      "description": "Die laufende Pause endet."
+    },
+    "CHECK_OUT": {
+      "name": "Gehen",
+      "description": "Ende des Arbeitstags der Schicht."
+    }
+  },
+  "work_session_statuses": {
+    "OPEN": {
+      "name": "In der Schicht",
+      "description": "Eingestempelt und noch nicht ausgestempelt."
+    },
+    "CLOSED": {
+      "name": "Vollständig",
+      "description": "Eingestempelt und ausgestempelt."
+    },
+    "MISSED_CHECKOUT": {
+      "name": "Ohne Ausstempeln",
+      "description": "Hat vor Ablauf der Frist nicht ausgestempelt."
+    }
+  },
+  "shift_request_statuses": {
+    "PENDING": {
+      "name": "Offen",
+      "description": "Wartet auf die Entscheidung des Unternehmens."
+    },
+    "APPROVED": {
+      "name": "Genehmigt",
+      "description": "Das Unternehmen hat den Antrag genehmigt: Er gilt ab dem beantragten Datum (die neue Schicht oder die freien Tage)."
+    },
+    "REJECTED": {
+      "name": "Abgelehnt",
+      "description": "Das Unternehmen hat den Antrag nicht genehmigt (mit Begründung)."
+    },
+    "CANCELLED": {
+      "name": "Zurückgezogen",
+      "description": "Vom Mitarbeiter (vor der Entscheidung) oder vom Unternehmen zurückgezogen."
+    }
+  },
+  "board_states": {
+    "SCHEDULED": {
+      "name": "Geplant",
+      "description": "Es ist noch nicht Zeit zum Einstempeln."
+    },
+    "MISSING": {
+      "name": "Nicht eingestempelt",
+      "description": "Hätte bereits einstempeln müssen und hat es nicht getan."
+    },
+    "WORKING": {
+      "name": "In der Schicht",
+      "description": "Hat eingestempelt und arbeitet."
+    },
+    "ON_BREAK": {
+      "name": "In der Pause",
+      "description": "Ist in einer der Pausen der Schicht."
+    },
+    "DONE": {
+      "name": "Ausgestempelt",
+      "description": "Hat eingestempelt und ausgestempelt."
+    },
+    "MISSED_CHECKOUT": {
+      "name": "Ohne Ausstempeln",
+      "description": "Hat vor Ablauf der Frist nicht ausgestempelt."
+    },
+    "ABSENT": {
+      "name": "Nicht erschienen",
+      "description": "Die Schicht endete ohne Einstempeln."
+    },
+    "DAY_OFF": {
+      "name": "Freier Tag",
+      "description": "Arbeitet an diesem Tag nicht: Feiertag, Urlaub, Freistellung oder Krankschreibung (kein unentschuldigtes Fehlen)."
+    }
+  },
+  "assignment_states": {
+    "CURRENT": {
+      "name": "Aktuell",
+      "description": "Die heute geltende Schicht."
+    },
+    "SCHEDULED": {
+      "name": "Geplant",
+      "description": "Ein Schichtwechsel, der später beginnt (kann vor diesem Datum storniert werden)."
+    },
+    "ENDED": {
+      "name": "Beendet",
+      "description": "Gilt nicht mehr; damit erfasste Daten ändern sich nicht."
+    }
+  },
+  "day_off_types": {
+    "VACATION": {
+      "name": "Urlaub",
+      "description": "Der Mitarbeiter kann ihn auch unter „Meine Anwesenheit“ beantragen.",
+      "phrase": "Sie sind im Urlaub"
+    },
+    "PERMISSION": {
+      "name": "Freistellung",
+      "description": "Vom Unternehmen genehmigte Abwesenheit; der Mitarbeiter kann sie unter „Meine Anwesenheit“ beantragen.",
+      "phrase": "Sie sind freigestellt"
+    },
+    "SICK_LEAVE": {
+      "name": "Krankschreibung",
+      "description": "Ärztliche Krankschreibung (erfasst das Unternehmen).",
+      "phrase": "Sie sind krankgeschrieben"
+    },
+    "OTHER": {
+      "name": "Anderer Grund",
+      "description": "Ein anderer freier Tag, den das Unternehmen genehmigt und erfasst.",
+      "phrase": "Sie haben frei"
+    }
+  },
+  "attendance_edit_reasons": {
+    "FORGOT": {
+      "name": "Stempeln vergessen",
+      "description": "Der Mitarbeiter hat gearbeitet, aber Kommen, Pause oder Gehen nicht erfasst."
+    },
+    "DEVICE_FAILURE": {
+      "name": "Fehler am Telefon oder an der Kamera",
+      "description": "Wegen eines Gerätefehlers konnte nicht per Gesicht gestempelt werden."
+    },
+    "NO_CONNECTION": {
+      "name": "Keine Verbindung am Standort",
+      "description": "Zu diesem Zeitpunkt gab es weder Internet noch Positionsdaten zum Stempeln."
+    },
+    "AUTHORIZED_OFFSITE": {
+      "name": "Genehmigte Arbeit außerhalb des Standorts",
+      "description": "Ein vom Unternehmen genehmigter Einsatz oder Besuch außerhalb der eigenen Standorte."
+    },
+    "WRONG_RECORD": {
+      "name": "Falsche Zeitbuchung",
+      "description": "Die erfasste Uhrzeit entspricht nicht dem tatsächlichen Ablauf."
+    }
+  },
+  "pricing_modes": {
+    "PER_USER": {
+      "name": "Pro aktivem Mitarbeiter",
+      "description": "Jeder aktive Mitarbeiter und jedes aktive Prüfgerät, Tag für Tag (ein Prüfgerät zählt wie ein Mitarbeiter): Wer mitten im Zeitraum hinzukommt oder ausscheidet, zahlt nur seine Tage."
+    },
+    "FLAT": {
+      "name": "Fester Betrag",
+      "description": "Ein fester Betrag pro Unternehmen, anteilig nach den abrechenbaren Tagen des Zeitraums."
+    }
+  },
+  "price_periods": {
+    "DAY": {
+      "name": "Pro Tag",
+      "description": "Der Preis gilt für einen Tag."
+    },
+    "MONTH": {
+      "name": "Pro Monat",
+      "description": "Der Preis gilt für einen Monat; jeder Tag kostet seinen anteiligen Betrag."
+    },
+    "YEAR": {
+      "name": "Pro Jahr",
+      "description": "Der Preis gilt für ein Jahr; jeder Tag kostet seinen anteiligen Betrag."
+    }
+  },
+  "discount_types": {
+    "PERCENT": {
+      "name": "Prozentsatz",
+      "description": "Prozentsatz der Zwischensumme (bis 100 %)."
+    },
+    "AMOUNT": {
+      "name": "Fester Betrag",
+      "description": "Fester Betrag pro Gebühr (nie höher als die Zwischensumme)."
+    }
+  },
+  "discount_recurrences": {
+    "ALWAYS": {
+      "name": "Bei allen Gebühren",
+      "description": "Der Rabatt gilt für jede Gebühr."
+    },
+    "FIRST": {
+      "name": "Nur bei den ersten Gebühren",
+      "description": "Gilt für die ersten N Gebühren des Unternehmens."
+    },
+    "EVERY": {
+      "name": "Alle paar Gebühren",
+      "description": "Gilt für jede N-te Gebühr (die N-te, die 2N-te …)."
+    }
+  },
+  "billing_statuses": {
+    "ACTIVE": {
+      "name": "Aktiv",
+      "description": "Das Unternehmen arbeitet normal."
+    },
+    "SUSPENDED": {
+      "name": "Gesperrt",
+      "description": "Niemand im Unternehmen kann sich anmelden oder arbeiten, bis es wieder aktiviert wird."
+    }
+  },
+  "suspension_reasons": {
+    "NON_PAYMENT": {
+      "name": "Zahlungsverzug",
+      "description": "Automatisch: Eine Gebühr blieb nach Ablauf der Nachfrist unbezahlt."
+    },
+    "MANUAL": {
+      "name": "Manuelle Sperre",
+      "description": "Vom Administrator der Plattform entschieden, mit Begründung."
+    }
+  },
+  "charge_statuses": {
+    "OPEN": {
+      "name": "Offen",
+      "description": "Es besteht ein offener Saldo."
+    },
+    "PAID": {
+      "name": "Bezahlt",
+      "description": "Die erfassten Zahlungen decken den Gesamtbetrag."
+    },
+    "VOID": {
+      "name": "Storniert",
+      "description": "Mit Begründung storniert: Die Gebühr wird nicht berechnet, und bereits zugeordnete Beträge werden gutgeschrieben."
+    }
+  },
+  "payment_statuses": {
+    "CONFIRMED": {
+      "name": "Bestätigt",
+      "description": "Die Zahlung wurde erfasst und den offenen Gebühren zugeordnet (ein Überschuss wird gutgeschrieben)."
+    },
+    "VOID": {
+      "name": "Storniert",
+      "description": "Mit Begründung storniert: Die damit gedeckten Gebühren sind wieder offen."
+    }
+  },
+  "payment_methods": {
+    "TRANSFER": {
+      "name": "Überweisung"
+    },
+    "DEPOSIT": {
+      "name": "Bankeinzahlung"
+    },
+    "CASH": {
+      "name": "Bargeld"
+    },
+    "CARD": {
+      "name": "Karte"
+    },
+    "CHECK": {
+      "name": "Scheck"
+    },
+    "OTHER": {
+      "name": "Sonstige"
+    }
+  },
+  "company_document_types": {
+    "TAX_CERTIFICATE": {
+      "name": "Steuerbescheinigung",
+      "description": "Bescheinigung des SAT mit RFC, Steuerregime und steuerlicher Adresse."
+    },
+    "INCORPORATION": {
+      "name": "Gründungsurkunde",
+      "description": "Notarielle Urkunde, mit der das Unternehmen gegründet wurde."
+    },
+    "PROOF_OF_ADDRESS": {
+      "name": "Adressnachweis",
+      "description": "Aktuelle Rechnung für Strom, Wasser oder Telefon."
+    },
+    "REPRESENTATIVE_ID": {
+      "name": "Ausweis des gesetzlichen Vertreters",
+      "description": "Wählerausweis, Reisepass oder Berufsausweis der Person, die für das Unternehmen unterschreibt."
+    },
+    "CONTRACT": {
+      "name": "Vertrag",
+      "description": "Dienstleistungsvertrag mit der Plattform oder eine andere unterzeichnete Vereinbarung."
+    },
+    "OTHER": {
+      "name": "Sonstiges",
+      "description": "Jedes andere Dokument des Unternehmens."
+    }
+  },
+  "employee_document_types": {
+    "PASSPORT": {
+      "name": "Reisepass",
+      "description": "Internationales Reisedokument mit Foto."
+    },
+    "NATIONAL_ID": {
+      "name": "Personalausweis",
+      "description": "Amtliches Ausweisdokument mit Foto."
+    },
+    "DRIVER_LICENSE": {
+      "name": "Führerschein",
+      "description": "Führerschein mit Foto."
+    },
+    "OTHER_OFFICIAL_ID": {
+      "name": "Anderes amtliches Ausweisdokument",
+      "description": "Jedes amtliche Ausweisdokument mit Foto."
+    },
+    "PROOF_OF_ADDRESS": {
+      "name": "Adressnachweis",
+      "description": "Aktuelle Strom-, Wasser- oder Telefonrechnung."
+    }
+  },
+  "currencies": {
+    "MXN": {
+      "name": "Mexikanischer Peso",
+      "description": "Mexikanische Pesos (MXN). Die Standardwährung der Plattform."
+    },
+    "USD": {
+      "name": "US-Dollar",
+      "description": "US-Dollar (USD). Für Kunden im Ausland beträgt die MwSt. meist 0 %."
+    },
+    "EUR": {
+      "name": "Euro",
+      "description": "Euro (EUR). Für Kunden im Ausland beträgt die MwSt. meist 0 %."
+    }
+  },
+  "storage_categories": {
+    "PEOPLE": {
+      "name": "Personal",
+      "description": "Mitarbeiter, Abteilungen, Prüfgeräte und ihre Geräte."
+    },
+    "BIOMETRICS": {
+      "name": "Biometrie",
+      "description": "Verschlüsselte Gesichtsvorlagen, Gesichtsregistrierungen und digitale Fingerabdrücke von Aufnahmen."
+    },
+    "ATTENDANCE": {
+      "name": "Anwesenheit",
+      "description": "Arbeitstage, Pausen, Zeitbuchungen, Abwesenheiten und das Protokoll der Identifizierungen."
+    },
+    "SECURITY": {
+      "name": "Sitzungen und Sicherheit",
+      "description": "Anmeldesitzungen und Messwerte der Gesichtsversuche."
+    },
+    "BILLING": {
+      "name": "Abrechnung",
+      "description": "Gebühren, Zahlungen, Belege und Dokumente des Unternehmens."
+    }
+  },
+  "slow_alert_statuses": {
+    "OPEN": {
+      "name": "Offen",
+      "description": "Noch hat sich niemand darum gekümmert (oder die Warnung ist nach der Behebung erneut aufgetreten)."
+    },
+    "ACKNOWLEDGED": {
+      "name": "In Bearbeitung",
+      "description": "Jemand prüft die Warnung bereits; tritt sie erneut auf, bleibt sie in Bearbeitung."
+    },
+    "RESOLVED": {
+      "name": "Behoben",
+      "description": "Korrigiert. Dauert die Route erneut länger als der Schwellenwert, wird die Warnung automatisch wieder geöffnet."
+    }
+  },
+  "fraud_kinds": {
+    "PRESENTATION": {
+      "name": "Präsentation (Foto, Bildschirm oder Maske)",
+      "description": "Ein Foto, ein Bildschirm oder eine Maske vor der Kamera."
+    },
+    "INJECTION": {
+      "name": "Einschleusung (virtuelle Kamera oder Programm)",
+      "description": "Bilder, die nicht von der Kamera stammen: virtuelle Kamera, Programm oder direkter Aufruf der API."
+    },
+    "REPLAY": {
+      "name": "Erneutes Senden von Aufnahmen",
+      "description": "Bereits verwendete Aufnahmen, mit minimalen Änderungen erneut gesendet, oder Spuren eines bekannten Angriffs."
+    },
+    "LOCATION": {
+      "name": "Gefälschte Position",
+      "description": "Simulierte oder unglaubwürdige Position, um von einem anderen Ort aus zu stempeln."
+    },
+    "BUDDY_PUNCHING": {
+      "name": "Stempeln für Kollegen",
+      "description": "Eine Person stempelt für eine andere: geteiltes Konto, weitergeleiteter QR-Code oder ferngesteuerte Person."
+    },
+    "INTERNAL": {
+      "name": "Interner Betrug",
+      "description": "Missbrauch durch das Unternehmen oder ein Prüfgerät: Gesichtsregistrierungen, die mit dem Gesicht einer anderen Person freigegeben wurden, oder nicht freigegebene Geräte."
+    },
+    "MORPH": {
+      "name": "Kombiniertes Gesicht",
+      "description": "Eine Gesichtsregistrierung, die die Merkmale zweier Personen vermischt."
+    },
+    "OTHER": {
+      "name": "Sonstiges",
+      "description": "Hohes Risiko ohne klare Art: Die Prüfung entscheidet."
+    }
+  },
+  "signal_modes": {
+    "OFF": {
+      "name": "Aus",
+      "description": "Das Signal wird weder gemessen noch erfasst."
+    },
+    "OBSERVE": {
+      "name": "Nur messen",
+      "description": "Wird mit seinen Punkten gemessen und erfasst, ohne die Entscheidung zu ändern: dient zur Kalibrierung, bevor es verlangt wird."
+    },
+    "ENFORCE": {
+      "name": "Verpflichtend",
+      "description": "Seine Punkte zählen für die Entscheidung; ist es eine harte Regel, wird der Versuch abgelehnt."
+    }
+  },
+  "review_reasons": {
+    "CAPTURE": {
+      "name": "Unzuverlässige Aufnahme",
+      "description": "Die Aufnahme des Gesichts zeigte Anzeichen eines Fotos, eines Bildschirms oder eines Videos."
+    },
+    "REPLAY": {
+      "name": "Wiederholte Aufnahme",
+      "description": "Die Aufnahme ähnelt zu sehr einer bereits empfangenen."
+    },
+    "KNOWN_ATTACK": {
+      "name": "Entspricht einem bekannten Betrug",
+      "description": "Die Aufnahme entspricht einem bereits bestätigten Betrugsversuch."
+    },
+    "IDENTITY": {
+      "name": "Unklare Identität",
+      "description": "Das Gesicht stimmte nur knapp überein oder ähnelt einer anderen Person im Unternehmen."
+    },
+    "CAMERA": {
+      "name": "Unzuverlässige Kamera",
+      "description": "Die Kamera hat ihren Namen nicht übermittelt oder sich wie eine virtuelle Kamera verhalten."
+    },
+    "LOCATION": {
+      "name": "Unzuverlässige Position",
+      "description": "Die Position wirkt simuliert, hat sich schneller als möglich geändert oder lag am Rand des Standorts."
+    },
+    "ACTIVITY": {
+      "name": "Ungewöhnliche Aktivität im Unternehmen",
+      "description": "Das Unternehmen erhält gerade mehrere verdächtige Versuche."
+    },
+    "DEVICE": {
+      "name": "Unbekanntes Gerät",
+      "description": "Die Zeitbuchung erfolgte von einem Gerät, das das Unternehmen nicht freigegeben hat oder das nicht verifiziert werden konnte."
+    },
+    "NETWORK": {
+      "name": "Unzuverlässiges Netzwerk",
+      "description": "Die Verbindung kam aus einem Rechenzentrum oder einem anderen Land oder hat sich plötzlich geändert."
+    },
+    "BROWSER": {
+      "name": "Unzuverlässiger Browser",
+      "description": "Der Browser oder die Aufnahmen zeigten Anzeichen eines Programms statt der App."
+    },
+    "PRESENCE": {
+      "name": "Anwesenheit nicht bestätigt",
+      "description": "Die Zeitbuchung enthielt nicht den aktuellen Code des Standorts."
+    }
+  },
+  "risk_signals": {
+    "SPOOF_PROB_LOW": {
+      "name": "Geringe Wahrscheinlichkeit eines echten Gesichts",
+      "description": "Die Täuschungserkennung wurde bestanden, aber die Wahrscheinlichkeit eines echten Gesichts lag nahe an ihrem Schwellenwert."
+    },
+    "FLASH_WEAK": {
+      "name": "Schwache Reaktion auf den Blitz",
+      "description": "Das Gesicht hat den Blitz reflektiert, ohne den ausgesendeten Farben gut zu folgen."
+    },
+    "FLASH_FLAT": {
+      "name": "Flacher Blitz (Gesicht wie Hintergrund)",
+      "description": "Gesicht und Hintergrund reagierten gleich auf den Blitz: typisch für einen Bildschirm oder ein Foto vor der Kamera."
+    },
+    "REPLAY_PERCEPTUAL": {
+      "name": "Wiederholung nach Bildähnlichkeit",
+      "description": "Eine Aufnahme, die (nach visuellem Fingerabdruck und Gesichtsvektor) fast identisch mit einer Aufnahme aus einem früheren Versuch desselben Mitarbeiters ist. Harte Regel, wenn sie verlangt wird."
+    },
+    "KNOWN_ATTACK": {
+      "name": "Signatur eines bekannten Angriffs",
+      "description": "Die Aufnahme stimmt mit den digitalen Fingerabdrücken eines bestätigten Betrugs im Unternehmen oder auf der Plattform überein. Harte Regel, wenn sie verlangt wird."
+    },
+    "MATCH_MARGIN_LOW": {
+      "name": "Knappe Übereinstimmung",
+      "description": "Das Gesicht stimmte nur knapp über dem Mindestwert des Unternehmens überein."
+    },
+    "CAMERA_LABEL_MISSING": {
+      "name": "Kamera ohne Namen",
+      "description": "Die Aufnahme hat den Namen der Kamera nicht übermittelt: Die App sendet ihn immer, ein Programm nicht."
+    },
+    "LOCATION_EDGE": {
+      "name": "Position am Rand des Standorts",
+      "description": "Die Zeitbuchung lag am Rand der Geozone des Standorts."
+    },
+    "LOCATION_ROUND_ACCURACY": {
+      "name": "Runde Genauigkeit",
+      "description": "Die vom Gerät gemeldete Genauigkeit ist eine runde Zahl, typisch für eine simulierte Position."
+    },
+    "COMPANY_UNDER_ATTACK": {
+      "name": "Unternehmen unter Angriff",
+      "description": "Im Unternehmen häufen sich in letzter Zeit verdächtige Versuche (automatische Verstärkung)."
+    },
+    "DEVICE_NEW": {
+      "name": "Neues Gerät",
+      "description": "Der Mitarbeiter stempelt von einem Gerät, das er noch nicht verwendet hat oder das sein Unternehmen nicht freigegeben hat (je nach Gerätemodus)."
+    },
+    "DEVICE_KEY_MISSING": {
+      "name": "Geräteschlüssel fehlt",
+      "description": "Die Signatur mit dem Geräteschlüssel fehlt oder konnte nicht verifiziert werden: Die App sendet sie immer, ein Programm oder ein privates Fenster nicht."
+    },
+    "DEVICE_SHARED": {
+      "name": "Gemeinsam genutztes Gerät",
+      "description": "Dasselbe Gerät hat in kurzer Zeit für mehrere Mitarbeiter des Unternehmens gestempelt: typisch für einen Kollegen, der für andere stempelt."
+    },
+    "IDENTITY_MISMATCH": {
+      "name": "Ähnelt eher einem anderen Mitarbeiter",
+      "description": "Das Gesicht ähnelt einem anderen Mitarbeiter des Unternehmens mindestens so stark wie dem verifizierten (1:N bei jeder Verifizierung): Registrierung mit dem Gesicht einer anderen Person oder Identitätstäuschung."
+    },
+    "NETWORK_HOSTING": {
+      "name": "Netzwerk eines Rechenzentrums",
+      "description": "Die IP gehört laut der lokalen IP-Datenbank zu einem Rechenzentrum oder einem Serverdienst (VPN, Zwischenserver oder ein Programm)."
+    },
+    "NETWORK_COUNTRY_MISMATCH": {
+      "name": "Netzwerk aus einem anderen Land",
+      "description": "Die IP stammt aus einem anderen Land als der Standort, an dem gestempelt wurde: simulierte Position oder VPN."
+    },
+    "NETWORK_JUMP": {
+      "name": "Plötzlicher Netzwerkwechsel",
+      "description": "Die IP hat seit der vorherigen Zeitbuchung das Land oder das Netzwerk gewechselt, schneller als glaubwürdig."
+    },
+    "LOCATION_STATIC": {
+      "name": "Eingefrorene Position",
+      "description": "Die Positionsmessungen waren identisch (Koordinaten und Genauigkeit): Ein echtes GPS schwankt immer etwas, ein Simulator nicht."
+    },
+    "LOCATION_JUMP": {
+      "name": "Positionssprung",
+      "description": "Seit der vorherigen Zeitbuchung hat sich die Position schneller bewegt, als man realistisch reisen kann."
+    },
+    "AUTOMATION": {
+      "name": "Automatisierter Browser",
+      "description": "Der Browser zeigt Spuren von Automatisierung (WebDriver, Playwright, Selenium oder ein Browser ohne Oberfläche)."
+    },
+    "VIRTUAL_CAMERA_PRESENT": {
+      "name": "Virtuelle Kamera installiert",
+      "description": "Auf dem Gerät ist eine virtuelle Kamera vorhanden (OBS, ManyCam usw.), auch wenn die Aufnahme sie nicht verwendet hat."
+    },
+    "TRACK_INCONSISTENT": {
+      "name": "Widersprüchliche Kamera",
+      "description": "Die Kamera meldete eine Auflösung oder Bildrate außerhalb dessen, was sie angeblich unterstützt, oder hat keine Kennung."
+    },
+    "FRAME_TIMING_SYNTHETIC": {
+      "name": "Synthetischer Videotakt",
+      "description": "Die Einzelbilder kamen in einem exakten Takt an, ohne die Schwankungen einer echten Kamera: typisch für ein Video oder eine virtuelle Kamera."
+    },
+    "SCREEN_INCOHERENT": {
+      "name": "Widersprüchlicher Bildschirm",
+      "description": "Der Bildschirm passt nicht zu dem angegebenen Gerät (ein Telefon ohne Berührungsbildschirm oder mit dem Bildschirm eines Arbeitsplatzrechners) oder hat keine Maße."
+    },
+    "TELEMETRY_MISSING": {
+      "name": "Keine Telemetrie der Aufnahme",
+      "description": "Die Telemetrie, die die App immer sendet, fehlt oder ist fehlerhaft: typisch für ein Programm, das die API aufruft."
+    },
+    "JPEG_TABLE_UNKNOWN": {
+      "name": "Bild von einem anderen Kodierer",
+      "description": "Die Aufnahmen haben nicht die JPEG-Tabellen der App: Ein anderes Programm hat sie erzeugt, oder Bilder aus verschiedenen Quellen wurden gemischt."
+    },
+    "BURST_MISSING": {
+      "name": "Keine Aufnahmeserie",
+      "description": "Die Serie von Bildausschnitten, die die App immer sendet, fehlt oder ist beschädigt. Deutet meist auf ein Programm hin, das die API aufruft."
+    },
+    "BURST_DISCONTINUOUS": {
+      "name": "Unterbrochene Aufnahmeserie",
+      "description": "Die Ausschnitte folgen nicht demselben Gesicht: Es gibt Sprünge, Ausschnitte ohne Gesicht oder eine andere Person. Deutet meist auf eine Montage hin."
+    },
+    "BURST_FROZEN": {
+      "name": "Eingefrorenes Bild",
+      "description": "Die Serie hat sich zwischen den Ausschnitten kaum verändert. Eine echte Kamera hat immer Rauschen und Bewegung, ein Standbild nicht."
+    },
+    "BURST_LOOP": {
+      "name": "Video in Endlosschleife",
+      "description": "Die Serie hat identische Einzelbilder wiederholt. Eine echte Kamera wiederholt nie ihr Rauschen, ein Video in Endlosschleife schon."
+    },
+    "MOIRE_HIGH": {
+      "name": "Bildschirmmuster",
+      "description": "Das Gesicht zeigt das Pixelmuster eines abfotografierten Bildschirms."
+    },
+    "NOISE_MISMATCH": {
+      "name": "Widersprüchliches Sensorrauschen",
+      "description": "Das Gesicht ist viel glatter als der Hintergrund derselben Aufnahme. Deutet meist auf ein eingefügtes, erzeugtes oder erneut aufgenommenes Gesicht hin."
+    },
+    "PERSPECTIVE_FLAT": {
+      "name": "Bewegung einer flachen Oberfläche",
+      "description": "Beim Drehen bewegte sich das Gesicht wie eine flache Oberfläche, ohne die Perspektive der Nase. Deutet meist auf ein geneigtes Foto hin."
+    },
+    "PULSE_ABSENT": {
+      "name": "Kein sichtbarer Puls (nur gemessen)",
+      "description": "Die Serie zeigte nicht die Farbänderung der Haut mit dem Herzschlag. Wird nur gemessen und entscheidet nie: schlägt bei wenig Licht oder Bewegung oft fehl."
+    },
+    "FLASH_UNPACED": {
+      "name": "Blitz nicht vorgegeben",
+      "description": "Die Farben des Blitzes wurden nicht in Echtzeit vorgegeben und konnten daher vorbereitet werden. Kommt auch in Netzwerken vor, die den Echtzeitkanal blockieren."
+    },
+    "FLASH_PACE_TIMING": {
+      "name": "Blitz außerhalb der Zeit",
+      "description": "Eine vorgegebene Blitzfarbe wurde außerhalb ihres Zeitfensters beantwortet, zu langsam oder zu schnell."
+    },
+    "FLASH_PACE_MISMATCH": {
+      "name": "Manipulierter Blitz",
+      "description": "Die Aufnahmen des Blitzes stimmen nicht mit den in Echtzeit gesendeten überein, oder ihr Nachweis ist ungültig. Nur eine manipulierte App erzeugt das."
+    },
+    "VALIDATOR_UNSIGNED": {
+      "name": "Identifizierung ohne Signatur des Geräts",
+      "description": "Die Identifizierung des Prüfgeräts enthielt keine Signatur seines Geräts, oder seine Aufgabe war bereits abgelaufen. Die App signiert immer, ein Programm mit einer kopierten Sitzung nicht."
+    },
+    "VALIDATOR_SIGNATURE_INVALID": {
+      "name": "Manipulierte Signatur des Geräts",
+      "description": "Die Signatur der Identifizierung passt weder zu ihrer Aufgabe noch zu ihrem Inhalt. Nur eine manipulierte App oder ein Angriff erzeugt sie. Harte Regel, wenn sie verlangt wird."
+    },
+    "VALIDATOR_KEY_MISMATCH": {
+      "name": "Anderes Gerät als bei der Sitzung",
+      "description": "Ein anderes Gerät als das, mit dem die Anmeldung erfolgte, hat die Identifizierung signiert: typisch für eine auf ein anderes Gerät kopierte Sitzung. Kommt auch vor, wenn der Browser seinen Schlüssel gelöscht hat."
+    },
+    "VALIDATOR_LOCATION_MISSING": {
+      "name": "Identifizierung ohne Position",
+      "description": "Das Prüfgerät verlangt eine Position, und die Identifizierung enthielt keine: Die Berechtigung wurde entzogen, oder die Anfrage kam nicht aus der App."
+    },
+    "VALIDATOR_LOCATION_INACCURATE": {
+      "name": "Ungenaue Position des Prüfgeräts",
+      "description": "Die Position der Identifizierung ist zu ungenau, um zu erkennen, ob das Prüfgerät an seinem Einsatzort ist."
+    },
+    "VALIDATOR_OUT_OF_ZONE": {
+      "name": "Prüfgerät außerhalb seines Einsatzorts",
+      "description": "Die Identifizierung erfolgte weit entfernt vom Einsatzort des Prüfgeräts: ein Tabletcomputer, der den Standort verlassen hat, oder eine anderswo verwendete Sitzung."
+    },
+    "SITE_CODE_MISSING": {
+      "name": "Zeitbuchung ohne Standortcode",
+      "description": "Der Standort verlangt seinen Code, und die Zeitbuchung enthielt ihn nicht."
+    },
+    "SITE_CODE_INVALID": {
+      "name": "Ungültiger Standortcode",
+      "description": "Der Code ist nicht der aktuelle des Standorts: Er ist abgelaufen, gehört zu einem anderen Standort oder wurde bereits verwendet. Deutet meist auf einen Code hin, den jemand vom Standort weitergegeben hat."
+    }
+  },
+  "risk_tiers": {
+    "LOW": {
+      "name": "Niedrig",
+      "description": "Keine relevanten Signale: Der Versuch wird zugelassen."
+    },
+    "MEDIUM": {
+      "name": "Mittel",
+      "description": "Einige Signale: Standardmäßig wird ein weiterer Schritt verlangt."
+    },
+    "HIGH": {
+      "name": "Hoch",
+      "description": "Starke Signale: Standardmäßig geht die Zeitbuchung in Prüfung, und ein Fall wird eröffnet."
+    },
+    "CRITICAL": {
+      "name": "Kritisch",
+      "description": "Sehr starke Signale: Standardmäßig wird der Versuch abgelehnt, zählt für die Sperre, und ein Fall wird eröffnet."
+    }
+  },
+  "risk_actions": {
+    "ALLOW": {
+      "name": "Zulassen",
+      "description": "Der Versuch läuft normal weiter."
+    },
+    "ALERT": {
+      "name": "Zulassen und warnen",
+      "description": "Der Versuch läuft weiter, aber ein Fall wird eröffnet, damit der Administrator ihn prüft."
+    },
+    "STEP_UP": {
+      "name": "Ein weiterer Schritt",
+      "description": "Sofort wird eine anspruchsvollere Aufgabe verlangt (drei Bewegungen), ohne erneutes Scannen."
+    },
+    "REVIEW": {
+      "name": "In Prüfung",
+      "description": "Wird erfasst, aber das Unternehmen muss bestätigen oder ablehnen; ein Fall wird eröffnet."
+    },
+    "DENY": {
+      "name": "Ablehnen",
+      "description": "Der Versuch wird abgelehnt (zählt für die vorübergehende Sperre), und ein Fall wird eröffnet."
+    }
+  },
+  "attendance_review_statuses": {
+    "PENDING": {
+      "name": "In Prüfung",
+      "description": "Die Zeitbuchung wurde gespeichert, aber das Unternehmen muss sie bestätigen oder ablehnen."
+    },
+    "CONFIRMED": {
+      "name": "Bestätigt",
+      "description": "Das Unternehmen hat bestätigt, dass die Zeitbuchung gültig ist."
+    },
+    "REJECTED": {
+      "name": "Abgelehnt",
+      "description": "Das Unternehmen hat die Zeitbuchung abgelehnt: Sie stammt nicht von der Person oder erfolgte nicht am richtigen Ort."
+    }
+  },
+  "employee_device_modes": {
+    "OFF": {
+      "name": "Aus",
+      "description": "Das Gerät des Mitarbeiters wird nicht verknüpft."
+    },
+    "OBSERVE": {
+      "name": "Nur messen",
+      "description": "Erfasst, von welchem Gerät jeder Mitarbeiter stempelt; ein neues Gerät oder eines ohne Schlüssel wird nur als Signal vermerkt."
+    },
+    "STEP_UP": {
+      "name": "Ein weiterer Schritt bei neuem Gerät",
+      "description": "Ein neues Gerät verlangt einen weiteren Schritt (eine anspruchsvollere Aufgabe); danach gilt es als vertrauenswürdig."
+    },
+    "APPROVAL": {
+      "name": "Freigabe durch das Unternehmen",
+      "description": "Solange das Unternehmen ein neues Gerät nicht freigibt, bleiben die Zeitbuchungen von diesem Gerät in Prüfung."
+    }
+  },
+  "policy_presets": {
+    "STANDARD": {
+      "name": "Standard",
+      "description": "Für die meisten: zwei Bewegungen in 60 s, Täuschungserkennung „Standard“ und Risikogrenzen 30/60/80. Gerät des Mitarbeiters, Serie der Aufnahmen und Präsenz der Prüfgeräte auf „Nur messen“."
+    },
+    "HIGH": {
+      "name": "Hoch",
+      "description": "Strenger: drei Bewegungen in 45 s, Täuschungserkennung „Hoch“, Wiederholungsprüfung verpflichtend, ein weiterer Schritt bei neuem Gerät, Grenzen 25/50/75. Serie der Aufnahmen und Präsenz der Prüfgeräte auf „Nur messen“."
+    },
+    "MAXIMUM": {
+      "name": "Maximal",
+      "description": "Bei bestätigtem Betrug: drei Bewegungen in 30 s, Täuschungserkennung „Maximal“, harte Regeln Pflicht, Gerätefreigabe, hohes Risiko abgelehnt. Verlangt die Serie der Aufnahmen (sonst ein Schritt mehr), Signatur und Position der Prüfgeräte, Standortcode. Mehr Wiederholungen bei wenig Licht."
+    }
+  },
+  "policy_change_statuses": {
+    "APPLIED": {
+      "name": "Angewendet",
+      "description": "Die Änderung gilt bereits."
+    },
+    "PENDING": {
+      "name": "Genehmigung ausstehend",
+      "description": "Senkt die Sicherheit: wartet auf die Genehmigung eines anderen Administrators."
+    },
+    "REJECTED": {
+      "name": "Abgelehnt",
+      "description": "Ein anderer Administrator hat die Änderung abgelehnt: Sie wurde nicht angewendet."
+    },
+    "CANCELLED": {
+      "name": "Zurückgezogen",
+      "description": "Die beantragende Person hat die Änderung zurückgezogen, oder sie ist ohne Genehmigung abgelaufen."
+    }
+  },
+  "fraud_case_statuses": {
+    "OPEN": {
+      "name": "Offen",
+      "description": "Noch nicht geprüft."
+    },
+    "IN_REVIEW": {
+      "name": "In Prüfung",
+      "description": "Ein Administrator prüft den Fall."
+    },
+    "CONFIRMED": {
+      "name": "Betrug bestätigt",
+      "description": "Der Betrug wurde bestätigt: Seine digitalen Fingerabdrücke kommen auf die Sperrliste, und das seit dem Versuch Gelernte wird verworfen."
+    },
+    "FALSE_POSITIVE": {
+      "name": "Falsch positiv",
+      "description": "Es war kein Betrug: Seine digitalen Fingerabdrücke werden freigegeben, und der Fall hilft bei der Kalibrierung."
+    },
+    "INCONCLUSIVE": {
+      "name": "Nicht eindeutig",
+      "description": "Es gibt nicht genug Anhaltspunkte für eine Entscheidung: Der Fall zählt nur für die Statistik."
+    }
+  },
+  "fraud_case_event_kinds": {
+    "OPENED": {
+      "name": "Fall eröffnet",
+      "description": "Das System hat den Fall wegen eines verdächtigen Versuchs oder eines Versuchs mit hohem Risiko eröffnet."
+    },
+    "STATUS_CHANGED": {
+      "name": "Status geändert",
+      "description": "Ein Administrator hat den Status des Falls geändert."
+    },
+    "NOTE": {
+      "name": "Notiz",
+      "description": "Ein Administrator hat eine Notiz hinzugefügt."
+    },
+    "EVIDENCE_VIEWED": {
+      "name": "Beweismaterial angesehen",
+      "description": "Ein Administrator hat die Einzelbilder des Beweismaterials angesehen."
+    },
+    "SIGNATURES_BLOCKED": {
+      "name": "Fingerabdrücke gesperrt",
+      "description": "Die digitalen Fingerabdrücke des Angriffs wurden auf die Sperrliste gesetzt."
+    },
+    "SIGNATURES_RELEASED": {
+      "name": "Fingerabdrücke freigegeben",
+      "description": "Die digitalen Fingerabdrücke des Falls wurden von der Sperrliste entfernt."
+    },
+    "LEARNING_FORGOTTEN": {
+      "name": "Gelerntes verworfen",
+      "description": "Was die Erkennung seit dem Versuch über den Mitarbeiter gelernt hat, wurde verworfen."
+    }
+  },
+  "menu_modules": {
+    "PLATFORM": {
+      "name": "Plattform",
+      "description": "Kennzahlen der Plattform und ihrer Unternehmen."
+    },
+    "BUSINESS": {
+      "name": "Geschäft",
+      "description": "Abrechnung der Unternehmen und ihr Verbrauch der Plattform."
+    },
+    "OPERATIONS": {
+      "name": "Betrieb",
+      "description": "Systemzustand: Fehler, Leistung und Serverstatus."
+    },
+    "OVERVIEW": {
+      "name": "Allgemein",
+      "description": "Zusammenfassung des Unternehmens."
+    },
+    "PEOPLE": {
+      "name": "Personal",
+      "description": "Mitarbeiter, Abteilungen und die Prüfung ihrer Gesichtsregistrierungen."
+    },
+    "ATTENDANCE": {
+      "name": "Anwesenheit",
+      "description": "Tagesübersicht, Schichten, Kalender der freien Tage und Standorte."
+    },
+    "ACCESS": {
+      "name": "Zutrittskontrolle",
+      "description": "Prüfgeräte, die die Mitarbeiter an einem Zugang identifizieren."
+    },
+    "DATA": {
+      "name": "Verbindungen",
+      "description": "Verbindung mit anderen Systemen des Unternehmens (Lohnabrechnung, ERP)."
+    },
+    "MY_WORK": {
+      "name": "Meine Arbeit",
+      "description": "Kommen, Pausen und Gehen der eigenen Schicht."
+    },
+    "IDENTITY": {
+      "name": "Meine Identität",
+      "description": "Gesichtsregistrierung, Identifizierung und QR-Code."
+    },
+    "ACCOUNT": {
+      "name": "Konto",
+      "description": "Das Unternehmen, in dem man arbeitet, und das eigene Profil."
+    }
+  },
+  "screens": {
+    "ADMIN_DASHBOARD": {
+      "name": "Übersicht",
+      "description": "Kennzahlen der Plattform und neueste Unternehmen."
+    },
+    "ADMIN_COMPANIES": {
+      "name": "Unternehmen",
+      "description": "Anlegen und Verwalten von Unternehmen und ihren Administratoren."
+    },
+    "ADMIN_ERRORS": {
+      "name": "Systemfehler",
+      "description": "Fehler des Servers und der Webanwendung und ihre Nachverfolgung.",
+      "short_name": "Fehler"
+    },
+    "ADMIN_FACE_SECURITY": {
+      "name": "Gesichtssicherheit",
+      "description": "Automatische Anpassungen der Lebenderkennung, Unternehmen unter Angriff und Messungen des Blitzes.",
+      "short_name": "Sicherheit"
+    },
+    "ADMIN_FRAUD_CASES": {
+      "name": "Betrugsfälle",
+      "description": "Prüfung verdächtiger Versuche oder solcher mit hohem Risiko, samt Beweismaterial.",
+      "short_name": "Betrug"
+    },
+    "ADMIN_BILLING": {
+      "name": "Abrechnung",
+      "description": "Tarif, Gebühren, Zahlungen und Saldo jedes Unternehmens; Sperre wegen Zahlungsverzugs und Reaktivierung."
+    },
+    "ADMIN_USAGE": {
+      "name": "Verbrauch",
+      "description": "Anfragen, Daten, Verarbeitungszeit, Fehler und Speicher pro Unternehmen und pro Benutzer."
+    },
+    "ADMIN_PERFORMANCE": {
+      "name": "Leistung",
+      "description": "Antwortzeiten der Schnittstellen, wichtiger Funktionen, der Datenbank und der Ansichten; Warnungen bei langsamen Anfragen."
+    },
+    "ADMIN_DRIFT": {
+      "name": "Drift der Signale",
+      "description": "Wöchentliche Drift der Signale der Gesichtserkennung je Plattform und, je Unternehmen, Fälle und ungesehen freigegebene Prüfungen.",
+      "short_name": "Drift"
+    },
+    "COMPANY_DASHBOARD": {
+      "name": "Übersicht",
+      "description": "Zusammenfassung des Unternehmens: Mitarbeiter und ausstehende Prüfungen.",
+      "short_name": "Start"
+    },
+    "COMPANY_EMPLOYEES": {
+      "name": "Mitarbeiter",
+      "description": "Anlegen, Anzeigen und Bearbeiten der Mitarbeiter des Unternehmens."
+    },
+    "COMPANY_DEPARTMENTS": {
+      "name": "Abteilungen",
+      "description": "Abteilungen des Unternehmens mit ihren Verantwortlichen und zugeordneten Mitarbeitern.",
+      "short_name": "Bereiche"
+    },
+    "COMPANY_VALIDATIONS": {
+      "name": "Prüfungen",
+      "description": "Prüfung der ausstehenden Gesichtsregistrierungen.",
+      "short_name": "Prüfen"
+    },
+    "COMPANY_ATTENDANCE": {
+      "name": "Tagesübersicht",
+      "description": "Wer in der Schicht oder in der Pause ist oder bereits ausgestempelt hat; Verlauf der Arbeitstage mit Nachweisen.",
+      "short_name": "Heute"
+    },
+    "COMPANY_VERIFICATIONS": {
+      "name": "Verifizierungen",
+      "description": "Wo und wann die Identität Ihrer Mitarbeiter verifiziert wurde, auf der Karte."
+    },
+    "COMPANY_SHIFTS": {
+      "name": "Schichten",
+      "description": "Schichten, ihre Zuordnung zu den Mitarbeitern und die Anträge auf Schichtwechsel."
+    },
+    "COMPANY_CALENDAR": {
+      "name": "Kalender",
+      "description": "Feiertage, Urlaub, Freistellungen und Krankschreibungen."
+    },
+    "COMPANY_SITES": {
+      "name": "Arbeitsstandorte",
+      "description": "Filialen und Werke mit ihrer Geozone: wo am Standort gestempelt wird.",
+      "short_name": "Standorte"
+    },
+    "COMPANY_VALIDATORS": {
+      "name": "Prüfgeräte",
+      "description": "Tabletcomputer oder Telefone, die die Mitarbeiter an einem Zugang identifizieren."
+    },
+    "COMPANY_API": {
+      "name": "Integrationen (API)",
+      "description": "API-Schlüssel zur Anbindung anderer Systeme (Lohnabrechnung, ERP).",
+      "short_name": "API"
+    },
+    "COMPANY_DOCUMENTS": {
+      "name": "Dokumente",
+      "description": "Dokumente des Unternehmens für die Rechnungsstellung: Steuerbescheinigung, Gründungsurkunde und mehr."
+    },
+    "VALIDATOR_CHECKPOINT": {
+      "name": "Mitarbeiter identifizieren",
+      "description": "Kontrollpunkt: identifiziert die Mitarbeiter per Gesicht oder QR-Code.",
+      "short_name": "Identifizieren"
+    },
+    "EMPLOYEE_ATTENDANCE": {
+      "name": "Meine Anwesenheit",
+      "description": "Kommen, Pausen und Gehen mit Gesicht und Position; Urlaub und Freistellungen.",
+      "short_name": "Anwesenheit"
+    },
+    "EMPLOYEE_ENROLL": {
+      "name": "Gesichtsregistrierung",
+      "description": "Der Mitarbeiter registriert sein Gesicht (noch nicht registriert oder abgelehnt).",
+      "short_name": "Mein Gesicht"
+    },
+    "EMPLOYEE_PENDING": {
+      "name": "Gesichtsregistrierung",
+      "description": "Die Gesichtsregistrierung des Mitarbeiters wartet auf die Prüfung durch das Unternehmen.",
+      "short_name": "Mein Gesicht"
+    },
+    "EMPLOYEE_VERIFY": {
+      "name": "Identifizierung",
+      "description": "Der Mitarbeiter identifiziert sich per Gesicht oder QR-Code.",
+      "short_name": "Identifizieren"
+    },
+    "EMPLOYEE_QR": {
+      "name": "Mein QR-Code",
+      "description": "QR-Ausweis des Mitarbeiters (nur mit freigegebener Identität).",
+      "short_name": "Mein QR"
+    },
+    "EMPLOYEE_SELECT_COMPANY": {
+      "name": "Unternehmen wechseln",
+      "description": "Für Personen, die für mehrere Unternehmen arbeiten: auswählen, welches geöffnet wird.",
+      "short_name": "Unternehmen"
+    },
+    "PROFILE": {
+      "name": "Mein Profil",
+      "description": "Konto, Passwort und offene Sitzungen.",
+      "short_name": "Profil"
+    },
+    "EMPLOYEE_DOCUMENTS": {
+      "name": "Dokumente",
+      "description": "Adressnachweis und amtlicher Ausweis, die das Unternehmen verlangt.",
+      "short_name": "Meine Dokumente"
+    }
+  },
+  "voice_questions": {
+    "FULL_NAME": {
+      "name": "Wie lautet Ihr vollständiger Name?",
+      "description": "Wird mit dem registrierten Vor- und Nachnamen des Mitarbeiters verglichen."
+    },
+    "BIRTH_DATE": {
+      "name": "Wie lautet Ihr Geburtsdatum?",
+      "description": "Wird mit dem registrierten Geburtsdatum verglichen (Tag, Monat und Jahr)."
+    },
+    "COMPANY_NAME": {
+      "name": "Wie heißt das Unternehmen, in dem Sie arbeiten?",
+      "description": "Wird mit dem Namen des Unternehmens verglichen."
+    },
+    "EMPLOYEE_NUMBER": {
+      "name": "Wie lautet Ihre Personalnummer?",
+      "description": "Wird mit der registrierten Personalnummer verglichen; wird nur gefragt, wenn eine vorhanden ist."
+    },
+    "DEPARTMENT": {
+      "name": "In welcher Abteilung arbeiten Sie?",
+      "description": "Wird mit der zugeordneten Abteilung verglichen; wird nur gefragt, wenn eine zugeordnet ist."
+    },
+    "WORK_SITE": {
+      "name": "An welchem Standort oder in welcher Filiale arbeiten Sie?",
+      "description": "Wird mit dem Arbeitsstandort der Schicht verglichen; wird nur gefragt, wenn die Schicht einen hat."
+    },
+    "FIRST_NAME": {
+      "name": "Wie lautet Ihr Vorname (ohne Nachnamen)?",
+      "description": "Wird mit dem erfassten Vornamen des Mitarbeiters verglichen, ohne die Nachnamen."
+    },
+    "SURNAMES": {
+      "name": "Wie lauten Ihre Nachnamen?",
+      "description": "Wird mit den erfassten Nachnamen des Mitarbeiters verglichen."
+    },
+    "FIRST_SURNAME": {
+      "name": "Wie lautet Ihr erster Nachname?",
+      "description": "Wird mit dem ersten Nachnamen verglichen; wird nur gefragt, wenn die Nachnamen aus zwei Wörtern bestehen."
+    },
+    "SECOND_SURNAME": {
+      "name": "Wie lautet Ihr zweiter Nachname?",
+      "description": "Wird mit dem zweiten Nachnamen verglichen; wird nur gefragt, wenn die Nachnamen aus zwei Wörtern bestehen."
+    },
+    "BIRTH_MONTH": {
+      "name": "In welchem Monat sind Sie geboren?",
+      "description": "Wird mit dem Monat des Geburtsdatums verglichen, nach Name oder Zahl."
+    },
+    "BIRTH_YEAR": {
+      "name": "In welchem Jahr sind Sie geboren?",
+      "description": "Wird mit dem Jahr des Geburtsdatums verglichen, vollständig oder die letzten beiden Ziffern."
+    },
+    "BIRTH_DAY": {
+      "name": "An welchem Tag des Monats sind Sie geboren?",
+      "description": "Wird mit dem Tag des Geburtsdatums verglichen."
+    },
+    "ARITHMETIC_SUM": {
+      "name": "Wie viel ergeben die beiden Zahlen, die wir Ihnen zeigen?",
+      "description": "Aufmerksamkeitstest: die Summe aus zwei zufälligen Zahlen; sie ändert sich bei jedem Versuch."
+    }
+  },
+  "voice_profiles": {
+    "FEMALE_WARM": {
+      "name": "Weiblich, warm",
+      "description": "Eine weibliche Stimme mit warmem Ton"
+    },
+    "FEMALE_CLEAR": {
+      "name": "Weiblich, klar",
+      "description": "Eine klare, ruhige weibliche Stimme"
+    },
+    "MALE_CALM": {
+      "name": "Männlich, ruhig",
+      "description": "Eine ruhige männliche Stimme"
+    },
+    "MALE_DEEP": {
+      "name": "Männlich, tief",
+      "description": "Eine männliche Stimme mit tiefem Ton"
+    },
+    "NEUTRAL": {
+      "name": "Systemstandard",
+      "description": "Die Standardstimme des Geräts"
+    }
+  }
+}

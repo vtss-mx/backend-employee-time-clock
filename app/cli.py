@@ -16,6 +16,9 @@ python -m app.cli db fetch-backup [--list] [--name NOMBRE] [--dir CARPETA]
                                   reciente; luego scripts/db_restore_check.sh)
 python -m app.cli db pitr-status (archivo continuo del WAL y respaldos base: estado y avisos; 1 si hay avisos)
 python -m app.cli ipdb refresh   (base local de IP DB-IP Lite: descarga, verifica y reemplaza; --force: ya mismo)
+python -m app.cli cache clear-catalogs
+                                 (borra las instantáneas de catálogos de la caché compartida (Redis) para que todas las
+                                  réplicas recarguen de la base; lo corre `migrate` al terminar. Sin Redis no hace nada)
 """
 
 import argparse
@@ -29,12 +32,14 @@ from types import FrameType
 
 from sqlalchemy import Engine
 
+from app.core.cache import shared_cache
 from app.core.config import settings
 from app.core.database import build_engine, platform_session
 from app.core.db_roles import RolePlan, provision
 from app.core.object_storage import StorageError
 from app.services import db_backup, ip_database, pitr_monitor, storage_jobs, storage_lifecycle
 from app.services.bootstrap import UserFactory, create_admin_user, create_company_user
+from app.services.catalog_service import clear_shared_catalogs
 from app.services.error_reporter import ErrorReportFlusher, install_log_handler
 from app.services.maintenance_service import run_once
 
@@ -131,6 +136,20 @@ def _storage_lifecycle(args: argparse.Namespace) -> int:
         print("Sin aplicar (vista previa). Para aplicarla: python -m app.cli storage lifecycle --apply")
     print("Ciclo de vida que queda (gcloud storage buckets update gs://BUCKET --lifecycle-file=ARCHIVO):")
     print(plan.gcloud_file())
+    return 0
+
+
+def _cache_clear_catalogs(_: argparse.Namespace) -> int:
+    """Las instantáneas de catálogos de Redis, fuera: las réplicas recargan de la base al vencer su copia local.
+    Nunca falla el despliegue (regla 7): sin Redis, o con Redis caído, lo dice y termina bien (vencen solas)."""
+    if not shared_cache().enabled:
+        print("Caché compartida apagada (REDIS_HOST y REDIS_URL vacíos): nada que limpiar")
+        return 0
+    removed = clear_shared_catalogs()
+    if removed is None:
+        print(f"Redis no respondió: las instantáneas de catálogos vencen solas en {settings.CATALOG_REDIS_SECONDS:g} s")
+        return 0
+    print(f"Instantáneas de catálogos borradas de la caché compartida: {removed}")
     return 0
 
 
@@ -245,6 +264,10 @@ def main() -> int:
     refresh = ipdb_sub.add_parser("refresh", help="Descargar, verificar y reemplazar los archivos si toca")
     refresh.add_argument("--force", action="store_true", help="Aunque los archivos sean recientes")
     refresh.set_defaults(func=_ipdb_refresh)
+    cache = sub.add_parser("cache", help="Caché compartida entre réplicas (Redis)")
+    cache_sub = cache.add_subparsers(dest="cache_command", required=True)
+    clear_catalogs = cache_sub.add_parser("clear-catalogs", help="Borrar las instantáneas de catálogos compartidas")
+    clear_catalogs.set_defaults(func=_cache_clear_catalogs)
     args = parser.parse_args()
     return args.func(args)
 

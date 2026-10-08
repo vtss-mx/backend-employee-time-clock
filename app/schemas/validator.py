@@ -105,6 +105,8 @@ class ValidatorRead(Deletion):
     #: Dispositivos por autorizar y autorizados (Validadores › Dispositivos).
     devices_pending: int = 0
     devices_approved: int = 0
+    #: Foto de perfil de su cuenta (ruta versionada) o None (sin foto o en «Eliminados»): la empresa ve a su gente.
+    avatar: str | None = None
     created_at: datetime
 
 

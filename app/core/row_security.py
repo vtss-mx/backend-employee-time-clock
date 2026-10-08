@@ -75,6 +75,7 @@ TENANT_TABLES: Final = frozenset(
         "workforce.employee_devices",
         "workforce.employee_qr_codes",
         "workforce.employee_status_events",
+        "workforce.employee_documents",
         "workforce.validator_status_events",
         "workforce.work_sites",
         "workforce.site_kiosks",
@@ -87,7 +88,9 @@ TENANT_TABLES: Final = frozenset(
         "workforce.employee_workdays",
         # Biometría (plantillas cifradas, registros, huellas de capturas)
         "biometrics.face_enrollments",
+        "biometrics.face_enrollment_drafts",
         "biometrics.face_enrollment_flags",
+        "biometrics.enrollment_voice_answers",
         "biometrics.face_embeddings",
         "biometrics.capture_fingerprints",
         "biometrics.capture_traces",
@@ -113,6 +116,9 @@ TENANT_TABLES: Final = frozenset(
         "ops.fraud_evidence",
         "ops.policy_changes",
         "ops.risk_signal_stats",
+        # Deriva de señales (antifraude fase 3, migración 0081): la tasa de casos y las revisiones aprobadas sin mirar
+        # de cada empresa y ventana (solo las lee el ADMIN; las escribe el mantenimiento como plataforma)
+        "ops.company_fraud_weekly",
         "ops.usage_daily",
         "ops.usage_routes",
         "ops.usage_users",

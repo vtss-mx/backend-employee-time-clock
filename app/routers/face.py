@@ -1,13 +1,15 @@
 """Validación previa de imágenes faciales (sin comparar identidad ni registrar intentos).
 
-Permite al cliente dar retroalimentación inmediata ("Quítate los lentes para continuar")
-antes de pasar a la prueba de vida o de enviar el registro. El backend vuelve a validar
-todo en los endpoints definitivos.
+Permite al cliente dar retroalimentación inmediata (la foto está borrosa, oscura, sin el rostro completo o con un
+accesorio que la empresa bloquea) antes de pasar a la prueba de vida o de enviar el registro, e informa TODOS los
+accesorios detectados (`accessories`) para que la app los muestre como insignias sobre el rostro (decisión del dueño,
+2026-10-07: la insignia es el único aviso; ningún texto pide retirar nada). El backend vuelve a validar todo en los
+endpoints definitivos.
 """
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Form, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 
 from app.core.clock import epoch_ms
 from app.core.exceptions import UnprocessableError
@@ -25,8 +27,9 @@ from app.dependencies import (
 from app.models import UserRole
 from app.schemas.common import ErrorResponse
 from app.schemas.face import FaceCheckResponse
-from app.schemas.verification import FaceChallengeResponse, FlashColors, FlashTokenIn
+from app.schemas.verification import ChallengePurpose, FaceChallengeResponse, FlashColors, FlashTokenIn
 from app.services import flash_pacing
+from app.services.catalog_service import instruction_text
 from app.services.face_capture_service import FACE_CAPTURE_SCREENS, FaceCaptureService
 
 router = APIRouter(
@@ -46,10 +49,11 @@ router = APIRouter(
     response_model=ApiResponse[FaceCheckResponse],
     summary="Validar una captura facial (calidad, pose y accesorios)",
     description=(
-        "Devuelve 200 si la imagen es apta, o 422 con `code` (NO_FACE, MULTIPLE_FACES, "
+        "Devuelve 200 si la imagen es apta (con `accessories`: los detectados por mayoría aunque la empresa no los "
+        "bloquee, para las insignias de la app), o 422 con `code` (NO_FACE, MULTIPLE_FACES, "
         "POSE_NOT_FRONTAL, TOO_DARK, TOO_BLURRY, ACCESSORIES_DETECTED, ...) y `details` "
-        '(p. ej. `{"accessories": ["GLASSES", "HEADWEAR"]}`). Envía `images` (1 a 3 capturas '
-        "consecutivas, recomendado 3) o `image` (una). Los accesorios se deciden por mayoría entre "
+        '(p. ej. `{"accessories": ["GLASSES", "HEADWEAR"]}`: los que la política bloquea). Envía `images` (1 a 3 '
+        "capturas consecutivas, recomendado 3) o `image` (una). Los accesorios se deciden por mayoría entre "
         "las capturas, así un falso positivo aislado no bloquea. `allow_headwear` solo se respeta "
         "para COMPANY; para EMPLOYEE se usa su excepción registrada y, para VALIDATOR, la prenda de "
         "cabeza se decide al identificar a la persona."
@@ -75,22 +79,29 @@ def check_face(
 @router.post(
     "/challenge",
     response_model=ApiResponse[FaceChallengeResponse],
-    summary="Obtener reto de prueba de vida (movimientos y destello de colores)",
+    summary="Obtener reto de prueba de vida (movimientos)",
     description=(
-        "Reto aleatorio de uso único: de uno a tres movimientos (TURN_LEFT, TURN_RIGHT, LOOK_UP, "
-        "LOOK_DOWN, MOVE_CLOSER; nunca el mismo dos veces seguidas) y, si la empresa lo usa, los "
-        "colores del destello (`flash`). Vence en `expires_in` segundos (política de la empresa). Se "
-        "usa en el registro facial y en la verificación (del empleado, del validador o de la empresa "
-        "con el empleado presente). Las direcciones son desde el punto de vista del empleado."
+        "Reto aleatorio de uso único. `purpose=VERIFICATION` (por omisión): de uno a tres movimientos (TURN_LEFT, "
+        "TURN_RIGHT, LOOK_UP, LOOK_DOWN, MOVE_CLOSER; nunca el mismo dos veces seguidas) según la política de la "
+        "empresa. `purpose=ENROLLMENT` (el registro facial, propio o en persona): SIEMPRE los cuatro movimientos de la "
+        "cabeza (TURN_RIGHT, TURN_LEFT, LOOK_UP, LOOK_DOWN) en orden al azar; el registro rechaza cualquier otro reto. "
+        "Si la empresa aún usa el destello, sus colores (`flash`). Vence en `expires_in` segundos (política de la "
+        "empresa). Las direcciones son desde el punto de vista del empleado."
     ),
 )
-def face_challenge(user: CurrentUser, db: DbSession) -> ApiResponse[FaceChallengeResponse]:
+def face_challenge(
+    user: CurrentUser,
+    db: DbSession,
+    purpose: Annotated[
+        ChallengePurpose, Query(description="VERIFICATION (1 a 3 movimientos) o ENROLLMENT (los cuatro del registro)")
+    ] = "VERIFICATION",
+) -> ApiResponse[FaceChallengeResponse]:
     # company_of: 409 si un empleado de varias empresas aún no elige; 403 sin empresa (ADMIN).
-    challenge = FaceCaptureService(db, user, company_of(user)).challenge()
+    challenge = FaceCaptureService(db, user, company_of(user)).challenge(purpose)
     if not challenge.liveness_required:
         return ok(challenge, code="LIVENESS_NOT_REQUIRED")
-    # El mensaje es la instrucción del primer movimiento (del catálogo, ya en el idioma de la petición).
-    return ok(challenge, challenge.instruction, code="CHALLENGE_ISSUED")
+    # El mensaje es la instrucción del primer movimiento (del catálogo; el sobre la arma en cada idioma).
+    return ok(challenge, instruction_text(challenge.actions[0]), code="CHALLENGE_ISSUED")
 
 
 @router.post(

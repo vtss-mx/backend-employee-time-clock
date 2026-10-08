@@ -11,7 +11,7 @@ from pydantic import AfterValidator, BaseModel, Field, field_validator
 from app.i18n import LocalizedValueError
 from app.models.shift import MAX_BREAKS
 from app.schemas.calendar import DayOffRead
-from app.schemas.common import EmployeeRef, Page
+from app.schemas.common import EmployeeRef, Explained, Page
 from app.schemas.shift import ShiftRef, SiteRef
 from app.schemas.verification import VerificationResult
 
@@ -79,8 +79,8 @@ class BreakWindowRead(BaseModel):
     remaining: int
 
 
-class AttendanceToday(BaseModel):
-    """Qué puede hacer el empleado ahora y por qué (todo lo decide el servidor)."""
+class AttendanceToday(Explained):
+    """Qué puede hacer el empleado ahora y por qué (todo lo decide el servidor; `message`, diferido: `Explained`)."""
 
     #: Hora del servidor (para mostrar cuánto falta sin confiar en el reloj del teléfono).
     now: datetime
@@ -105,8 +105,8 @@ class AttendanceToday(BaseModel):
     site_code: bool = False
 
 
-class AttendanceActionResult(BaseModel):
-    """Resultado de un registro: primero la verificación facial; si pasó, lo registrado."""
+class AttendanceActionResult(Explained):
+    """Resultado de un registro: primero la verificación facial; si pasó, lo registrado (`message`: `Explained`)."""
 
     verified: bool
     message: str

@@ -6,6 +6,13 @@ en los dos idiomas (`tests/test_i18n.py`)."""
 from app.i18n.messages.base import Messages
 
 MESSAGES: Messages = {
+    "ANSWER_ACCEPTED": "Answer accepted",
+    "ANSWER_ALREADY_ACCEPTED": "This question was already answered",
+    "ANSWER_INAUDIBLE": "Your voice wasn't heard. Speak louder and closer to the microphone.",
+    "ANSWER_MISMATCH": "The answer doesn't match your registered data. Answer again.",
+    "ANSWER_TOO_LONG": "The answer is too long. Answer in under {seconds} seconds.",
+    "ANSWER_TOO_SHORT": "The answer is too short. Say your full answer.",
+    "ANSWER_UNCLEAR": "Your answer wasn't understood. Speak clearly and slowly.",
     "CHALLENGE_ISSUED": "Liveness check challenge issued",
     "CHECKPOINT_LOCATION_OUT_OF_RANGE": (
         "You're {distance} from this validator's location. Move within {radius} to identify people."
@@ -28,10 +35,18 @@ MESSAGES: Messages = {
     "ENROLLMENT_FOUND": "Face enrollment found",
     "ENROLLMENT_NOT_FOUND": "Face enrollment not found",
     "ENROLLMENT_PENDING": "Your face enrollment was already sent and is pending validation",
+    "ENROLLMENT_PHOTOS_ACCEPTED": "Photos accepted. Now answer the questions on video.",
+    "ENROLLMENT_PHOTO_EXPIRED": "Your first photo expired. Take it again.",
+    "ENROLLMENT_PHOTO_MISMATCH": "The captures don't match your first photo. Repeat the captures with your face.",
+    "ENROLLMENT_PHOTO_REQUIRED": "Start with your first photo",
+    "ENROLLMENT_PHOTO_SAVED": "First photo saved. Now continue with the captures.",
+    "ENROLLMENT_PROGRESS": "Face enrollment progress",
     "ENROLLMENT_REJECTED": "User rejected. They'll need to enroll their face again.",
     "ENROLLMENT_SENT": "Your face enrollment was sent and is pending validation",
     "ENROLLMENT_SUBMITTED": "Face enrollment sent. Your identity is pending validation.",
+    "ENROLLMENT_VOICE_DONE": "Voice check complete. Your identity is pending validation.",
     "FACE_ALREADY_REGISTERED_AS": "{message} ({name}, {number})",
+    "FACE_ALREADY_REGISTERED_AS_NAME": "{message} ({name})",
     "FACE_CHECK_PASSED": "The capture is valid",
     "FACE_ENROLLED_IN_PERSON": "Face enrolled and approved: the employee can now identify themselves",
     "FACE_SIGNAL_ANTISPOOF_REAL": "Minimum real-face probability",
@@ -64,6 +79,26 @@ MESSAGES: Messages = {
         "This validator must sign each identification with its device. Use the app on an approved device."
     ),
     "SIGNATURE_STALE": "This device's signature expired. Try again.",
+    "SPEECH_SERVICE_UNAVAILABLE": "The voice service is unavailable. Try again in a few minutes.",
     "VALIDATOR_METHOD_NOT_ALLOWED": "This validator identifies people in “{mode}” mode",
     "VALIDATOR_REQUIRED": "This account isn't an identity validator",
+    "VERIFICATION_LOCATION_INVALID": (
+        "Your location isn't valid or precise enough. Turn on precise location (GPS) and try again."
+    ),
+    "VERIFICATION_LOCATION_REQUIRED": (
+        "Your location is needed to verify your identity. Allow location access and try again."
+    ),
+    "VIDEO_FACE_MISMATCH": (
+        "The face in the video doesn't match your photos. Keep your face in front of the camera and answer again."
+    ),
+    "VIDEO_TOO_LARGE": "The video is too large (maximum {size})",
+    "VIDEO_UNSUPPORTED_FORMAT": "Couldn't read the video. Use an up-to-date Chrome, Safari, Edge, or Firefox.",
+    "VOICE_CLIP_FOUND": "Answer video",
+    "VOICE_CLIP_NOT_FOUND": "Video not found",
+    "VOICE_NOT_PENDING": "This enrollment has no pending voice check",
+    "VOICE_RETRIES_EXHAUSTED": "You ran out of tries for the voice check. Repeat the first photo and the captures.",
+    "VOICE_SESSION_EXPIRED": "The voice check expired. Open it again: your accepted answers are kept.",
+    "VOICE_SESSION_INVALID": "The voice check isn't valid. Open it again: your accepted answers are kept.",
+    "VOICE_SESSION_STARTED": "Video questions ready",
+    "VOICE_SUM_PROMPT": "What is {a} plus {b}?",
 }

@@ -264,20 +264,27 @@ class RiskEngine:
     @staticmethod
     def _location_hits() -> list[Hit]:
         """Ubicación simulada: precisión "redonda" y constante (5.0, 10.0... en todas las lecturas), siempre en el
-        borde de la geocerca, lecturas idénticas (un simulador no tiembla) o un salto más rápido de lo creíble."""
+        borde de la geocerca, lecturas idénticas (un simulador no tiembla) o un salto más rápido de lo creíble.
+
+        La precisión redonda y las lecturas idénticas solo se juzgan en una lectura de GPS
+        (`RISK_LOCATION_GPS_MAX_ACCURACY_M`): un GPS real tiembla y su precisión cambia, pero la ubicación de la red
+        (una computadora con Wi-Fi), del celular o aproximada (iOS sin "Ubicación exacta", Android aproximada) se
+        repite exacta durante minutos sin ser un simulador. Ahí la señal no se puede medir y no cuenta (compatibilidad
+        universal, docs/rd/compatibilidad-biometria.md)."""
         evidence = _location.get()
         if evidence is None:
             return []
         hits: list[Hit] = list(evidence.checks)
+        gps = evidence.accuracy_m <= settings.RISK_LOCATION_GPS_MAX_ACCURACY_M
         accuracies = {evidence.accuracy_m, *(sample.accuracy for sample in evidence.samples)}
-        if len(accuracies) == 1 and _round_accuracy(evidence.accuracy_m):
+        if gps and len(accuracies) == 1 and _round_accuracy(evidence.accuracy_m):
             hits.append(Hit(RiskSignal.LOCATION_ROUND_ACCURACY, evidence.accuracy_m))
         if evidence.distance_m is not None and evidence.radius_m:
             ratio = round(evidence.distance_m / evidence.radius_m, 3)
             if ratio > settings.RISK_LOCATION_EDGE_RATIO:
                 hits.append(Hit(RiskSignal.LOCATION_EDGE, ratio, settings.RISK_LOCATION_EDGE_RATIO))
         samples = evidence.samples
-        if len(samples) >= settings.RISK_LOCATION_STATIC_MIN_SAMPLES and len(set(samples)) == 1:
+        if gps and len(samples) >= settings.RISK_LOCATION_STATIC_MIN_SAMPLES and len(set(samples)) == 1:
             hits.append(Hit(RiskSignal.LOCATION_STATIC, float(len(samples)), settings.RISK_LOCATION_STATIC_MIN_SAMPLES))
         speed, jump = evidence.speed_kmh, evidence.jump_kmh
         if speed is not None and jump is not None and speed > jump:

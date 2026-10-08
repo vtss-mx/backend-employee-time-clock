@@ -1,9 +1,9 @@
 """Imágenes y archivos de la plataforma: CIFRADOS en el bucket privado, nunca en la base de datos.
 
 Decisión del dueño del producto: "por ninguna razón se guardan imágenes en nuestra base de datos". Todo
-proceso que recibe una imagen o un archivo (hoy: la foto de referencia del registro facial, el
-comprobante de un pago, la foto de perfil de una persona, la evidencia de un caso de fraude y los documentos de una
-empresa) la cifra con la llave de la plataforma
+proceso que recibe una imagen o un archivo (hoy: la foto de referencia del registro facial y la foto inicial de su
+borrador, el comprobante de un pago, la foto de perfil de una persona, la evidencia de un caso de fraude, los documentos
+de una empresa y los videos de la verificación por voz) la cifra con la llave de la plataforma
 (`DATA_ENCRYPTION_KEY`) y la sube a `gs://GCS_BUCKET/<entorno>/companies/<empresa>/...` (lo de una empresa)
 o `.../people/users/<cuenta>/...` (lo de la persona) DURANTE la petición; la BD solo guarda la referencia
 (nombre del objeto, tipo, tamaño, SHA-256 del objeto cifrado y cuándo se subió). El bucket es privado y
@@ -45,7 +45,16 @@ from app.core.object_storage import (
     content_md5,
     get_storage,
 )
-from app.models import CompanyDocument, FaceEnrollment, FraudEvidence, Payment, UserAvatar
+from app.models import (
+    CompanyDocument,
+    EmployeeDocument,
+    EnrollmentVoiceAnswer,
+    FaceEnrollment,
+    FaceEnrollmentDraft,
+    FraudEvidence,
+    Payment,
+    UserAvatar,
+)
 from app.repositories.storage_repository import ImageRef, StorageRepository, StoredImage
 
 logger = logging.getLogger(__name__)
@@ -64,6 +73,12 @@ _EXTENSIONS = {
     "application/vnd.ms-excel": "xls",
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
     "application/xml": "xml",
+    # Clips de la verificación por voz y video del registro facial (`app/speech/audio.py`: el formato se reconoce por
+    # su contenido; WebM en Chrome y Firefox, MP4 en Safari).
+    "video/webm": "webm",
+    "video/mp4": "mp4",
+    "audio/ogg": "ogg",
+    "audio/wav": "wav",
 }
 
 
@@ -77,6 +92,16 @@ class ImageUnreadable(StorageError):
 
 def extension(content_type: str | None) -> str:
     return _EXTENSIONS.get(content_type or "", "bin")
+
+
+def image_type(data: bytes) -> str:
+    """El tipo de una captura de la cámara por su contenido (PNG, WebP o, si no, JPEG): las fotos del registro facial,
+    su foto inicial y la evidencia de un caso. Un solo lugar (antes, una copia en cada servicio)."""
+    if data.startswith(b"\x89PNG"):
+        return "image/png"
+    if data[8:12] == b"WEBP":
+        return "image/webp"
+    return "image/jpeg"
 
 
 def _face_photo_path(ref: ImageRef) -> str:
@@ -94,7 +119,7 @@ def _receipt_path(ref: ImageRef) -> str:
 #: Foto de referencia de un registro facial. Un registro rechazado no conserva su foto (`forget`).
 FACE_ENROLLMENT_PHOTOS = StoredImage(
     kind="face-enrollment",
-    label="Fotos de referencia del registro facial",
+    label="STORAGE_FACE_ENROLLMENT_PHOTOS",
     model=FaceEnrollment,
     key=FaceEnrollment.id,
     company=FaceEnrollment.company_id,
@@ -107,10 +132,39 @@ FACE_ENROLLMENT_PHOTOS = StoredImage(
     path=_face_photo_path,
 )
 
+
+def _draft_photo_path(ref: ImageRef) -> str:
+    (employee_id,) = ref.extra
+    return (
+        f"companies/{ref.company_id}/employees/{employee_id}/face-enrollments/drafts/"
+        f"{ref.key}.{extension(ref.content_type)}.enc"
+    )
+
+
+#: La foto inicial del registro facial del propio empleado (paso 1 de 3; decisión del dueño, 2026-10-07): el BORRADOR
+#: del registro, cifrado como las demás. Vive horas (`FACE_ENROLLMENT_DRAFT_HOURS`): sale del bucket al reemplazarlo
+#: («Repetir foto»), al vencer (depuración) y al eliminar a la persona; al aceptar las capturas del paso 2, su objeto
+#: pasa a ser la foto de referencia del registro (`FACE_ENROLLMENT_PHOTOS` lo referencia con el mismo nombre: no se
+#: vuelve a subir). Mientras es borrador nadie la ve: solo el servidor la compara.
+FACE_ENROLLMENT_DRAFT_PHOTOS = StoredImage(
+    kind="face-enrollment-draft",
+    label="STORAGE_FACE_ENROLLMENT_DRAFT_PHOTOS",
+    model=FaceEnrollmentDraft,
+    key=FaceEnrollmentDraft.id,
+    company=FaceEnrollmentDraft.company_id,
+    content_type=FaceEnrollmentDraft.photo_content_type,
+    object_name=FaceEnrollmentDraft.photo_object,
+    size=FaceEnrollmentDraft.photo_size,
+    sha256=FaceEnrollmentDraft.photo_sha256,
+    uploaded_at=FaceEnrollmentDraft.photo_uploaded_at,
+    extra=(FaceEnrollmentDraft.employee_id,),
+    path=_draft_photo_path,
+)
+
 #: Comprobante de un pago (PDF o imagen). Los pagos se anulan, nunca se borran: su comprobante se conserva.
 PAYMENT_RECEIPTS = StoredImage(
     kind="payment-receipt",
-    label="Comprobantes de pago",
+    label="STORAGE_PAYMENT_RECEIPTS",
     model=Payment,
     key=Payment.id,
     company=Payment.company_id,
@@ -132,7 +186,7 @@ def _avatar_path(ref: ImageRef) -> str:
 #: Cada foto nueva lleva otra versión (otra carpeta): la anterior sale del bucket por la cola de borrado.
 USER_AVATARS = StoredImage(
     kind="user-avatar",
-    label="Fotos de perfil (un objeto por tamaño)",
+    label="STORAGE_USER_AVATARS",
     model=UserAvatar,
     key=UserAvatar.user_id,
     company=None,
@@ -157,7 +211,7 @@ def _evidence_path(ref: ImageRef) -> str:
 #: (la clave del objeto es el caso y una parte aleatoria): ninguna conexión de la BD espera al bucket.
 FRAUD_EVIDENCE = StoredImage(
     kind="fraud-evidence",
-    label="Fotogramas de evidencia de casos de fraude",
+    label="STORAGE_FRAUD_EVIDENCE",
     model=FraudEvidence,
     key=FraudEvidence.case_id,
     company=FraudEvidence.company_id,
@@ -182,7 +236,7 @@ def _document_path(ref: ImageRef) -> str:
 #: nace con su referencia. Sale del bucket cuando la depuración borra la fila (borrado lógico vencido).
 COMPANY_DOCUMENTS = StoredImage(
     kind="company-document",
-    label="Documentos de las empresas",
+    label="STORAGE_COMPANY_DOCUMENTS",
     model=CompanyDocument,
     key=CompanyDocument.company_id,
     company=CompanyDocument.company_id,
@@ -195,14 +249,71 @@ COMPANY_DOCUMENTS = StoredImage(
     path=_document_path,
 )
 
+
+def _voice_clip_path(ref: ImageRef) -> str:
+    employee_id, uid = ref.extra
+    return (
+        f"companies/{ref.company_id}/employees/{employee_id}/face-enrollments/{ref.key}/voice/"
+        f"{uid}.{extension(ref.content_type)}.enc"
+    )
+
+
+#: Clips de video de la verificación por voz del registro facial (decisión del dueño, 2026-10-06): solo la respuesta
+#: que pasó de cada pregunta, cifrada; los revisa la EMPRESA al validar el registro (nunca el ADMIN) y salen del bucket
+#: a los FACE_VIDEO_RETENTION_DAYS, al rechazar el registro o al eliminar al empleado. El objeto se nombra con el
+#: registro y una clave al azar (`uid`): se sube ANTES de abrir la transacción (ninguna conexión espera al bucket).
+ENROLLMENT_VOICE_CLIPS = StoredImage(
+    kind="enrollment-voice",
+    label="STORAGE_ENROLLMENT_VOICE_CLIPS",
+    model=EnrollmentVoiceAnswer,
+    key=EnrollmentVoiceAnswer.enrollment_id,
+    company=EnrollmentVoiceAnswer.company_id,
+    content_type=EnrollmentVoiceAnswer.content_type,
+    object_name=EnrollmentVoiceAnswer.object_name,
+    size=EnrollmentVoiceAnswer.byte_size,
+    sha256=EnrollmentVoiceAnswer.sha256,
+    uploaded_at=EnrollmentVoiceAnswer.uploaded_at,
+    extra=(EnrollmentVoiceAnswer.employee_id, EnrollmentVoiceAnswer.uid),
+    path=_voice_clip_path,
+)
+
+
+def _employee_document_path(ref: ImageRef) -> str:
+    (uid,) = ref.extra
+    return f"companies/{ref.company_id}/employees/{ref.key}/documents/{uid}.{extension(ref.content_type)}.enc"
+
+
+#: Documentos de identidad del empleado (decisión del dueño del producto, 2026-10-07: comprobante de domicilio e
+#: identificación oficial del onboarding). Mismo mecanismo que los documentos de la empresa: el objeto se nombra con la
+#: empresa, el empleado y una clave al azar (`uid`); se sube ANTES de abrir la transacción de su fila (ninguna conexión
+#: espera al bucket). Sale del bucket cuando la depuración borra la fila (borrado lógico vencido o empleado depurado).
+EMPLOYEE_DOCUMENTS = StoredImage(
+    kind="employee-document",
+    label="STORAGE_EMPLOYEE_DOCUMENTS",
+    model=EmployeeDocument,
+    key=EmployeeDocument.employee_id,
+    company=EmployeeDocument.company_id,
+    content_type=EmployeeDocument.content_type,
+    object_name=EmployeeDocument.object_name,
+    size=EmployeeDocument.byte_size,
+    sha256=EmployeeDocument.sha256,
+    uploaded_at=EmployeeDocument.uploaded_at,
+    extra=(EmployeeDocument.uid,),
+    path=_employee_document_path,
+)
+
+
 #: Todo lo que la plataforma guarda como imagen o archivo. Un proceso nuevo que guarde una imagen o un
 #: archivo agrega aquí su entrada (regla del backend AGENTS.md §8).
 STORED_IMAGES: tuple[StoredImage, ...] = (
     FACE_ENROLLMENT_PHOTOS,
+    FACE_ENROLLMENT_DRAFT_PHOTOS,
     PAYMENT_RECEIPTS,
     USER_AVATARS,
     FRAUD_EVIDENCE,
     COMPANY_DOCUMENTS,
+    EMPLOYEE_DOCUMENTS,
+    ENROLLMENT_VOICE_CLIPS,
 )
 
 
@@ -331,14 +442,38 @@ def abandon(db: Session) -> None:
 
 
 def release_employee_images(db: Session, company_id: int, employee_id: int) -> None:
-    """Antes de borrar un empleado (sus registros faciales y sus casos de fraude se van en cascada): sus fotos y la
-    evidencia de sus casos salen del bucket."""
+    """Antes de borrar un empleado (sus registros faciales y sus casos de fraude se van en cascada): sus fotos, los
+    clips de su verificación por voz, la foto inicial de un registro a medias y la evidencia de sus casos salen del
+    bucket."""
     release(
         db,
         FACE_ENROLLMENT_PHOTOS,
         and_(FaceEnrollment.company_id == company_id, FaceEnrollment.employee_id == employee_id),
     )
+    release(
+        db,
+        ENROLLMENT_VOICE_CLIPS,
+        and_(EnrollmentVoiceAnswer.company_id == company_id, EnrollmentVoiceAnswer.employee_id == employee_id),
+    )
+    release(
+        db,
+        FACE_ENROLLMENT_DRAFT_PHOTOS,
+        and_(FaceEnrollmentDraft.company_id == company_id, FaceEnrollmentDraft.employee_id == employee_id),
+    )
     release(db, FRAUD_EVIDENCE, and_(FraudEvidence.company_id == company_id, FraudEvidence.employee_id == employee_id))
+
+
+def release_employee_documents(db: Session, company_id: int, employee_id: int) -> None:
+    """Antes de borrar DE VERDAD los documentos de identidad de un empleado que se elimina (regla 13, LFPDPPP: una
+    identificación lleva la foto y los datos de la persona): los objetos de TODOS sus documentos —vigentes y los que el
+    propio empleado ya había eliminado de su lista— salen del bucket. La encolada es un `INSERT ... FROM SELECT`, no una
+    consulta, así que ve también lo eliminado (el borrado lógico solo filtra SELECT y UPDATE): ningún archivo de un
+    documento en «Eliminados» se queda en la nube."""
+    release(
+        db,
+        EMPLOYEE_DOCUMENTS,
+        and_(EmployeeDocument.company_id == company_id, EmployeeDocument.employee_id == employee_id),
+    )
 
 
 def release_company_evidence(db: Session, company_id: int) -> None:

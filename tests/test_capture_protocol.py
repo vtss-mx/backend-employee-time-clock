@@ -382,31 +382,44 @@ def test_the_burst_sheet_goes_to_the_case_evidence_through_the_same_path(client,
 # ---------------------------------------------------------------- política del ADMIN
 
 
-def test_the_protocol_switches_are_admin_policy_and_relaxing_them_needs_a_second_admin(client, company_headers):
+def test_the_protocol_switches_are_admin_policy_and_relaxing_them_needs_a_second_admin(
+    client, company_headers, monkeypatch
+):
+    # La regla de dos personas está apagada por omisión (un único ADMIN); aquí se enciende para probar que relaja.
+    monkeypatch.setattr(settings, "POLICY_TWO_PERSON_RULE", True)
     url, admin = admin_policy(client, company_headers)
     policy = client.get(url, headers=admin).json()["data"]
-    assert policy["flash_paced"] is True and policy["capture_burst"] is True  # nacen midiendo
+    # La ráfaga nace midiendo; el destello dictado se retiró (2026-10-06).
+    assert policy["flash_paced"] is False and policy["capture_burst"] is True
     signals = {s["code"]: s for s in policy["risk_signals"]}
     assert signals["PULSE_ABSENT"]["measure_only"] is True and signals["BURST_LOOP"]["measure_only"] is False
     assert all(signals[c]["mode"] == "OBSERVE" for c in ("BURST_MISSING", "FLASH_UNPACED", "PERSPECTIVE_FLAT"))
-    off = client.put(url, json={"flash_paced": False}, headers=admin).json()["data"]
-    assert off["change"]["status"] == "PENDING" and off["policy"]["flash_paced"] is True  # relajar: dos personas
+    off = client.put(url, json={"capture_burst": False}, headers=admin).json()["data"]
+    assert off["change"]["status"] == "PENDING" and off["policy"]["capture_burst"] is True  # relajar: dos personas
     refused = client.put(url, json={"risk_signals": {"PULSE_ABSENT": {"mode": "ENFORCE"}}}, headers=admin)
     assert refused.status_code == 422 and refused.json()["code"] == "SIGNAL_MEASURE_ONLY"
     assert client.put(url, json={"risk_signals": {"PULSE_ABSENT": {"mode": "OFF"}}}, headers=admin).status_code == 200
-    # El nivel Máximo pide el destello dictado y la ráfaga (sin ellos, un paso más; nunca niega).
+    # El nivel Máximo pide la ráfaga (sin ella, un paso más; nunca niega). El destello se retiró (2026-10-06): sus
+    # señales no se exigen (sin destello nunca se miden) y el destello dictado sigue apagado.
     applied = client.post(f"{url}/preset", json={"preset": "MAXIMUM"}, headers=admin).json()["data"]["policy"]
     maximum = {s["code"]: s for s in applied["risk_signals"]}
-    assert (maximum["FLASH_UNPACED"]["mode"], maximum["FLASH_UNPACED"]["points"]) == ("ENFORCE", 20)
     assert (maximum["BURST_MISSING"]["mode"], maximum["BURST_MISSING"]["points"]) == ("ENFORCE", 20)
-    assert maximum["FLASH_PACE_MISMATCH"]["mode"] == "ENFORCE"
+    assert maximum["FLASH_UNPACED"]["mode"] == maximum["FLASH_PACE_MISMATCH"]["mode"] == "OBSERVE"
+    assert applied["flash_paced"] is False and applied["flash_liveness"] == "OFF"
 
 
 def test_required_protocol_signals_ask_for_one_more_step_never_deny(client, company_headers):
     """Como en el nivel Máximo: sin destello dictado ni ráfaga, un paso más (y superado, pasa)."""
     headers = approved_employee(client, company_headers)
     required = {"mode": "ENFORCE", "points": 20}
-    set_policy(client, company_headers, risk_signals={"FLASH_UNPACED": required, "BURST_MISSING": required})
+    # El destello se retiró (2026-10-06): se enciende aquí a propósito para que FLASH_UNPACED se mida.
+    set_policy(
+        client,
+        company_headers,
+        flash_liveness="OBSERVE",
+        flash_paced=True,
+        risk_signals={"FLASH_UNPACED": required, "BURST_MISSING": required},
+    )
     asked, _ = verify_with(client, headers, burst=[], paced=False)
     assert asked.status_code == 422 and asked.json()["code"] == "STEP_UP_REQUIRED"
     # Aunque pesaran para negar, solo dejan el registro "en revisión" (piden más, nunca niegan).

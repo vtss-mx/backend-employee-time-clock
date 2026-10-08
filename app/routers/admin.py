@@ -195,7 +195,8 @@ def company_policy(company_id: int, _: AdminUser, db: DbSession) -> ApiResponse[
     response_model=ApiResponse[PolicyUpdateResult],
     summary="Cambiar la política de verificación de una empresa",
     description=(
-        "El ADMIN de la plataforma es el responsable: exigir retirar lentes, gorra o cubrebocas, prueba de vida, "
+        "El ADMIN de la plataforma es el responsable: exigir retirar lentes (apagado por omisión), gorra o "
+        "cubrebocas, prueba de vida, "
         "anti-spoofing, QR, nivel de confianza, candados contra engaños, aprendizaje continuo y el motor de riesgo. "
         "Solo se modifican los campos enviados. Cada cambio queda en el historial (antes → después). Lo que endurece "
         "aplica en segundos a todos los procesos; lo que RELAJA la seguridad queda por aprobar de otro ADMIN (regla de "

@@ -52,6 +52,8 @@ class ErrorOccurrenceRead(BaseModel):
     message: str
     #: Quién lo provocó, tal cual: «correo (Rol)».
     user_label: str | None = None
+    #: Su foto de perfil (ruta versionada) o None: la app la dibuja junto a `user_label` y, sin ella, las iniciales.
+    user_avatar: str | None = None
     company_name: str | None = None
     #: Contexto literal: la petición (método, URL, encabezados, cuerpo), la respuesta (estado y
     #: cuerpo), el usuario y la empresa. Sin secretos ni archivos.
@@ -115,11 +117,22 @@ class AdmissionRead(BaseModel):
     top_demand: list[DemandRead]
 
 
+class SharedCacheStatus(BaseModel):
+    """La caché compartida (Redis) vista por el proceso que atendió: apagada, bien o sin responder (su
+    cortacircuitos), dónde está (host, puerto y base; nunca la contraseña) y cuántas fallas lleva."""
+
+    backend: str
+    target: str | None
+    status: str
+    failures: int
+
+
 class ServerStatus(BaseModel):
-    """Estado del servidor para el ADMIN: dependencias con su detalle, capacidad del proceso y cómo va
-    la copia de imágenes al bucket."""
+    """Estado del servidor para el ADMIN: dependencias con su detalle, capacidad del proceso, cómo va
+    la copia de imágenes al bucket y la caché compartida."""
 
     status: str
     components: dict[str, dict[str, Any]]
     admission: AdmissionRead
     storage: ObjectStorageStatus
+    cache: SharedCacheStatus

@@ -6,7 +6,15 @@ import pytest
 from app.core.database import SessionLocal
 from app.models import VerificationLog
 from app.services.face_gallery import face_galleries
-from tests.conftest import DESKTOP_UA, create_company, create_employee, login, qr_content, submit_enrollment, turn_files
+from tests.conftest import (
+    DESKTOP_UA,
+    create_company,
+    create_employee,
+    login,
+    qr_content,
+    submit_enrollment,
+    turn_files,
+)
 from tests.test_policy import set_policy
 
 URL = "/api/validators"
@@ -176,7 +184,8 @@ def test_identify_by_face_among_all_employees(client, company_headers):
 
     unknown = identify_face(client, headers, "pedro")  # no es empleado de la empresa
     assert unknown.json()["data"]["verified"] is False and unknown.json()["code"] == "EMPLOYEE_NOT_IDENTIFIED"
-    assert identify_face(client, headers, "ana", kind="glasses").status_code == 422  # lentes: no se identifica
+    assert identify_face(client, headers, "ana", kind="mask").status_code == 422  # cubrebocas: no se identifica
+    assert identify_face(client, headers, "ana", kind="glasses").json()["data"]["verified"] is True  # lentes: sí
     liveness = identify_face(client, headers, "ana", turn_person="juan")  # el giro es de otra persona
     assert liveness.json()["data"]["verified"] is False
 
@@ -188,13 +197,13 @@ def test_identify_by_face_among_all_employees(client, company_headers):
 
     page = client.get("/api/checkpoint/recent", headers=headers).json()["data"]
     recent = page["items"]
-    assert page["total"] == 3 and (page["page"], page["size"]) == (1, 10)
-    assert [event["success"] for event in recent] == [False, False, True]  # los más recientes primero
+    assert page["total"] == 4 and (page["page"], page["size"]) == (1, 10)
+    assert [event["success"] for event in recent] == [False, True, False, True]  # los más recientes primero
     second = client.get("/api/checkpoint/recent", params={"size": 2, "page": 2}, headers=headers).json()["data"]
-    assert [event["id"] for event in second["items"]] == [recent[2]["id"]]
-    assert recent[2]["employee_number"] == "EMP-002" and recent[0]["employee_name"] is None
+    assert [event["id"] for event in second["items"]] == [recent[2]["id"], recent[3]["id"]]
+    assert recent[3]["employee_number"] == "EMP-002" and recent[0]["employee_name"] is None
     listed = client.get(URL, headers=company_headers).json()["data"]["items"][0]
-    assert listed["identifications_today"] == 1
+    assert listed["identifications_today"] == 2
 
 
 def test_headwear_is_decided_after_knowing_who_it_is(client, company_headers):

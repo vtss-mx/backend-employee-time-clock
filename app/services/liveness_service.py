@@ -6,7 +6,10 @@ Flujo:
    seguidas ni "acercarse" como único movimiento: una foto acercada a la cámara crece igual que un
    rostro) y, si la empresa lo usa, una secuencia de colores para el destello de la pantalla. El reto
    de "un paso más" (riesgo medio del motor de riesgo) pide el máximo de movimientos y el destello
-   aunque la empresa solo lo mida.
+   aunque la empresa solo lo mida. El reto del REGISTRO facial (propio o en persona) pide SIEMPRE los
+   cuatro movimientos de la cabeza (`ENROLLMENT_ACTIONS`: derecha, izquierda, arriba y abajo, en orden
+   al azar; decisión del dueño, 2026-10-07): la persona vuelve al frente entre uno y otro y termina
+   centrada; "acercarse" no forma parte (una foto plana crece igual que un rostro).
 2. El cliente captura frames frontales, uno por cada color del destello y uno por cada movimiento,
    en orden (entre movimientos la persona vuelve al frente).
 3. Al verificar, el reto se consume (uso único), debe pertenecer al usuario y no haber vencido (la
@@ -15,6 +18,11 @@ Flujo:
 
 Almacenamiento en PostgreSQL (tabla `face_challenges`): compartido entre todos los procesos
 de la API, por lo que se puede escalar horizontalmente sin Redis.
+
+Dueño del reto (`ChallengeOwner`): una CUENTA (su id: el empleado, el validador o la empresa que opera la cámara) o, en
+la API pública de verificación (SDK móviles, migración 0084), un DISPOSITIVO de una llave de la empresa (`ApiDevice`).
+Uno vigente por dueño: el reto nuevo de una cuenta reemplaza el anterior de esa cuenta, y el de un dispositivo, el de
+ese dispositivo (muchos teléfonos comparten la llave de la empresa: ninguno invalida el reto de otro).
 """
 
 import secrets
@@ -32,10 +40,44 @@ from app.repositories.challenge_repository import FaceChallengeRepository
 from app.services.catalog_service import get_catalogs
 from app.services.face_service import face_rejection
 
-#: Movimientos que puede pedir un reto (verification_policy.liveness_steps).
+#: Movimientos que puede pedir el reto de una VERIFICACIÓN (verification_policy.liveness_steps, 1 a 3).
 MAX_STEPS = 3
+#: Los movimientos del reto del REGISTRO facial (decisión del dueño, 2026-10-07): siempre los cuatro, en orden al azar
+#: (24 órdenes posibles: un video grabado de antemano no conoce la secuencia). Es una constante del servidor, aparte de
+#: `liveness_steps`, que sigue mandando en la verificación.
+ENROLLMENT_ACTIONS: tuple[LivenessAction, ...] = (
+    LivenessAction.TURN_RIGHT,
+    LivenessAction.TURN_LEFT,
+    LivenessAction.LOOK_UP,
+    LivenessAction.LOOK_DOWN,
+)
+#: Movimientos que caben en un reto (los cuatro del registro): columnas de `face_challenges` y capturas que se aceptan.
+MAX_CHALLENGE_STEPS = max(MAX_STEPS, len(ENROLLMENT_ACTIONS))
 #: Sin movimientos activos en el catálogo (configuración rota) se piden los giros.
 FALLBACK_ACTIONS = (LivenessAction.TURN_LEFT, LivenessAction.TURN_RIGHT)
+
+
+@dataclass(frozen=True)
+class ApiDevice:
+    """Quien opera la cámara por la API pública de verificación: la llave de la empresa (`key_id`) en UN dispositivo
+    (`device_hash`, la huella SHA-256 de la llave pública que el dispositivo probó con su firma)."""
+
+    key_id: int
+    device_hash: str
+
+
+#: Dueño de un reto: el id de una cuenta o un dispositivo de la API.
+type ChallengeOwner = int | ApiDevice
+
+
+def user_of(owner: ChallengeOwner) -> int | None:
+    """La cuenta que opera la cámara (None si es un dispositivo de la API)."""
+    return owner if isinstance(owner, int) else None
+
+
+def device_of(owner: ChallengeOwner) -> str | None:
+    """La huella de la llave del dispositivo de la API (None si es una cuenta)."""
+    return owner.device_hash if isinstance(owner, ApiDevice) else None
 
 
 @dataclass(frozen=True)
@@ -63,8 +105,9 @@ NO_RESPONSE = LivenessResponse()
 @dataclass(frozen=True)
 class Challenge:
     id: str
-    user_id: int
-    #: Movimientos en orden (de uno a tres).
+    #: La cuenta dueña del reto; None si es de un dispositivo de la API (`api_device`).
+    user_id: int | None
+    #: Movimientos en orden (de uno a tres en una verificación; los cuatro del registro).
     actions: tuple[LivenessAction, ...]
     #: Cuándo se emitió (para exigir el tiempo humano mínimo de respuesta).
     issued_at: datetime
@@ -77,6 +120,8 @@ class Challenge:
     reinforced: bool = False
     #: Destello dictado por el servidor (antifraude 2a): sus colores no viajaron con el reto; `flash` es el respaldo.
     flash_paced: bool = False
+    #: El dispositivo de la API dueño del reto (None si es de una cuenta).
+    api_device: ApiDevice | None = None
 
 
 def random_sequence[T](options: Sequence[T], count: int) -> tuple[T, ...]:
@@ -95,6 +140,18 @@ def active_actions() -> tuple[LivenessAction, ...]:
     return tuple(a for a in LivenessAction if catalogs.is_active("liveness_actions", a.value)) or FALLBACK_ACTIONS
 
 
+def enrollment_actions() -> tuple[LivenessAction, ...]:
+    """Los cuatro movimientos del registro en un orden al azar (criptográfico): todos aparecen siempre, nunca se
+    repite uno y el orden cambia en cada reto."""
+    return tuple(secrets.SystemRandom().sample(ENROLLMENT_ACTIONS, len(ENROLLMENT_ACTIONS)))
+
+
+def is_enrollment_challenge(challenge: Challenge) -> bool:
+    """¿El reto pidió los cuatro movimientos del registro? Un registro con un reto de verificación (1 a 3 pasos) se
+    rechaza: la prueba de vida del registro es completa o no es."""
+    return len(challenge.actions) == len(ENROLLMENT_ACTIONS) and set(challenge.actions) == set(ENROLLMENT_ACTIONS)
+
+
 def challenge_actions(options: Sequence[LivenessAction], count: int) -> tuple[LivenessAction, ...]:
     """Los movimientos de un reto: "acercarse" nunca es el único (fase 0 del antifraude). Es lo único que una foto
     plana sí reproduce (crece igual que un rostro); con un giro o un cabeceo, sus puntos coplanares la delatan.
@@ -108,7 +165,7 @@ class ChallengeStore:
     def issue(
         self,
         db: Session,
-        user_id: int,
+        owner: ChallengeOwner,
         *,
         steps: int,
         lifetime_seconds: int,
@@ -116,29 +173,36 @@ class ChallengeStore:
         step_up: bool = False,
         reinforced: bool = False,
         paced: bool = False,
+        actions: Sequence[LivenessAction] | None = None,
     ) -> Challenge:
-        """Reto nuevo de `steps` movimientos (y `flash` colores) que vence en `lifetime_seconds`; `paced`: sus colores
-        los dicta el servidor uno por uno (los de `flash` quedan para el respaldo sin canal en vivo)."""
+        """Reto nuevo de `steps` movimientos al azar (y `flash` colores) que vence en `lifetime_seconds`; `paced`: sus
+        colores los dicta el servidor uno por uno (los de `flash` quedan para el respaldo sin canal en vivo); `actions`:
+        movimientos ya decididos (los cuatro del registro, `enrollment_actions`) en lugar de elegirlos."""
         now = datetime.now(UTC)
+        device = owner if isinstance(owner, ApiDevice) else None
         challenge = Challenge(
             id=secrets.token_urlsafe(24),
-            user_id=user_id,
-            actions=challenge_actions(active_actions(), max(1, min(steps, MAX_STEPS))),
+            user_id=user_of(owner),
+            actions=tuple(actions) if actions else challenge_actions(active_actions(), max(1, min(steps, MAX_STEPS))),
             issued_at=now,
             expires_at=now + timedelta(seconds=lifetime_seconds),
             flash=random_sequence(tuple(FLASH_PALETTE), flash) if flash > 0 else (),
             step_up=step_up,
             reinforced=reinforced,
             flash_paced=paced and flash > 0,
+            api_device=device,
         )
-        actions = [a.value for a in challenge.actions] + [None] * (MAX_STEPS - len(challenge.actions))
-        FaceChallengeRepository(db).replace_for_user(
+        stored = [a.value for a in challenge.actions] + [None] * (MAX_CHALLENGE_STEPS - len(challenge.actions))
+        FaceChallengeRepository(db).replace_for_owner(
             FaceChallenge(
                 id=challenge.id,
-                user_id=user_id,
-                direction=actions[0],
-                second_direction=actions[1],
-                third_direction=actions[2],
+                user_id=challenge.user_id,
+                api_key_id=device.key_id if device is not None else None,
+                device_hash=device.device_hash if device is not None else None,
+                direction=stored[0],
+                second_direction=stored[1],
+                third_direction=stored[2],
+                fourth_direction=stored[3],
                 flash_colors=",".join(challenge.flash) or None,
                 issued_at=challenge.issued_at,
                 expires_at=challenge.expires_at,
@@ -150,29 +214,52 @@ class ChallengeStore:
         db.commit()
         return challenge
 
-    def consume(self, db: Session, challenge_id: str, user_id: int) -> Challenge | None:
-        """Devuelve el reto si es válido para el usuario; en cualquier caso lo elimina (atómico)."""
+    def consume(self, db: Session, challenge_id: str, owner: ChallengeOwner) -> Challenge | None:
+        """Devuelve el reto si es válido para su dueño (la misma cuenta, o la misma llave en el mismo dispositivo); en
+        cualquier caso lo elimina (atómico)."""
         row = FaceChallengeRepository(db).take(challenge_id)
         db.commit()
         if row is None:
             return None
-        owner, first, second, third, colors, issued_at, expires_at, step_up, reinforced, paced = row
-        if owner != user_id or has_passed(expires_at):
+        (
+            user_id,
+            key_id,
+            device_hash,
+            first,
+            second,
+            third,
+            fourth,
+            colors,
+            issued_at,
+            expires_at,
+            step_up,
+            reinforced,
+            paced,
+        ) = row
+        stored = ApiDevice(key_id, device_hash) if key_id is not None and device_hash is not None else user_id
+        if stored != owner or has_passed(expires_at):
             return None
         return Challenge(
             id=challenge_id,
-            user_id=owner,
-            actions=tuple(LivenessAction(a) for a in (first, second, third) if a),
+            user_id=user_id,
+            actions=tuple(LivenessAction(a) for a in (first, second, third, fourth) if a),
             issued_at=as_utc(issued_at),
             expires_at=as_utc(expires_at),
             flash=tuple(colors.split(",")) if colors else (),
             step_up=step_up,
             reinforced=reinforced,
             flash_paced=paced,
+            api_device=owner if isinstance(owner, ApiDevice) else None,
         )
 
     def require(
-        self, db: Session, user_id: int, response: LivenessResponse, *, required: bool, flash_required: bool = False
+        self,
+        db: Session,
+        owner: ChallengeOwner,
+        response: LivenessResponse,
+        *,
+        required: bool,
+        flash_required: bool = False,
     ) -> Challenge | None:
         """Consume el reto obligatorio de prueba de vida (None si la política no lo exige).
 
@@ -184,12 +271,12 @@ class ChallengeStore:
             return None
         if not response.challenge_id or not response.steps:
             raise face_rejection("LIVENESS_REQUIRED")
-        challenge = self.consume(db, response.challenge_id, user_id)
+        challenge = self.consume(db, response.challenge_id, owner)
         if challenge is None:
             raise face_rejection("CHALLENGE_INVALID")
         if len(response.steps) != len(challenge.actions):
             raise face_rejection("LIVENESS_REQUIRED")  # falta (o sobra) la captura de algún movimiento
-        flash_missing = bool(challenge.flash) and not response.flash and (flash_required or challenge.step_up)
+        flash_missing = bool(challenge.flash) and not response.flash and flash_required
         if flash_missing or (response.flash and len(response.flash) != len(challenge.flash)):
             raise face_rejection("LIVENESS_REQUIRED")
         return challenge

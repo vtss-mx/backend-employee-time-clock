@@ -21,6 +21,9 @@ migrate() {
   # Roles de mínimo privilegio y sus permisos (app/core/db_roles.py), con el dueño y en cada despliegue: crea lo
   # que falta, rota contraseñas y da permisos a las tablas nuevas. Idempotente.
   python -m app.cli db roles
+  # Las instantáneas de catálogos de la caché compartida (Redis) quedan fuera: cada réplica recarga de la base recién
+  # migrada al vencer su copia local. Sin Redis (REDIS_HOST vacío) o con Redis caído no hace nada y no falla.
+  python -m app.cli cache clear-catalogs
 }
 
 if [ "${1:-}" = "migrate" ]; then

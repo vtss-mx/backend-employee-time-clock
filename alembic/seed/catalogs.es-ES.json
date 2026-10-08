@@ -1,0 +1,2639 @@
+{
+  "roles": {
+    "ADMIN": {
+      "name": "Administrador",
+      "description": "Administrador de la plataforma: da de alta y administra empresas (no ve sus empleados)."
+    },
+    "COMPANY": {
+      "name": "Empresa",
+      "description": "Administrador de una empresa: gestiona sus empleados, validadores y política de verificación."
+    },
+    "EMPLOYEE": {
+      "name": "Empleado",
+      "description": "Empleado: registra su rostro y se identifica con rostro o con su código QR."
+    },
+    "VALIDATOR": {
+      "name": "Validador",
+      "description": "Validador de identidad: tableta o teléfono que identifica a los empleados de su empresa."
+    }
+  },
+  "verification_methods": {
+    "FACE": {
+      "name": "Rostro",
+      "description": "La persona mira a la cámara; se busca entre todo el personal"
+    },
+    "QR": {
+      "name": "QR",
+      "description": "Código dinámico en el teléfono del empleado; sirve una sola vez"
+    },
+    "QR_FACE": {
+      "name": "QR + rostro",
+      "description": "Escanea su QR y confirma que el rostro es de su dueño"
+    },
+    "API_FACE": {
+      "name": "Rostro (aplicación móvil)",
+      "description": "Verificación o identificación desde la aplicación móvil de la empresa, con su clave de la API"
+    }
+  },
+  "validator_modes": {
+    "QR_OR_FACE": {
+      "name": "QR o rostro",
+      "description": "El operador elige en cada identificación: credencial QR o reconocimiento facial."
+    },
+    "QR": {
+      "name": "Solo QR",
+      "description": "Escanea el código QR de la credencial del empleado (impresa o en su teléfono)."
+    },
+    "FACE": {
+      "name": "Solo rostro",
+      "description": "Reconoce al empleado por su rostro entre todo el personal, sin credencial."
+    },
+    "QR_AND_FACE": {
+      "name": "QR y rostro",
+      "description": "Máxima seguridad: escanea el QR y el rostro debe ser el de su dueño."
+    }
+  },
+  "face_statuses": {
+    "NOT_ENROLLED": {
+      "name": "Sin registrar",
+      "description": "El empleado aún no ha registrado su rostro. Se le pedirá en su próximo inicio de sesión.",
+      "employee_note": "Registrarás tu rostro al entrar"
+    },
+    "PENDING_REVIEW": {
+      "name": "En validación",
+      "description": "El empleado registró su rostro y espera tu validación.",
+      "employee_note": "Tu identidad está en validación"
+    },
+    "APPROVED": {
+      "name": "Validado",
+      "description": "Puede identificarse con su rostro o su código QR.",
+      "employee_note": "Identidad validada"
+    },
+    "REJECTED": {
+      "name": "Rechazado",
+      "description": "El empleado deberá registrar su rostro de nuevo.",
+      "employee_note": "Debes registrar tu rostro de nuevo"
+    }
+  },
+  "enrollment_statuses": {
+    "PENDING": {
+      "name": "Pendiente",
+      "description": "Registro facial en espera de validación."
+    },
+    "APPROVED": {
+      "name": "Aceptado",
+      "description": "La empresa aceptó el registro facial."
+    },
+    "REJECTED": {
+      "name": "Rechazado",
+      "description": "La empresa rechazó el registro facial."
+    }
+  },
+  "device_statuses": {
+    "PENDING": {
+      "name": "Por autorizar",
+      "description": "El validador inició sesión en este dispositivo y espera la autorización de la empresa."
+    },
+    "APPROVED": {
+      "name": "Autorizado",
+      "description": "La empresa autorizó el dispositivo: el validador puede operar en él."
+    },
+    "REJECTED": {
+      "name": "Rechazado",
+      "description": "La empresa no autorizó el dispositivo."
+    },
+    "REVOKED": {
+      "name": "Revocado",
+      "description": "La empresa retiró la autorización: sus sesiones se cerraron."
+    }
+  },
+  "api_scopes": {
+    "EMPLOYEES_READ": {
+      "name": "Empleados",
+      "description": "Consultar los empleados (GET /employees y /employees/{id}): datos laborales y de contacto, estado y registro facial. Nunca fotos ni datos biométricos."
+    },
+    "ATTENDANCE_READ": {
+      "name": "Identificaciones",
+      "description": "Consultar el historial de identificaciones (GET /attendance): quién, cuándo, con qué método, en qué validador y el resultado."
+    },
+    "VALIDATORS_READ": {
+      "name": "Validadores",
+      "description": "Consultar los validadores de identidad (GET /validators): nombre, modo, domicilio y estado."
+    },
+    "VERIFICATION": {
+      "name": "Verificación",
+      "description": "Verificar o identificar el rostro de un empleado desde la aplicación móvil de la empresa (POST /verification/*). Solo verifica: no consulta empleados ni identificaciones."
+    }
+  },
+  "api_key_statuses": {
+    "ACTIVE": {
+      "name": "Activa",
+      "description": "La clave da acceso a la API con sus permisos."
+    },
+    "EXPIRED": {
+      "name": "Caducada",
+      "description": "Llegó a su fecha de caducidad: ya no da acceso."
+    },
+    "REVOKED": {
+      "name": "Revocada",
+      "description": "La empresa la revocó (o la rotó): ya no da acceso."
+    }
+  },
+  "verification_reasons": {
+    "NO_MATCH": {
+      "name": "Rostro no coincide",
+      "message": "Rostro no reconocido"
+    },
+    "LIVENESS_FAILED": {
+      "name": "Prueba de vida no superada",
+      "message": "No se detectó el movimiento solicitado. Inténtalo de nuevo."
+    },
+    "LIVENESS_MISMATCH": {
+      "name": "Capturas de personas distintas",
+      "message": "Las capturas no corresponden a la misma persona. Inténtalo de nuevo."
+    },
+    "FACE_NOT_REGISTERED": {
+      "name": "Sin rostro validado",
+      "message": "El empleado aún no tiene su rostro validado por la empresa"
+    },
+    "EMPTY_GALLERY": {
+      "name": "Sin rostros registrados",
+      "message": "Aún no hay empleados con identidad validada en esta empresa"
+    },
+    "AMBIGUOUS_MATCH": {
+      "name": "Parecido a varias personas",
+      "message": "No se pudo distinguir a la persona con suficiente certeza. Inténtalo de nuevo con buena luz."
+    },
+    "INCONSISTENT_MATCH": {
+      "name": "Capturas no concluyentes",
+      "message": "Las capturas no coinciden con una sola persona. Inténtalo de nuevo."
+    },
+    "INVALID_FORMAT": {
+      "name": "QR inválido",
+      "message": "QR inválido"
+    },
+    "NOT_FOUND": {
+      "name": "QR no reconocido",
+      "message": "QR no reconocido"
+    },
+    "OTHER_COMPANY": {
+      "name": "QR no reconocido",
+      "message": "QR no reconocido"
+    },
+    "REVOKED": {
+      "name": "QR reemplazado",
+      "description": "El empleado generó otro código o la empresa invalidó este.",
+      "message": "Este código QR ya fue reemplazado. Pide al empleado que muestre el código actual de su teléfono."
+    },
+    "EXPIRED": {
+      "name": "QR caducado",
+      "description": "El código dinámico superó su vigencia (o el tiempo para confirmar el rostro).",
+      "message": "El código QR ha caducado. Pide al empleado que muestre el código actualizado de su teléfono."
+    },
+    "OTHER_EMPLOYEE": {
+      "name": "QR de otro empleado",
+      "message": "QR no reconocido"
+    },
+    "EMPLOYEE_INACTIVE": {
+      "name": "Empleado desactivado",
+      "message": "El empleado está desactivado"
+    },
+    "SPOOF_DETECTED": {
+      "name": "Posible foto o pantalla",
+      "description": "La detección de suplantación encontró una foto impresa, una pantalla o un vídeo.",
+      "message": "No se pudo confirmar que seas una persona frente a la cámara. Inténtalo de nuevo."
+    },
+    "IMAGE_NOT_FROM_CAMERA": {
+      "name": "Imagen que no es de la cámara",
+      "description": "La imagen trae metadatos de una cámara o de un editor: es un archivo subido, no una captura en vivo.",
+      "message": "La imagen no proviene de la cámara de la aplicación. Haz la captura en vivo frente a la cámara."
+    },
+    "STATIC_CAPTURE": {
+      "name": "Foto fija",
+      "description": "Las capturas del intento son idénticas: una persona real nunca da dos fotogramas iguales.",
+      "message": "Las capturas son idénticas, como una foto fija. Colócate frente a la cámara e inténtalo de nuevo."
+    },
+    "REPLAY_DETECTED": {
+      "name": "Captura reutilizada",
+      "description": "La captura ya se había recibido antes: es un reenvío de una captura guardada.",
+      "message": "Esta captura ya se usó. Haz una nueva frente a la cámara."
+    },
+    "CAPTURE_INCONSISTENT": {
+      "name": "Capturas de tomas distintas",
+      "description": "Las capturas no salen de la misma cámara o el rostro cambió de tamaño o de lugar de forma imposible.",
+      "message": "Las capturas no parecen de la misma toma. No cambies de cámara ni te alejes durante el proceso."
+    },
+    "VIRTUAL_CAMERA": {
+      "name": "Cámara virtual",
+      "description": "La cámara usada es un programa que puede transmitir un vídeo o una foto en lugar de la cámara real.",
+      "message": "No se permiten cámaras virtuales. Usa la cámara del dispositivo."
+    },
+    "CHALLENGE_TOO_FAST": {
+      "name": "Giro demasiado rápido",
+      "description": "La captura del giro llegó antes de lo que tarda una persona en girar la cabeza.",
+      "message": "El giro se capturó demasiado rápido. Sigue la indicación en pantalla e inténtalo de nuevo."
+    },
+    "ALREADY_USED": {
+      "name": "QR ya usado",
+      "description": "Cada código dinámico sirve una sola vez: este ya se había escaneado.",
+      "message": "Este código QR ya se usó. Pide al empleado que muestre el código nuevo de su teléfono."
+    },
+    "STATIC_QR": {
+      "name": "QR impreso (ya no válido)",
+      "description": "Código fijo de la versión anterior (credencial impresa o descargada).",
+      "message": "Los códigos QR impresos ya no son válidos. El empleado debe mostrar su código dinámico desde su teléfono."
+    },
+    "FLASH_MISMATCH": {
+      "name": "El rostro no reflejó el destello",
+      "description": "Intento sospechoso: los colores de la pantalla no se reflejaron en el rostro (vídeo inyectado o generado).",
+      "message": "No se pudo confirmar que estés frente a la pantalla. Mira de frente a la cámara e inténtalo de nuevo."
+    },
+    "FLASH_INCONCLUSIVE": {
+      "name": "Destello no medible",
+      "description": "Demasiada luz ambiente: los colores de la pantalla no se notaron en el rostro.",
+      "message": "No se detectó el reflejo de la pantalla en tu rostro. Evita la luz directa del sol, sube el brillo de la pantalla e inténtalo de nuevo."
+    },
+    "FLASH_FLAT": {
+      "name": "Destello plano",
+      "message": "No se pudo confirmar que estés frente a la pantalla. Mira de frente a la cámara e inténtalo de nuevo."
+    },
+    "REPLAY_PERCEPTUAL": {
+      "name": "Captura casi idéntica a otra",
+      "message": "Esta captura ya se usó. Haz una nueva frente a la cámara."
+    },
+    "KNOWN_ATTACK": {
+      "name": "Ataque conocido",
+      "message": "No se pudo confirmar tu identidad. Inténtalo de nuevo con buena luz, frente a la pantalla."
+    },
+    "RISK_DENIED": {
+      "name": "Riesgo crítico",
+      "message": "No se pudo confirmar tu identidad. Inténtalo de nuevo con buena luz, frente a la pantalla."
+    },
+    "STEP_UP_REQUIRED": {
+      "name": "Paso extra solicitado",
+      "message": "Por seguridad, completa un paso más de la prueba de vida"
+    }
+  },
+  "accessories": {
+    "GLASSES": {
+      "name": "Gafas",
+      "phrase": "las gafas"
+    },
+    "HEADWEAR": {
+      "name": "Gorra",
+      "phrase": "la gorra o sombrero"
+    },
+    "MASK": {
+      "name": "Mascarilla",
+      "phrase": "la mascarilla"
+    }
+  },
+  "liveness_actions": {
+    "TURN_LEFT": {
+      "name": "Girar a la izquierda",
+      "instruction": "Gira lentamente la cabeza hacia tu izquierda"
+    },
+    "TURN_RIGHT": {
+      "name": "Girar a la derecha",
+      "instruction": "Gira lentamente la cabeza hacia tu derecha"
+    },
+    "LOOK_UP": {
+      "name": "Mirar hacia arriba",
+      "instruction": "Levanta un poco la barbilla y mira hacia arriba"
+    },
+    "LOOK_DOWN": {
+      "name": "Mirar hacia abajo",
+      "instruction": "Baja un poco la barbilla y mira hacia abajo"
+    },
+    "MOVE_CLOSER": {
+      "name": "Acercarse a la cámara",
+      "instruction": "Acerca tu rostro a la cámara"
+    }
+  },
+  "countries": {
+    "MX": {
+      "name": "México"
+    },
+    "US": {
+      "name": "Estados Unidos"
+    },
+    "CA": {
+      "name": "Canadá"
+    },
+    "GT": {
+      "name": "Guatemala"
+    },
+    "SV": {
+      "name": "El Salvador"
+    },
+    "HN": {
+      "name": "Honduras"
+    },
+    "CR": {
+      "name": "Costa Rica"
+    },
+    "PA": {
+      "name": "Panamá"
+    },
+    "CO": {
+      "name": "Colombia"
+    },
+    "ES": {
+      "name": "España"
+    },
+    "AF": {
+      "name": "Afganistán"
+    },
+    "AL": {
+      "name": "Albania"
+    },
+    "DE": {
+      "name": "Alemania"
+    },
+    "AD": {
+      "name": "Andorra"
+    },
+    "AO": {
+      "name": "Angola"
+    },
+    "AI": {
+      "name": "Anguila"
+    },
+    "AG": {
+      "name": "Antigua y Barbuda"
+    },
+    "SA": {
+      "name": "Arabia Saudí"
+    },
+    "DZ": {
+      "name": "Argelia"
+    },
+    "AR": {
+      "name": "Argentina"
+    },
+    "AM": {
+      "name": "Armenia"
+    },
+    "AW": {
+      "name": "Aruba"
+    },
+    "AU": {
+      "name": "Australia"
+    },
+    "AT": {
+      "name": "Austria"
+    },
+    "AZ": {
+      "name": "Azerbaiyán"
+    },
+    "BS": {
+      "name": "Bahamas"
+    },
+    "BD": {
+      "name": "Bangladés"
+    },
+    "BB": {
+      "name": "Barbados"
+    },
+    "BH": {
+      "name": "Baréin"
+    },
+    "BE": {
+      "name": "Bélgica"
+    },
+    "BZ": {
+      "name": "Belice"
+    },
+    "BJ": {
+      "name": "Benín"
+    },
+    "BM": {
+      "name": "Bermudas"
+    },
+    "BY": {
+      "name": "Bielorrusia"
+    },
+    "BO": {
+      "name": "Bolivia"
+    },
+    "BA": {
+      "name": "Bosnia y Herzegovina"
+    },
+    "BW": {
+      "name": "Botsuana"
+    },
+    "BR": {
+      "name": "Brasil"
+    },
+    "BN": {
+      "name": "Brunéi"
+    },
+    "BG": {
+      "name": "Bulgaria"
+    },
+    "BF": {
+      "name": "Burkina Faso"
+    },
+    "BI": {
+      "name": "Burundi"
+    },
+    "BT": {
+      "name": "Bután"
+    },
+    "CV": {
+      "name": "Cabo Verde"
+    },
+    "KH": {
+      "name": "Camboya"
+    },
+    "CM": {
+      "name": "Camerún"
+    },
+    "BQ": {
+      "name": "Caribe neerlandés"
+    },
+    "QA": {
+      "name": "Catar"
+    },
+    "TD": {
+      "name": "Chad"
+    },
+    "CZ": {
+      "name": "Chequia"
+    },
+    "CL": {
+      "name": "Chile"
+    },
+    "CN": {
+      "name": "China"
+    },
+    "CY": {
+      "name": "Chipre"
+    },
+    "VA": {
+      "name": "Ciudad del Vaticano"
+    },
+    "KM": {
+      "name": "Comoras"
+    },
+    "CG": {
+      "name": "Congo"
+    },
+    "KP": {
+      "name": "Corea del Norte"
+    },
+    "KR": {
+      "name": "Corea del Sur"
+    },
+    "CI": {
+      "name": "Côte d’Ivoire"
+    },
+    "HR": {
+      "name": "Croacia"
+    },
+    "CU": {
+      "name": "Cuba"
+    },
+    "CW": {
+      "name": "Curazao"
+    },
+    "DK": {
+      "name": "Dinamarca"
+    },
+    "DM": {
+      "name": "Dominica"
+    },
+    "EC": {
+      "name": "Ecuador"
+    },
+    "EG": {
+      "name": "Egipto"
+    },
+    "AE": {
+      "name": "Emiratos Árabes Unidos"
+    },
+    "ER": {
+      "name": "Eritrea"
+    },
+    "SK": {
+      "name": "Eslovaquia"
+    },
+    "SI": {
+      "name": "Eslovenia"
+    },
+    "EE": {
+      "name": "Estonia"
+    },
+    "SZ": {
+      "name": "Esuatini"
+    },
+    "ET": {
+      "name": "Etiopía"
+    },
+    "PH": {
+      "name": "Filipinas"
+    },
+    "FI": {
+      "name": "Finlandia"
+    },
+    "FJ": {
+      "name": "Fiyi"
+    },
+    "FR": {
+      "name": "Francia"
+    },
+    "GA": {
+      "name": "Gabón"
+    },
+    "GM": {
+      "name": "Gambia"
+    },
+    "GE": {
+      "name": "Georgia"
+    },
+    "GH": {
+      "name": "Ghana"
+    },
+    "GI": {
+      "name": "Gibraltar"
+    },
+    "GD": {
+      "name": "Granada"
+    },
+    "GR": {
+      "name": "Grecia"
+    },
+    "GL": {
+      "name": "Groenlandia"
+    },
+    "GP": {
+      "name": "Guadalupe"
+    },
+    "GU": {
+      "name": "Guam"
+    },
+    "GF": {
+      "name": "Guayana Francesa"
+    },
+    "GG": {
+      "name": "Guernesey"
+    },
+    "GN": {
+      "name": "Guinea"
+    },
+    "GQ": {
+      "name": "Guinea Ecuatorial"
+    },
+    "GW": {
+      "name": "Guinea-Bisáu"
+    },
+    "GY": {
+      "name": "Guyana"
+    },
+    "HT": {
+      "name": "Haití"
+    },
+    "HU": {
+      "name": "Hungría"
+    },
+    "IN": {
+      "name": "India"
+    },
+    "ID": {
+      "name": "Indonesia"
+    },
+    "IQ": {
+      "name": "Irak"
+    },
+    "IR": {
+      "name": "Irán"
+    },
+    "IE": {
+      "name": "Irlanda"
+    },
+    "AC": {
+      "name": "Isla de la Ascensión"
+    },
+    "IM": {
+      "name": "Isla de Man"
+    },
+    "CX": {
+      "name": "Isla de Navidad"
+    },
+    "NF": {
+      "name": "Isla Norfolk"
+    },
+    "IS": {
+      "name": "Islandia"
+    },
+    "AX": {
+      "name": "Islas Aland"
+    },
+    "KY": {
+      "name": "Islas Caimán"
+    },
+    "CC": {
+      "name": "Islas Cocos"
+    },
+    "CK": {
+      "name": "Islas Cook"
+    },
+    "FO": {
+      "name": "Islas Feroe"
+    },
+    "FK": {
+      "name": "Islas Malvinas"
+    },
+    "MP": {
+      "name": "Islas Marianas del Norte"
+    },
+    "MH": {
+      "name": "Islas Marshall"
+    },
+    "SB": {
+      "name": "Islas Salomón"
+    },
+    "TC": {
+      "name": "Islas Turcas y Caicos"
+    },
+    "VG": {
+      "name": "Islas Vírgenes Británicas"
+    },
+    "VI": {
+      "name": "Islas Vírgenes de EE. UU."
+    },
+    "IL": {
+      "name": "Israel"
+    },
+    "IT": {
+      "name": "Italia"
+    },
+    "JM": {
+      "name": "Jamaica"
+    },
+    "JP": {
+      "name": "Japón"
+    },
+    "JE": {
+      "name": "Jersey"
+    },
+    "JO": {
+      "name": "Jordania"
+    },
+    "KZ": {
+      "name": "Kazajistán"
+    },
+    "KE": {
+      "name": "Kenia"
+    },
+    "KG": {
+      "name": "Kirguistán"
+    },
+    "KI": {
+      "name": "Kiribati"
+    },
+    "XK": {
+      "name": "Kosovo"
+    },
+    "KW": {
+      "name": "Kuwait"
+    },
+    "LA": {
+      "name": "Laos"
+    },
+    "LS": {
+      "name": "Lesoto"
+    },
+    "LV": {
+      "name": "Letonia"
+    },
+    "LB": {
+      "name": "Líbano"
+    },
+    "LR": {
+      "name": "Liberia"
+    },
+    "LY": {
+      "name": "Libia"
+    },
+    "LI": {
+      "name": "Liechtenstein"
+    },
+    "LT": {
+      "name": "Lituania"
+    },
+    "LU": {
+      "name": "Luxemburgo"
+    },
+    "MK": {
+      "name": "Macedonia del Norte"
+    },
+    "MG": {
+      "name": "Madagascar"
+    },
+    "MY": {
+      "name": "Malasia"
+    },
+    "MW": {
+      "name": "Malaui"
+    },
+    "MV": {
+      "name": "Maldivas"
+    },
+    "ML": {
+      "name": "Mali"
+    },
+    "MT": {
+      "name": "Malta"
+    },
+    "MA": {
+      "name": "Marruecos"
+    },
+    "MQ": {
+      "name": "Martinica"
+    },
+    "MU": {
+      "name": "Mauricio"
+    },
+    "MR": {
+      "name": "Mauritania"
+    },
+    "YT": {
+      "name": "Mayotte"
+    },
+    "FM": {
+      "name": "Micronesia"
+    },
+    "MD": {
+      "name": "Moldavia"
+    },
+    "MC": {
+      "name": "Mónaco"
+    },
+    "MN": {
+      "name": "Mongolia"
+    },
+    "ME": {
+      "name": "Montenegro"
+    },
+    "MS": {
+      "name": "Montserrat"
+    },
+    "MZ": {
+      "name": "Mozambique"
+    },
+    "MM": {
+      "name": "Myanmar (Birmania)"
+    },
+    "NA": {
+      "name": "Namibia"
+    },
+    "NR": {
+      "name": "Nauru"
+    },
+    "NP": {
+      "name": "Nepal"
+    },
+    "NI": {
+      "name": "Nicaragua"
+    },
+    "NE": {
+      "name": "Níger"
+    },
+    "NG": {
+      "name": "Nigeria"
+    },
+    "NU": {
+      "name": "Niue"
+    },
+    "NO": {
+      "name": "Noruega"
+    },
+    "NC": {
+      "name": "Nueva Caledonia"
+    },
+    "NZ": {
+      "name": "Nueva Zelanda"
+    },
+    "OM": {
+      "name": "Omán"
+    },
+    "NL": {
+      "name": "Países Bajos"
+    },
+    "PK": {
+      "name": "Pakistán"
+    },
+    "PW": {
+      "name": "Palaos"
+    },
+    "PG": {
+      "name": "Papúa Nueva Guinea"
+    },
+    "PY": {
+      "name": "Paraguay"
+    },
+    "PE": {
+      "name": "Perú"
+    },
+    "PF": {
+      "name": "Polinesia Francesa"
+    },
+    "PL": {
+      "name": "Polonia"
+    },
+    "PT": {
+      "name": "Portugal"
+    },
+    "PR": {
+      "name": "Puerto Rico"
+    },
+    "HK": {
+      "name": "RAE de Hong Kong (China)"
+    },
+    "MO": {
+      "name": "RAE de Macao (China)"
+    },
+    "GB": {
+      "name": "Reino Unido"
+    },
+    "CF": {
+      "name": "República Centroafricana"
+    },
+    "CD": {
+      "name": "República Democrática del Congo"
+    },
+    "DO": {
+      "name": "República Dominicana"
+    },
+    "RE": {
+      "name": "Reunión"
+    },
+    "RW": {
+      "name": "Ruanda"
+    },
+    "RO": {
+      "name": "Rumanía"
+    },
+    "RU": {
+      "name": "Rusia"
+    },
+    "EH": {
+      "name": "Sáhara Occidental"
+    },
+    "WS": {
+      "name": "Samoa"
+    },
+    "AS": {
+      "name": "Samoa Americana"
+    },
+    "BL": {
+      "name": "San Bartolomé"
+    },
+    "KN": {
+      "name": "San Cristóbal y Nieves"
+    },
+    "SM": {
+      "name": "San Marino"
+    },
+    "MF": {
+      "name": "San Martín"
+    },
+    "PM": {
+      "name": "San Pedro y Miquelón"
+    },
+    "VC": {
+      "name": "San Vicente y las Granadinas"
+    },
+    "SH": {
+      "name": "Santa Elena"
+    },
+    "LC": {
+      "name": "Santa Lucía"
+    },
+    "ST": {
+      "name": "Santo Tomé y Príncipe"
+    },
+    "SN": {
+      "name": "Senegal"
+    },
+    "RS": {
+      "name": "Serbia"
+    },
+    "SC": {
+      "name": "Seychelles"
+    },
+    "SL": {
+      "name": "Sierra Leona"
+    },
+    "SG": {
+      "name": "Singapur"
+    },
+    "SX": {
+      "name": "Sint Maarten"
+    },
+    "SY": {
+      "name": "Siria"
+    },
+    "SO": {
+      "name": "Somalia"
+    },
+    "LK": {
+      "name": "Sri Lanka"
+    },
+    "ZA": {
+      "name": "Sudáfrica"
+    },
+    "SD": {
+      "name": "Sudán"
+    },
+    "SS": {
+      "name": "Sudán del Sur"
+    },
+    "SE": {
+      "name": "Suecia"
+    },
+    "CH": {
+      "name": "Suiza"
+    },
+    "SR": {
+      "name": "Surinam"
+    },
+    "SJ": {
+      "name": "Svalbard y Jan Mayen"
+    },
+    "TH": {
+      "name": "Tailandia"
+    },
+    "TW": {
+      "name": "Taiwán"
+    },
+    "TZ": {
+      "name": "Tanzania"
+    },
+    "TJ": {
+      "name": "Tayikistán"
+    },
+    "IO": {
+      "name": "Territorio Británico del Océano Índico"
+    },
+    "PS": {
+      "name": "Territorios Palestinos"
+    },
+    "TL": {
+      "name": "Timor-Leste"
+    },
+    "TG": {
+      "name": "Togo"
+    },
+    "TK": {
+      "name": "Tokelau"
+    },
+    "TO": {
+      "name": "Tonga"
+    },
+    "TT": {
+      "name": "Trinidad y Tobago"
+    },
+    "TA": {
+      "name": "Tristán de Acuña"
+    },
+    "TN": {
+      "name": "Túnez"
+    },
+    "TM": {
+      "name": "Turkmenistán"
+    },
+    "TR": {
+      "name": "Turquía"
+    },
+    "TV": {
+      "name": "Tuvalu"
+    },
+    "UA": {
+      "name": "Ucrania"
+    },
+    "UG": {
+      "name": "Uganda"
+    },
+    "UY": {
+      "name": "Uruguay"
+    },
+    "UZ": {
+      "name": "Uzbekistán"
+    },
+    "VU": {
+      "name": "Vanuatu"
+    },
+    "VE": {
+      "name": "Venezuela"
+    },
+    "VN": {
+      "name": "Vietnam"
+    },
+    "WF": {
+      "name": "Wallis y Futuna"
+    },
+    "YE": {
+      "name": "Yemen"
+    },
+    "DJ": {
+      "name": "Yibuti"
+    },
+    "ZM": {
+      "name": "Zambia"
+    },
+    "ZW": {
+      "name": "Zimbabue"
+    }
+  },
+  "tax_id_types": {
+    "MX_RFC": {
+      "name": "Registro Federal de Contribuyentes",
+      "description": "12 caracteres (persona jurídica) o 13 (persona física)",
+      "short_name": "RFC"
+    },
+    "US_EIN": {
+      "name": "Número de identificación del empleador",
+      "description": "9 dígitos",
+      "short_name": "EIN"
+    },
+    "CA_BN": {
+      "name": "Número de empresa",
+      "description": "9 dígitos, con o sin la cuenta de programa (p. ej. RT0001)",
+      "short_name": "BN"
+    },
+    "ES_NIF": {
+      "name": "Número de identificación fiscal (antes CIF)",
+      "description": "9 caracteres: letras y dígitos",
+      "short_name": "NIF"
+    },
+    "CO_NIT": {
+      "name": "Número de identificación tributaria",
+      "description": "De 7 a 16 dígitos, con el dígito de verificación al final",
+      "short_name": "NIT"
+    },
+    "AR_CUIT": {
+      "name": "Clave Única de Identificación Tributaria",
+      "description": "11 dígitos, con el dígito verificador al final",
+      "short_name": "CUIT"
+    },
+    "CL_RUT": {
+      "name": "Rol Único Tributario",
+      "description": "De 8 a 9 caracteres: el número y su dígito verificador (0 a 9 o K)",
+      "short_name": "RUT"
+    },
+    "PE_RUC": {
+      "name": "Registro Único de Contribuyentes",
+      "description": "11 dígitos; empieza con 10, 15, 16, 17 o 20",
+      "short_name": "RUC"
+    },
+    "BR_CNPJ": {
+      "name": "Registro Nacional de Personas Jurídicas",
+      "description": "14 caracteres: 12 letras o dígitos y 2 dígitos verificadores",
+      "short_name": "CNPJ"
+    },
+    "GB_VAT": {
+      "name": "Número de registro del IVA",
+      "description": "GB y 9 o 12 dígitos",
+      "short_name": "VAT"
+    },
+    "GB_CRN": {
+      "name": "Número de registro mercantil",
+      "description": "8 caracteres: 8 dígitos, o 2 letras y 6 dígitos",
+      "short_name": "CRN"
+    },
+    "DE_VAT": {
+      "name": "Número de identificación a efectos del IVA",
+      "description": "DE y 9 dígitos",
+      "short_name": "USt-IdNr."
+    },
+    "FR_SIREN": {
+      "name": "Número SIREN de la empresa",
+      "description": "9 dígitos",
+      "short_name": "SIREN"
+    },
+    "FR_SIRET": {
+      "name": "Número SIRET del establecimiento",
+      "description": "14 dígitos: el SIREN y 5 del establecimiento",
+      "short_name": "SIRET"
+    },
+    "OTHER": {
+      "name": "Otro identificador fiscal",
+      "description": "De 3 a 30 letras o dígitos",
+      "short_name": "ID fiscal"
+    }
+  },
+  "enrollment_rejection_reasons": {
+    "PERSON_MISMATCH": {
+      "name": "La persona de la foto no es el empleado"
+    },
+    "UNCLEAR_PHOTO": {
+      "name": "La fotografía no es clara"
+    },
+    "SPOOFING": {
+      "name": "Suplantación detectada (foto de una foto o de una pantalla)"
+    },
+    "WRONG_DATA": {
+      "name": "Datos del empleado incorrectos"
+    }
+  },
+  "reverification_reasons": {
+    "PERIODIC": {
+      "name": "Actualización periódica de identidad"
+    },
+    "APPEARANCE_CHANGE": {
+      "name": "Cambio importante de apariencia"
+    },
+    "FREQUENT_FAILURES": {
+      "name": "Fallos frecuentes al identificarse"
+    },
+    "SUSPECTED_SPOOFING": {
+      "name": "Sospecha de suplantación de identidad"
+    }
+  },
+  "confidence_levels": {
+    "80": {
+      "name": "Flexible"
+    },
+    "81": {
+      "name": "Flexible"
+    },
+    "82": {
+      "name": "Flexible"
+    },
+    "83": {
+      "name": "Flexible"
+    },
+    "84": {
+      "name": "Flexible"
+    },
+    "85": {
+      "name": "Flexible"
+    },
+    "86": {
+      "name": "Flexible"
+    },
+    "87": {
+      "name": "Flexible"
+    },
+    "88": {
+      "name": "Flexible"
+    },
+    "89": {
+      "name": "Flexible"
+    },
+    "90": {
+      "name": "Equilibrado"
+    },
+    "91": {
+      "name": "Equilibrado"
+    },
+    "92": {
+      "name": "Equilibrado"
+    },
+    "93": {
+      "name": "Equilibrado"
+    },
+    "94": {
+      "name": "Equilibrado"
+    },
+    "95": {
+      "name": "Alto"
+    },
+    "96": {
+      "name": "Alto"
+    },
+    "97": {
+      "name": "Alto"
+    },
+    "98": {
+      "name": "Alto"
+    },
+    "99": {
+      "name": "Estricto"
+    },
+    "100": {
+      "name": "Máximo"
+    }
+  },
+  "antispoof_levels": {
+    "STANDARD": {
+      "name": "Estándar",
+      "description": "Rechaza cuando la mayoría de las capturas parecen una foto, una pantalla o un vídeo. Recomendado para casi todas las cámaras."
+    },
+    "HIGH": {
+      "name": "Alto",
+      "description": "Más sensible: rechaza ante indicios moderados de foto o pantalla. Con poca luz o cámaras de baja calidad puede pedir repetir la captura."
+    },
+    "MAXIMUM": {
+      "name": "Máximo",
+      "description": "Rechaza si una sola captura parece una foto o una pantalla. Exige buena luz y una cámara de calidad."
+    }
+  },
+  "flash_modes": {
+    "OFF": {
+      "name": "Apagado",
+      "description": "La pantalla no destella colores durante la prueba de vida."
+    },
+    "OBSERVE": {
+      "name": "Solo medir",
+      "description": "La pantalla destella colores y se mide cómo los refleja el rostro, sin bloquear a nadie. Sirve para calibrar con capturas reales antes de exigirlo."
+    },
+    "ENFORCE": {
+      "name": "Obligatorio",
+      "description": "El rostro debe reflejar los colores de la pantalla: un vídeo inyectado o generado no los refleja. Con luz del sol directa puede pedir repetir. Actívalo después de calibrar."
+    }
+  },
+  "session_revocation_reasons": {
+    "LOGOUT": {
+      "name": "Cierre de sesión",
+      "description": "La persona cerró su sesión.",
+      "message": "Tu sesión ya no es válida. Inicia sesión de nuevo."
+    },
+    "LOGOUT_ALL": {
+      "name": "Cierre en todos los dispositivos",
+      "description": "La persona cerró sesión en todos sus dispositivos.",
+      "message": "Tu sesión ya no es válida. Inicia sesión de nuevo."
+    },
+    "REVOKED_BY_USER": {
+      "name": "Cerrada desde otra sesión",
+      "description": "La persona cerró esta sesión desde su lista de sesiones activas.",
+      "message": "Tu sesión ya no es válida. Inicia sesión de nuevo."
+    },
+    "PASSWORD_CHANGED": {
+      "name": "Cambio de contraseña",
+      "description": "La contraseña cambió: se cierran las demás sesiones.",
+      "message": "Tu sesión ya no es válida. Inicia sesión de nuevo."
+    },
+    "PASSWORD_RESET": {
+      "name": "Contraseña restablecida",
+      "description": "Un administrador restableció la contraseña.",
+      "message": "Tu sesión ya no es válida. Inicia sesión de nuevo."
+    },
+    "ACCOUNT_DEACTIVATED": {
+      "name": "Cuenta desactivada",
+      "description": "La cuenta (o el empleo en esa empresa) se desactivó.",
+      "message": "Tu sesión ya no es válida. Inicia sesión de nuevo."
+    },
+    "COMPANY_DEACTIVATED": {
+      "name": "Empresa desactivada",
+      "description": "La empresa se desactivó: se cierran las sesiones de su personal.",
+      "message": "Tu sesión ya no es válida. Inicia sesión de nuevo."
+    },
+    "EMPLOYEE_REMOVED": {
+      "name": "Baja de la empresa",
+      "description": "La persona dejó de ser empleada de esa empresa.",
+      "message": "Tu sesión ya no es válida. Inicia sesión de nuevo."
+    },
+    "SIGNED_IN_ELSEWHERE": {
+      "name": "Sesión en otro dispositivo",
+      "description": "Un inicio de sesión nuevo desplazó a este (una sola sesión activa por persona).",
+      "message": "Se inició sesión con tu cuenta en otro dispositivo. Solo puedes tener una sesión activa a la vez."
+    },
+    "REFRESH_REUSE_DETECTED": {
+      "name": "Posible robo de sesión",
+      "description": "Se presentó una credencial de renovación ya usada: se asume robo y se cierra la sesión.",
+      "message": "Tu sesión ya no es válida. Inicia sesión de nuevo."
+    },
+    "LOCATION_POLICY_CHANGED": {
+      "name": "Cambio de ubicación permitida",
+      "description": "La empresa exigió o cambió la ubicación desde la que opera el validador.",
+      "message": "La empresa cambió la ubicación desde la que puedes operar. Inicia sesión de nuevo en ese lugar."
+    },
+    "DEVICE_REVOKED": {
+      "name": "Dispositivo revocado",
+      "description": "La empresa retiró la autorización del dispositivo del validador.",
+      "message": "La empresa retiró la autorización de este dispositivo. Pide que lo autoricen de nuevo."
+    },
+    "COMPANY_SUSPENDED": {
+      "name": "Empresa suspendida",
+      "description": "El administrador de la plataforma suspendió a la empresa (falta de pago o decisión manual).",
+      "message": "Tu empresa está suspendida. Contacta con el administrador de la plataforma para reactivarla."
+    },
+    "ACCOUNT_DELETED": {
+      "name": "Cuenta eliminada",
+      "description": "La cuenta o su empresa se eliminó: se cierran sus sesiones.",
+      "message": "Tu cuenta se eliminó. Contacta con tu empresa si crees que es un error."
+    }
+  },
+  "face_errors": {
+    "EMPTY_IMAGE": {
+      "name": "Sin imagen",
+      "message": "No se recibió ninguna imagen"
+    },
+    "INVALID_IMAGE_FORMAT": {
+      "name": "Formato no permitido",
+      "message": "Formato de imagen no permitido (usa JPEG, PNG o WEBP)"
+    },
+    "IMAGE_TOO_SMALL": {
+      "name": "Imagen muy pequeña",
+      "message": "La imagen debe medir al menos {min_dimension}px por lado"
+    },
+    "IMAGE_TOO_LARGE": {
+      "name": "Imagen muy grande",
+      "message": "La imagen excede {max_dimension}px en alguno de sus lados"
+    },
+    "INVALID_IMAGE": {
+      "name": "Imagen no válida",
+      "message": "No se pudo procesar la imagen. Haz otra foto."
+    },
+    "NO_FACE": {
+      "name": "Sin rostro",
+      "message": "No se detectó ningún rostro en la imagen"
+    },
+    "MULTIPLE_FACES": {
+      "name": "Varias personas",
+      "message": "Se detectó más de una persona. Solo debe aparecer un rostro."
+    },
+    "LOW_DETECTION_SCORE": {
+      "name": "Rostro poco claro",
+      "message": "El rostro no se distingue con claridad. Mira de frente a la cámara."
+    },
+    "FACE_TOO_SMALL": {
+      "name": "Rostro lejano",
+      "message": "El rostro está muy lejos. Acércate a la cámara."
+    },
+    "FACE_CUT_OFF": {
+      "name": "Rostro incompleto",
+      "message": "El rostro está incompleto. Céntralo en la cámara."
+    },
+    "POSE_NOT_FRONTAL": {
+      "name": "Cabeza girada",
+      "message": "Mira de frente a la cámara, sin girar la cabeza"
+    },
+    "POSE_TILTED": {
+      "name": "Cabeza inclinada",
+      "message": "Mantén la cabeza derecha, sin inclinarla"
+    },
+    "POSE_PITCH": {
+      "name": "Cabeza arriba o abajo",
+      "message": "Mira directamente a la cámara, sin subir ni bajar la cabeza"
+    },
+    "TOO_DARK": {
+      "name": "Muy oscura",
+      "message": "La imagen está muy oscura. Busca mejor iluminación."
+    },
+    "TOO_BRIGHT": {
+      "name": "Sobreexpuesta",
+      "message": "La imagen está sobreexpuesta. Evita la luz directa."
+    },
+    "TOO_BLURRY": {
+      "name": "Borrosa",
+      "message": "La imagen está borrosa. Mantente quieto."
+    },
+    "ACCESSORIES_DETECTED": {
+      "name": "Accesorios",
+      "description": "{accessories} se arma con las frases del catálogo de accesorios.",
+      "message": "Quítate {accessories} para continuar"
+    },
+    "SPOOF_DETECTED": {
+      "name": "Posible suplantación",
+      "message": "No se pudo confirmar que seas una persona frente a la cámara. Evita reflejos y pantallas, y usa tu rostro real (no una foto o vídeo)."
+    },
+    "ENROLL_INCONSISTENT": {
+      "name": "Capturas inconsistentes",
+      "message": "Las fotos no coinciden entre sí. Repite la captura con una sola persona, de frente y con buena luz."
+    },
+    "LIVENESS_REQUIRED": {
+      "name": "Falta la prueba de vida",
+      "message": "Completa la prueba de vida para continuar"
+    },
+    "CHALLENGE_INVALID": {
+      "name": "Reto caducado",
+      "message": "El reto de verificación ha caducado o no es válido. Inténtalo de nuevo."
+    },
+    "LIVENESS_FAILED": {
+      "name": "Prueba de vida no superada",
+      "description": "En el registro facial (en la identificación se usan los motivos de verificación).",
+      "message": "No se detectó el movimiento solicitado. Inténtalo de nuevo."
+    },
+    "LIVENESS_MISMATCH": {
+      "name": "Otra persona en el reto",
+      "description": "En el registro facial (en la identificación se usan los motivos de verificación).",
+      "message": "Las capturas no corresponden a la misma persona. Inténtalo de nuevo."
+    },
+    "FACE_NOT_REGISTERED": {
+      "name": "Sin registro facial",
+      "description": "El empleado intenta verificarse sin tener su rostro registrado.",
+      "message": "No tienes registro facial. Contacta con tu empresa."
+    },
+    "FACE_SERVICE_BUSY": {
+      "name": "Motor facial ocupado",
+      "message": "Hay muchas solicitudes de reconocimiento en este momento. Inténtalo de nuevo en unos segundos."
+    },
+    "FACE_SERVICE_UNAVAILABLE": {
+      "name": "Motor facial no disponible",
+      "message": "El reconocimiento facial no está disponible temporalmente. Puedes identificarte con QR."
+    },
+    "FACE_PROCESSING_ERROR": {
+      "name": "Error del motor facial",
+      "message": "No se pudo procesar el rostro en este momento. Inténtalo de nuevo."
+    },
+    "IMAGE_NOT_FROM_CAMERA": {
+      "name": "Imagen que no es de la cámara",
+      "description": "La imagen trae metadatos de una cámara o de un editor: es un archivo subido, no una captura en vivo.",
+      "message": "La imagen no proviene de la cámara de la aplicación. Haz la captura en vivo frente a la cámara."
+    },
+    "STATIC_CAPTURE": {
+      "name": "Foto fija",
+      "description": "Las capturas del intento son idénticas: una persona real nunca da dos fotogramas iguales.",
+      "message": "Las capturas son idénticas, como una foto fija. Colócate frente a la cámara e inténtalo de nuevo."
+    },
+    "REPLAY_DETECTED": {
+      "name": "Captura reutilizada",
+      "description": "La captura ya se había recibido antes: es un reenvío de una captura guardada.",
+      "message": "Esta captura ya se usó. Haz una nueva frente a la cámara."
+    },
+    "CAPTURE_INCONSISTENT": {
+      "name": "Capturas de tomas distintas",
+      "description": "Las capturas no salen de la misma cámara o el rostro cambió de tamaño o de lugar de forma imposible.",
+      "message": "Las capturas no parecen de la misma toma. No cambies de cámara ni te alejes durante el proceso."
+    },
+    "VIRTUAL_CAMERA": {
+      "name": "Cámara virtual",
+      "description": "La cámara usada es un programa que puede transmitir un vídeo o una foto en lugar de la cámara real.",
+      "message": "No se permiten cámaras virtuales. Usa la cámara del dispositivo."
+    },
+    "CHALLENGE_TOO_FAST": {
+      "name": "Giro demasiado rápido",
+      "description": "La captura del giro llegó antes de lo que tarda una persona en girar la cabeza.",
+      "message": "El giro se capturó demasiado rápido. Sigue la indicación en pantalla e inténtalo de nuevo."
+    },
+    "FACE_ALREADY_REGISTERED": {
+      "name": "Rostro ya registrado",
+      "description": "El rostro ya está registrado como otro empleado de la empresa.",
+      "message": "Este rostro ya está registrado como otro empleado de la empresa"
+    },
+    "FACE_LOCKED": {
+      "name": "Bloqueo por intentos",
+      "description": "Demasiados intentos fallidos o sospechosos seguidos.",
+      "message": "Demasiados intentos fallidos. Por seguridad, espera {minutes} min e inténtalo de nuevo."
+    },
+    "LOW_QUALITY": {
+      "name": "Calidad insuficiente",
+      "description": "La captura no alcanza la calidad mínima de la política (detección, nitidez y luz).",
+      "message": "La foto no tiene la calidad suficiente. Busca buena luz, limpia la cámara y mantente quieto."
+    },
+    "FLASH_MISMATCH": {
+      "name": "El rostro no reflejó el destello",
+      "description": "Los colores que pintó la pantalla no se reflejaron en el rostro: la imagen no viene de una persona frente a la pantalla (vídeo inyectado o generado).",
+      "message": "No se pudo confirmar que estés frente a la pantalla. Mira de frente a la cámara, sin filtros ni otra cámara, e inténtalo de nuevo."
+    },
+    "FLASH_FLAT": {
+      "name": "Destello plano",
+      "message": "No se pudo confirmar que estés frente a la pantalla. Mira de frente a la cámara, sin filtros ni otra cámara, e inténtalo de nuevo."
+    },
+    "REPLAY_PERCEPTUAL": {
+      "name": "Captura casi idéntica a otra",
+      "message": "Esta captura ya se usó. Haz una nueva frente a la cámara."
+    },
+    "KNOWN_ATTACK": {
+      "name": "Ataque conocido",
+      "message": "No se pudo confirmar tu identidad. Inténtalo de nuevo con buena luz, frente a la pantalla."
+    },
+    "RISK_DENIED": {
+      "name": "Riesgo crítico",
+      "message": "No se pudo confirmar tu identidad. Inténtalo de nuevo con buena luz, frente a la pantalla."
+    },
+    "STEP_UP_REQUIRED": {
+      "name": "Paso extra",
+      "message": "Por seguridad, completa un paso más: sigue las indicaciones en pantalla"
+    }
+  },
+  "enrollment_flags": {
+    "GLASSES": {
+      "name": "Posibles gafas",
+      "description": "El sistema detectó posibles gafas y el empleado indicó que no las usa."
+    },
+    "HEADWEAR": {
+      "name": "Posible gorra o sombrero",
+      "description": "El sistema detectó una posible gorra o sombrero y el empleado indicó que no la usa."
+    },
+    "MASK": {
+      "name": "Posible mascarilla",
+      "description": "El sistema detectó una posible mascarilla y el empleado indicó que no la usa."
+    },
+    "SPOOF": {
+      "name": "Posible foto o pantalla",
+      "description": "La detección de suplantación sugiere que las capturas podrían ser de una foto o una pantalla."
+    },
+    "DUPLICATE_FACE": {
+      "name": "Rostro ya registrado en otro empleado",
+      "description": "El rostro se parece al registro aprobado de otro empleado de la empresa: confirma que no sea la misma persona con dos cuentas."
+    },
+    "POSSIBLE_DUPLICATE": {
+      "name": "Parecido con otro empleado",
+      "description": "El rostro se parece, con el nivel de sospecha de la empresa, al de otro empleado aprobado: revisa a los más parecidos antes de aprobar."
+    },
+    "VOICE_RETRIES": {
+      "name": "Respuestas repetidas en el video",
+      "description": "En la verificación por voz alguna pregunta necesitó más de un intento: revisa el video antes de aceptar."
+    },
+    "VIDEO_FACE_MISMATCH": {
+      "name": "Rostro distinto en algún video",
+      "description": "En algún intento de la verificación por voz el rostro del video no coincidió con las fotos del registro: revisa el video antes de aceptar."
+    }
+  },
+  "error_statuses": {
+    "PENDING": {
+      "name": "Pendiente",
+      "description": "Nadie lo ha tomado todavía (o volvió a ocurrir después de solucionarse)."
+    },
+    "IN_PROGRESS": {
+      "name": "En proceso",
+      "description": "Alguien está trabajando en la causa."
+    },
+    "IN_REVIEW": {
+      "name": "En revisión",
+      "description": "La corrección está hecha y se está verificando."
+    },
+    "RESOLVED": {
+      "name": "Solucionado",
+      "description": "Corregido. Si vuelve a ocurrir, se reabre solo como pendiente."
+    }
+  },
+  "error_severities": {
+    "CRITICAL": {
+      "name": "Crítico",
+      "description": "Fallo no controlado (500) o en un proceso en segundo plano."
+    },
+    "ERROR": {
+      "name": "Error",
+      "description": "Servicio no disponible u ocupado (5xx controlado)."
+    },
+    "WARNING": {
+      "name": "Advertencia",
+      "description": "Solo historial: solicitudes rechazadas (4xx) registradas antes. Ya no se registran."
+    }
+  },
+  "work_modes": {
+    "ON_SITE": {
+      "name": "En sitio",
+      "description": "Dentro de la geovalla de uno de sus sitios de trabajo."
+    },
+    "REMOTE": {
+      "name": "Remoto",
+      "description": "Desde cualquier lugar, en un día que la empresa le permite trabajar en remoto."
+    },
+    "VALIDATOR": {
+      "name": "Validador",
+      "description": "Al identificarse en la tableta de un validador (cuenta como en sitio)."
+    },
+    "COMPANY": {
+      "name": "Registrado por la empresa",
+      "description": "La empresa lo registró o lo corrigió (sin rostro ni ubicación), con su motivo."
+    }
+  },
+  "attendance_actions": {
+    "CHECK_IN": {
+      "name": "Entrada",
+      "description": "Inicio de la jornada del turno."
+    },
+    "BREAK_START": {
+      "name": "Inicio de descanso",
+      "description": "Empieza uno de los descansos del turno."
+    },
+    "BREAK_END": {
+      "name": "Fin de descanso",
+      "description": "Termina el descanso en curso."
+    },
+    "CHECK_OUT": {
+      "name": "Salida",
+      "description": "Fin de la jornada del turno."
+    }
+  },
+  "work_session_statuses": {
+    "OPEN": {
+      "name": "En turno",
+      "description": "Tiene entrada y aún no ha fichado su salida."
+    },
+    "CLOSED": {
+      "name": "Completa",
+      "description": "Fichó entrada y salida."
+    },
+    "MISSED_CHECKOUT": {
+      "name": "Sin salida",
+      "description": "No fichó su salida antes del límite."
+    }
+  },
+  "shift_request_statuses": {
+    "PENDING": {
+      "name": "Pendiente",
+      "description": "Espera la decisión de la empresa."
+    },
+    "APPROVED": {
+      "name": "Aprobada",
+      "description": "La empresa la aprobó: se aplica desde la fecha pedida (el nuevo turno o los días libres)."
+    },
+    "REJECTED": {
+      "name": "Rechazada",
+      "description": "La empresa no la aprobó (con su motivo)."
+    },
+    "CANCELLED": {
+      "name": "Cancelada",
+      "description": "La retiró el empleado (antes de la decisión) o la empresa."
+    }
+  },
+  "board_states": {
+    "SCHEDULED": {
+      "name": "Programado",
+      "description": "Aún no es la hora de su entrada."
+    },
+    "MISSING": {
+      "name": "Sin entrada",
+      "description": "Ya debería haber entrado y no ha fichado su entrada."
+    },
+    "WORKING": {
+      "name": "En turno",
+      "description": "Ha fichado su entrada y está trabajando."
+    },
+    "ON_BREAK": {
+      "name": "En descanso",
+      "description": "Está en uno de los descansos de su turno."
+    },
+    "DONE": {
+      "name": "Salió",
+      "description": "Fichó su entrada y su salida."
+    },
+    "MISSED_CHECKOUT": {
+      "name": "Sin salida",
+      "description": "No fichó su salida antes del límite."
+    },
+    "ABSENT": {
+      "name": "Faltó",
+      "description": "Terminó su turno sin fichar su entrada."
+    },
+    "DAY_OFF": {
+      "name": "Día libre",
+      "description": "Ese día no trabaja: día festivo, vacaciones, permiso o baja médica (no es una falta)."
+    }
+  },
+  "assignment_states": {
+    "CURRENT": {
+      "name": "Vigente",
+      "description": "El turno que rige hoy."
+    },
+    "SCHEDULED": {
+      "name": "Programado",
+      "description": "Cambio de turno que empieza después (se puede cancelar antes de esa fecha)."
+    },
+    "ENDED": {
+      "name": "Terminado",
+      "description": "Ya no rige; lo registrado con él no cambia."
+    }
+  },
+  "day_off_types": {
+    "VACATION": {
+      "name": "Vacaciones",
+      "description": "El empleado también puede pedirlas desde Mi asistencia.",
+      "phrase": "Estás de vacaciones"
+    },
+    "PERMISSION": {
+      "name": "Permiso",
+      "description": "Ausencia autorizada por la empresa; el empleado puede pedirla desde Mi asistencia.",
+      "phrase": "Tienes permiso"
+    },
+    "SICK_LEAVE": {
+      "name": "Baja médica",
+      "description": "Baja médica (la registra la empresa).",
+      "phrase": "Estás de baja médica"
+    },
+    "OTHER": {
+      "name": "Otro motivo",
+      "description": "Otro día libre que autoriza y registra la empresa.",
+      "phrase": "Tienes día libre"
+    }
+  },
+  "attendance_edit_reasons": {
+    "FORGOT": {
+      "name": "Olvidó fichar",
+      "description": "El empleado trabajó pero no registró su entrada, su descanso o su salida."
+    },
+    "DEVICE_FAILURE": {
+      "name": "Fallo de su teléfono o de la cámara",
+      "description": "No pudo fichar con su rostro por un fallo de su dispositivo."
+    },
+    "NO_CONNECTION": {
+      "name": "Sin conexión en el sitio",
+      "description": "No había internet ni ubicación para fichar en ese momento."
+    },
+    "AUTHORIZED_OFFSITE": {
+      "name": "Trabajó fuera de su sitio con autorización",
+      "description": "Un desplazamiento o una visita autorizados por la empresa fuera de sus sitios."
+    },
+    "WRONG_RECORD": {
+      "name": "Registro equivocado",
+      "description": "La hora registrada no corresponde a lo que realmente ocurrió."
+    }
+  },
+  "pricing_modes": {
+    "PER_USER": {
+      "name": "Por empleado activo",
+      "description": "Cada empleado y cada validador activos, día por día (un validador cuenta como un empleado): quien entra o sale a mitad del periodo paga solo sus días."
+    },
+    "FLAT": {
+      "name": "Importe fijo",
+      "description": "Un importe fijo por empresa, prorrateado por los días cobrables del periodo."
+    }
+  },
+  "price_periods": {
+    "DAY": {
+      "name": "Por día",
+      "description": "El precio es de un día."
+    },
+    "MONTH": {
+      "name": "Por mes",
+      "description": "El precio es de un mes; cada día cuesta su parte proporcional."
+    },
+    "YEAR": {
+      "name": "Por año",
+      "description": "El precio es de un año; cada día cuesta su parte proporcional."
+    }
+  },
+  "discount_types": {
+    "PERCENT": {
+      "name": "Porcentaje",
+      "description": "Porcentaje del subtotal (hasta 100 %)."
+    },
+    "AMOUNT": {
+      "name": "Importe fijo",
+      "description": "Importe fijo por cargo (nunca mayor que el subtotal)."
+    }
+  },
+  "discount_recurrences": {
+    "ALWAYS": {
+      "name": "En todos los cargos",
+      "description": "El descuento se aplica en cada cargo."
+    },
+    "FIRST": {
+      "name": "Solo en los primeros cargos",
+      "description": "Se aplica en los primeros N cargos de la empresa."
+    },
+    "EVERY": {
+      "name": "Cada cierto número de cargos",
+      "description": "Se aplica cada N cargos (el N-ésimo, el 2N-ésimo...)."
+    }
+  },
+  "billing_statuses": {
+    "ACTIVE": {
+      "name": "Activa",
+      "description": "La empresa opera con normalidad."
+    },
+    "SUSPENDED": {
+      "name": "Suspendida",
+      "description": "Nadie de la empresa puede iniciar sesión ni operar hasta que se reactive."
+    }
+  },
+  "suspension_reasons": {
+    "NON_PAYMENT": {
+      "name": "Falta de pago",
+      "description": "Automática: un cargo siguió sin pagarse después de los días de gracia."
+    },
+    "MANUAL": {
+      "name": "Suspensión manual",
+      "description": "La decidió el administrador de la plataforma, con su motivo."
+    }
+  },
+  "charge_statuses": {
+    "OPEN": {
+      "name": "Por pagar",
+      "description": "Tiene saldo pendiente."
+    },
+    "PAID": {
+      "name": "Pagado",
+      "description": "Los pagos registrados cubren su total."
+    },
+    "VOID": {
+      "name": "Anulado",
+      "description": "Se anuló con su motivo: no se cobra y lo que se le había aplicado queda a favor."
+    }
+  },
+  "payment_statuses": {
+    "CONFIRMED": {
+      "name": "Confirmado",
+      "description": "El pago se registró y se aplicó a los cargos abiertos (lo que sobra queda a favor)."
+    },
+    "VOID": {
+      "name": "Anulado",
+      "description": "Se anuló con su motivo: los cargos que cubría vuelven a quedar por pagar."
+    }
+  },
+  "payment_methods": {
+    "TRANSFER": {
+      "name": "Transferencia"
+    },
+    "DEPOSIT": {
+      "name": "Depósito bancario"
+    },
+    "CASH": {
+      "name": "Efectivo"
+    },
+    "CARD": {
+      "name": "Tarjeta"
+    },
+    "CHECK": {
+      "name": "Cheque"
+    },
+    "OTHER": {
+      "name": "Otro"
+    }
+  },
+  "company_document_types": {
+    "TAX_CERTIFICATE": {
+      "name": "Constancia de situación fiscal",
+      "description": "Constancia del SAT con el RFC, el régimen y el domicilio fiscal."
+    },
+    "INCORPORATION": {
+      "name": "Escritura de constitución",
+      "description": "Escritura pública con la que se constituyó la empresa."
+    },
+    "PROOF_OF_ADDRESS": {
+      "name": "Justificante de domicilio",
+      "description": "Recibo reciente de luz, agua o teléfono."
+    },
+    "REPRESENTATIVE_ID": {
+      "name": "Identificación del representante legal",
+      "description": "Credencial para votar, pasaporte o cédula de quien firma por la empresa."
+    },
+    "CONTRACT": {
+      "name": "Contrato",
+      "description": "Contrato de servicio con la plataforma u otro acuerdo firmado."
+    },
+    "OTHER": {
+      "name": "Otro",
+      "description": "Cualquier otro documento de la empresa."
+    }
+  },
+  "employee_document_types": {
+    "PASSPORT": {
+      "name": "Pasaporte",
+      "description": "Documento de viaje internacional con fotografía."
+    },
+    "NATIONAL_ID": {
+      "name": "Documento nacional de identidad (INE)",
+      "description": "Identificación oficial con fotografía."
+    },
+    "DRIVER_LICENSE": {
+      "name": "Permiso de conducir",
+      "description": "Carné de conducir con fotografía."
+    },
+    "OTHER_OFFICIAL_ID": {
+      "name": "Otra identificación oficial",
+      "description": "Cualquier identificación oficial con fotografía."
+    },
+    "PROOF_OF_ADDRESS": {
+      "name": "Comprobante de domicilio",
+      "description": "Recibo reciente de luz, agua o teléfono."
+    }
+  },
+  "currencies": {
+    "MXN": {
+      "name": "Peso mexicano",
+      "description": "Pesos mexicanos (MXN). La moneda predeterminada de la plataforma."
+    },
+    "USD": {
+      "name": "Dólar estadounidense",
+      "description": "Dólares de Estados Unidos (USD). Para clientes del extranjero, el IVA suele ser 0 %."
+    },
+    "EUR": {
+      "name": "Euro",
+      "description": "Euros (EUR). Para clientes del extranjero, el IVA suele ser 0 %."
+    }
+  },
+  "storage_categories": {
+    "PEOPLE": {
+      "name": "Personal",
+      "description": "Empleados, departamentos, validadores y sus dispositivos."
+    },
+    "BIOMETRICS": {
+      "name": "Biometría",
+      "description": "Plantillas faciales cifradas, registros faciales y huellas de capturas."
+    },
+    "ATTENDANCE": {
+      "name": "Asistencia",
+      "description": "Jornadas, descansos, registros, ausencias y el historial de identificaciones."
+    },
+    "SECURITY": {
+      "name": "Sesiones y seguridad",
+      "description": "Sesiones de acceso y métricas de los intentos faciales."
+    },
+    "BILLING": {
+      "name": "Facturación",
+      "description": "Cargos, pagos, justificantes y documentos de la empresa."
+    }
+  },
+  "slow_alert_statuses": {
+    "OPEN": {
+      "name": "Abierta",
+      "description": "Nadie la ha atendido todavía (o volvió a ocurrir después de resolverse)."
+    },
+    "ACKNOWLEDGED": {
+      "name": "En atención",
+      "description": "Alguien ya la está revisando; si vuelve a ocurrir, sigue en atención."
+    },
+    "RESOLVED": {
+      "name": "Resuelta",
+      "description": "Corregida. Si la ruta vuelve a tardar más del umbral, se reabre sola."
+    }
+  },
+  "fraud_kinds": {
+    "PRESENTATION": {
+      "name": "Presentación (foto, pantalla o máscara)",
+      "description": "Una foto, una pantalla o una máscara frente a la cámara."
+    },
+    "INJECTION": {
+      "name": "Inyección (cámara virtual o programa)",
+      "description": "Imágenes que no salen de la cámara: cámara virtual, programa o llamada directa a la API."
+    },
+    "REPLAY": {
+      "name": "Reenvío de capturas",
+      "description": "Capturas ya usadas, reenviadas con cambios mínimos, o artefactos de un ataque conocido."
+    },
+    "LOCATION": {
+      "name": "Ubicación falsa",
+      "description": "Ubicación simulada o poco creíble para fichar desde otro lugar."
+    },
+    "BUDDY_PUNCHING": {
+      "name": "Suplantación entre compañeros",
+      "description": "Una persona ficha por otra: cuenta compartida, QR reenviado o títere remoto."
+    },
+    "INTERNAL": {
+      "name": "Fraude interno",
+      "description": "Abuso desde la empresa o un validador: registros faciales aprobados con el rostro de otra persona o dispositivos no autorizados."
+    },
+    "MORPH": {
+      "name": "Rostro combinado",
+      "description": "Un registro facial que mezcla los rasgos de dos personas."
+    },
+    "OTHER": {
+      "name": "Otro",
+      "description": "Riesgo alto sin un tipo claro: lo decide la revisión."
+    }
+  },
+  "signal_modes": {
+    "OFF": {
+      "name": "Apagada",
+      "description": "La señal no se mide ni se registra."
+    },
+    "OBSERVE": {
+      "name": "Solo medir",
+      "description": "Se mide y se registra con sus puntos, sin cambiar la decisión: sirve para calibrar antes de exigirla."
+    },
+    "ENFORCE": {
+      "name": "Obligatoria",
+      "description": "Sus puntos cuentan para la decisión; si es una regla dura, niega el intento."
+    }
+  },
+  "review_reasons": {
+    "CAPTURE": {
+      "name": "Captura poco fiable",
+      "description": "La captura del rostro tuvo indicios de foto, pantalla o vídeo."
+    },
+    "REPLAY": {
+      "name": "Captura repetida",
+      "description": "La captura se parece demasiado a otra ya recibida."
+    },
+    "KNOWN_ATTACK": {
+      "name": "Coincide con un fraude conocido",
+      "description": "La captura coincide con un intento de fraude ya confirmado."
+    },
+    "IDENTITY": {
+      "name": "Identidad poco clara",
+      "description": "El rostro coincidió con poca holgura o se parece a otra persona de la empresa."
+    },
+    "CAMERA": {
+      "name": "Cámara poco fiable",
+      "description": "La cámara no informó su nombre o se comportó como una cámara virtual."
+    },
+    "LOCATION": {
+      "name": "Ubicación poco fiable",
+      "description": "La ubicación parece simulada, cambió más rápido de lo posible o quedó en el límite del sitio."
+    },
+    "ACTIVITY": {
+      "name": "Actividad inusual en la empresa",
+      "description": "La empresa recibe varios intentos sospechosos en este momento."
+    },
+    "DEVICE": {
+      "name": "Dispositivo no reconocido",
+      "description": "El registro se hizo desde un dispositivo que la empresa no ha aprobado o que no se pudo verificar."
+    },
+    "NETWORK": {
+      "name": "Red poco fiable",
+      "description": "La conexión venía de un centro de datos o de otro país, o cambió de repente."
+    },
+    "BROWSER": {
+      "name": "Navegador poco fiable",
+      "description": "El navegador o las capturas mostraron indicios de un programa en lugar de la aplicación."
+    },
+    "PRESENCE": {
+      "name": "Presencia sin confirmar",
+      "description": "El registro no traía el código vigente del sitio."
+    }
+  },
+  "risk_signals": {
+    "SPOOF_PROB_LOW": {
+      "name": "Probabilidad de rostro real baja",
+      "description": "La detección de suplantación pasó, pero la probabilidad de rostro real quedó cerca de su umbral."
+    },
+    "FLASH_WEAK": {
+      "name": "Respuesta débil al destello",
+      "description": "El rostro reflejó el destello sin seguir bien los colores emitidos."
+    },
+    "FLASH_FLAT": {
+      "name": "Destello plano (rostro igual al fondo)",
+      "description": "El rostro y el fondo respondieron igual al destello: típico de una pantalla o una foto frente a la cámara."
+    },
+    "REPLAY_PERCEPTUAL": {
+      "name": "Reenvío perceptual",
+      "description": "Una captura casi idéntica (por su huella visual y su vector facial) a otra de un intento anterior del mismo empleado. Regla dura al exigirla."
+    },
+    "KNOWN_ATTACK": {
+      "name": "Firma de un ataque conocido",
+      "description": "La captura coincide con las huellas de un fraude confirmado de la empresa o de la plataforma. Regla dura al exigirla."
+    },
+    "MATCH_MARGIN_LOW": {
+      "name": "Coincidencia justa",
+      "description": "El rostro coincidió apenas por encima del mínimo de la empresa."
+    },
+    "CAMERA_LABEL_MISSING": {
+      "name": "Cámara sin nombre",
+      "description": "La captura no informó el nombre de la cámara: la aplicación siempre lo envía; un programa, no."
+    },
+    "LOCATION_EDGE": {
+      "name": "Ubicación en el límite del sitio",
+      "description": "El registro quedó en el borde de la geovalla del sitio."
+    },
+    "LOCATION_ROUND_ACCURACY": {
+      "name": "Precisión redonda",
+      "description": "La precisión que informó el dispositivo es un número redondo, típico de una ubicación simulada."
+    },
+    "COMPANY_UNDER_ATTACK": {
+      "name": "Empresa bajo ataque",
+      "description": "La empresa acumula intentos sospechosos recientes (refuerzo automático)."
+    },
+    "DEVICE_NEW": {
+      "name": "Dispositivo nuevo",
+      "description": "El empleado ficha desde un dispositivo que no había usado o que su empresa no ha aprobado (según el modo del dispositivo)."
+    },
+    "DEVICE_KEY_MISSING": {
+      "name": "Sin clave del dispositivo",
+      "description": "Falta la firma de la clave del dispositivo o no se pudo verificar: la aplicación siempre la envía; un programa o una ventana privada, no."
+    },
+    "DEVICE_SHARED": {
+      "name": "Dispositivo compartido",
+      "description": "El mismo dispositivo fichó por varios empleados de la empresa en poco tiempo: típico de un compañero que ficha por otros."
+    },
+    "IDENTITY_MISMATCH": {
+      "name": "Se parece más a otro empleado",
+      "description": "El rostro se parece al menos tanto a otro empleado de la empresa como al verificado (1:N en cada verificación): registro con el rostro de otra persona o suplantación."
+    },
+    "NETWORK_HOSTING": {
+      "name": "Red de un centro de datos",
+      "description": "La IP es de una nube o de un centro de datos (VPN, servidor intermediario o un programa), según la base local de IP."
+    },
+    "NETWORK_COUNTRY_MISMATCH": {
+      "name": "Red de otro país",
+      "description": "La IP es de un país distinto al del sitio donde se fichó: ubicación simulada o VPN."
+    },
+    "NETWORK_JUMP": {
+      "name": "Cambio de red repentino",
+      "description": "La IP cambió de país o de red desde el registro anterior, más rápido de lo creíble."
+    },
+    "LOCATION_STATIC": {
+      "name": "Ubicación congelada",
+      "description": "Las lecturas de la ubicación fueron idénticas (coordenadas y precisión): un GPS real siempre varía un poco; un simulador, no."
+    },
+    "LOCATION_JUMP": {
+      "name": "Salto de ubicación",
+      "description": "Desde el registro anterior, la ubicación se movió más rápido de lo que se puede viajar con holgura."
+    },
+    "AUTOMATION": {
+      "name": "Navegador automatizado",
+      "description": "El navegador muestra rastros de automatización (WebDriver, Playwright, Selenium o un navegador sin interfaz)."
+    },
+    "VIRTUAL_CAMERA_PRESENT": {
+      "name": "Cámara virtual instalada",
+      "description": "El dispositivo tiene una cámara virtual (OBS, ManyCam…) aunque la captura no la haya usado."
+    },
+    "TRACK_INCONSISTENT": {
+      "name": "Cámara incoherente",
+      "description": "La cámara informó una resolución o fotogramas por segundo fuera de lo que dice admitir, o no tiene identificador."
+    },
+    "FRAME_TIMING_SYNTHETIC": {
+      "name": "Ritmo de vídeo sintético",
+      "description": "Los fotogramas llegaron a un ritmo exacto, sin la variación de una cámara real: típico de un vídeo o una cámara virtual."
+    },
+    "SCREEN_INCOHERENT": {
+      "name": "Pantalla incoherente",
+      "description": "La pantalla no corresponde al dispositivo que dice ser (un teléfono sin pantalla táctil o con pantalla de escritorio) o no tiene medidas."
+    },
+    "TELEMETRY_MISSING": {
+      "name": "Sin telemetría de la captura",
+      "description": "Falta la telemetría que la aplicación siempre envía, o llegó mal formada: típico de un programa que llama a la API."
+    },
+    "JPEG_TABLE_UNKNOWN": {
+      "name": "Imagen de otro codificador",
+      "description": "Las capturas no tienen las tablas JPEG de la aplicación: otro programa las produjo o se mezclaron imágenes de fuentes distintas."
+    },
+    "BURST_MISSING": {
+      "name": "Sin ráfaga de la captura",
+      "description": "Falta la ráfaga de recortes que la aplicación siempre envía, o llegó dañada. Suele indicar un programa que llama a la API."
+    },
+    "BURST_DISCONTINUOUS": {
+      "name": "Ráfaga discontinua",
+      "description": "Los recortes no siguen a un mismo rostro: hay saltos, recortes sin rostro u otra persona. Suele indicar un montaje."
+    },
+    "BURST_FROZEN": {
+      "name": "Imagen congelada",
+      "description": "La ráfaga casi no cambió entre recortes. Una cámara real siempre tiene ruido y movimiento; una imagen fija, no."
+    },
+    "BURST_LOOP": {
+      "name": "Vídeo en bucle",
+      "description": "La ráfaga repitió fotogramas idénticos. Una cámara real nunca repite su ruido; un vídeo en bucle, sí."
+    },
+    "MOIRE_HIGH": {
+      "name": "Patrón de pantalla",
+      "description": "El rostro muestra el patrón de píxeles de una pantalla fotografiada."
+    },
+    "NOISE_MISMATCH": {
+      "name": "Ruido del sensor incoherente",
+      "description": "El rostro es mucho más liso que el fondo de la misma captura. Suele indicar un rostro pegado, generado o recapturado."
+    },
+    "PERSPECTIVE_FLAT": {
+      "name": "Movimiento de superficie plana",
+      "description": "Al girar, el rostro se movió como una superficie plana, sin la perspectiva de la nariz. Suele indicar una foto inclinada."
+    },
+    "PULSE_ABSENT": {
+      "name": "Sin pulso visible (solo se mide)",
+      "description": "La ráfaga no mostró el cambio de color de la piel con el latido. Solo se mide y nunca decide: falla a menudo con poca luz o movimiento."
+    },
+    "FLASH_UNPACED": {
+      "name": "Destello sin dictar",
+      "description": "Los colores del destello no se dictaron en vivo, así que pudieron prepararse de antemano. También pasa en redes que bloquean el canal en vivo."
+    },
+    "FLASH_PACE_TIMING": {
+      "name": "Destello fuera de tiempo",
+      "description": "Algún color del destello dictado se respondió fuera de su ventana, demasiado lento o demasiado rápido."
+    },
+    "FLASH_PACE_MISMATCH": {
+      "name": "Destello alterado",
+      "description": "Las capturas del destello no coinciden con las que se enviaron en vivo, o su justificante no es válido. Solo una aplicación alterada lo produce."
+    },
+    "VALIDATOR_UNSIGNED": {
+      "name": "Identificación sin firma del dispositivo",
+      "description": "La identificación del validador no trajo la firma de su dispositivo o su reto ya había caducado. La aplicación siempre firma; un programa con una sesión copiada, no."
+    },
+    "VALIDATOR_SIGNATURE_INVALID": {
+      "name": "Firma del dispositivo alterada",
+      "description": "La firma de la identificación no corresponde a su reto ni a su contenido. Solo una aplicación alterada o un ataque la produce. Regla dura al exigirla."
+    },
+    "VALIDATOR_KEY_MISMATCH": {
+      "name": "Dispositivo distinto al de la sesión",
+      "description": "Firmó la identificación un dispositivo distinto al que inició sesión: típico de una sesión copiada a otro equipo. También pasa si el navegador borró su clave."
+    },
+    "VALIDATOR_LOCATION_MISSING": {
+      "name": "Identificación sin ubicación",
+      "description": "El validador requiere ubicación y la identificación no la trajo: se retiró el permiso o la petición no salió de la aplicación."
+    },
+    "VALIDATOR_LOCATION_INACCURATE": {
+      "name": "Ubicación imprecisa del validador",
+      "description": "La ubicación de la identificación es demasiado imprecisa para saber si el validador está en su lugar."
+    },
+    "VALIDATOR_OUT_OF_ZONE": {
+      "name": "Validador fuera de su lugar",
+      "description": "La identificación se hizo lejos del lugar donde opera el validador: una tableta que salió del sitio o una sesión usada en otro lado."
+    },
+    "SITE_CODE_MISSING": {
+      "name": "Registro sin código del sitio",
+      "description": "El sitio pide su código y el registro no lo trajo."
+    },
+    "SITE_CODE_INVALID": {
+      "name": "Código del sitio no válido",
+      "description": "El código no es el vigente del sitio: caducó, es de otro sitio o ya se usó. Suele indicar un código que alguien pasó desde el sitio."
+    }
+  },
+  "risk_tiers": {
+    "LOW": {
+      "name": "Bajo",
+      "description": "Sin señales que pesen: se permite."
+    },
+    "MEDIUM": {
+      "name": "Medio",
+      "description": "Algunas señales: por defecto pide un paso más."
+    },
+    "HIGH": {
+      "name": "Alto",
+      "description": "Señales fuertes: por defecto el registro queda en revisión y se abre un caso."
+    },
+    "CRITICAL": {
+      "name": "Crítico",
+      "description": "Señales muy fuertes: por defecto se niega, cuenta para el bloqueo y se abre un caso."
+    }
+  },
+  "risk_actions": {
+    "ALLOW": {
+      "name": "Permitir",
+      "description": "El intento sigue normalmente."
+    },
+    "ALERT": {
+      "name": "Permitir y avisar",
+      "description": "El intento sigue, pero se abre un caso para que el administrador lo revise."
+    },
+    "STEP_UP": {
+      "name": "Un paso más",
+      "description": "Se pide en el momento un reto más exigente (tres movimientos) sin repetir el escaneo."
+    },
+    "REVIEW": {
+      "name": "En revisión",
+      "description": "Se registra, pero la empresa debe confirmarlo o rechazarlo; se abre un caso."
+    },
+    "DENY": {
+      "name": "Negar",
+      "description": "Se rechaza el intento (cuenta para el bloqueo temporal) y se abre un caso."
+    }
+  },
+  "attendance_review_statuses": {
+    "PENDING": {
+      "name": "En revisión",
+      "description": "El registro se guardó, pero la empresa debe confirmarlo o rechazarlo."
+    },
+    "CONFIRMED": {
+      "name": "Confirmado",
+      "description": "La empresa confirmó que el registro es válido."
+    },
+    "REJECTED": {
+      "name": "Rechazado",
+      "description": "La empresa rechazó el registro: no lo hizo la persona o no fue en el lugar debido."
+    }
+  },
+  "employee_device_modes": {
+    "OFF": {
+      "name": "Apagado",
+      "description": "No se vincula el dispositivo del empleado."
+    },
+    "OBSERVE": {
+      "name": "Solo medir",
+      "description": "Se registra desde qué dispositivo ficha cada empleado; uno nuevo o sin clave solo se anota como señal."
+    },
+    "STEP_UP": {
+      "name": "Un paso más en un dispositivo nuevo",
+      "description": "Un dispositivo nuevo pide un paso más (un reto más exigente); al superarlo, queda de confianza."
+    },
+    "APPROVAL": {
+      "name": "Aprobación de la empresa",
+      "description": "Mientras la empresa no apruebe un dispositivo nuevo, los registros desde él quedan en revisión."
+    }
+  },
+  "policy_presets": {
+    "STANDARD": {
+      "name": "Estándar",
+      "description": "Para la mayoría: dos movimientos en 60 s, detección de suplantación Estándar y cortes de riesgo 30/60/80. El dispositivo del empleado, la ráfaga de captura y la presencia de los validadores, en Solo medir."
+    },
+    "HIGH": {
+      "name": "Alto",
+      "description": "Más exigente: tres movimientos en 45 s, detección de suplantación Alta, reenvío perceptual obligatorio, un paso más en un dispositivo nuevo y cortes 25/50/75. La ráfaga de captura y la presencia de los validadores, en Solo medir."
+    },
+    "MAXIMUM": {
+      "name": "Máximo",
+      "description": "Para fraude confirmado: tres movimientos en 30 s, detección de suplantación Máxima, reglas duras obligatorias, la empresa aprueba cada equipo y el riesgo alto se niega. Exige la ráfaga de captura (o un paso más), firma y ubicación de validadores y código de sitio. Más reintentos con poca luz."
+    }
+  },
+  "policy_change_statuses": {
+    "APPLIED": {
+      "name": "Aplicado",
+      "description": "El cambio ya rige."
+    },
+    "PENDING": {
+      "name": "Por aprobar",
+      "description": "Relaja la seguridad: espera la aprobación de otro administrador."
+    },
+    "REJECTED": {
+      "name": "Rechazado",
+      "description": "Otro administrador lo rechazó: no se aplicó."
+    },
+    "CANCELLED": {
+      "name": "Cancelado",
+      "description": "Quien lo pidió lo retiró, o caducó sin aprobarse."
+    }
+  },
+  "fraud_case_statuses": {
+    "OPEN": {
+      "name": "Abierto",
+      "description": "Sin revisar todavía."
+    },
+    "IN_REVIEW": {
+      "name": "En revisión",
+      "description": "Un administrador lo está revisando."
+    },
+    "CONFIRMED": {
+      "name": "Fraude confirmado",
+      "description": "Se confirmó el fraude: sus huellas pasan a la lista de bloqueo y se olvida lo aprendido desde el intento."
+    },
+    "FALSE_POSITIVE": {
+      "name": "Falso positivo",
+      "description": "No era fraude: sus huellas se liberan y el caso ayuda a calibrar."
+    },
+    "INCONCLUSIVE": {
+      "name": "No concluyente",
+      "description": "No hay elementos para decidir: solo cuenta para la estadística."
+    }
+  },
+  "fraud_case_event_kinds": {
+    "OPENED": {
+      "name": "Caso abierto",
+      "description": "El sistema abrió el caso por un intento sospechoso o de riesgo alto."
+    },
+    "STATUS_CHANGED": {
+      "name": "Cambio de estado",
+      "description": "Un administrador cambió el estado del caso."
+    },
+    "NOTE": {
+      "name": "Nota",
+      "description": "Un administrador añadió una nota."
+    },
+    "EVIDENCE_VIEWED": {
+      "name": "Evidencia consultada",
+      "description": "Un administrador vio los fotogramas de evidencia."
+    },
+    "SIGNATURES_BLOCKED": {
+      "name": "Huellas bloqueadas",
+      "description": "Las huellas del ataque pasaron a la lista de bloqueo."
+    },
+    "SIGNATURES_RELEASED": {
+      "name": "Huellas liberadas",
+      "description": "Las huellas del caso salieron de la lista de bloqueo."
+    },
+    "LEARNING_FORGOTTEN": {
+      "name": "Aprendizaje olvidado",
+      "description": "Se olvidó lo que el reconocimiento aprendió del empleado desde el intento."
+    }
+  },
+  "menu_modules": {
+    "PLATFORM": {
+      "name": "Plataforma",
+      "description": "Indicadores de la plataforma y sus empresas."
+    },
+    "BUSINESS": {
+      "name": "Negocio",
+      "description": "Facturación de las empresas y su consumo de la plataforma."
+    },
+    "OPERATIONS": {
+      "name": "Operación",
+      "description": "Salud del sistema: errores, rendimiento y estado del servidor."
+    },
+    "OVERVIEW": {
+      "name": "General",
+      "description": "Resumen de la empresa."
+    },
+    "PEOPLE": {
+      "name": "Personal",
+      "description": "Empleados, departamentos y la validación de sus registros faciales."
+    },
+    "ATTENDANCE": {
+      "name": "Asistencia",
+      "description": "Tablero, turnos, calendario de días libres y sitios."
+    },
+    "ACCESS": {
+      "name": "Control de acceso",
+      "description": "Validadores que identifican a los empleados en un acceso."
+    },
+    "DATA": {
+      "name": "Conexiones",
+      "description": "Conexión con otros sistemas de la empresa (nómina, ERP)."
+    },
+    "MY_WORK": {
+      "name": "Mi trabajo",
+      "description": "Entrada, descansos y salida de su turno."
+    },
+    "IDENTITY": {
+      "name": "Mi identidad",
+      "description": "Registro facial, identificación y código QR."
+    },
+    "ACCOUNT": {
+      "name": "Cuenta",
+      "description": "Empresa en que opera y su perfil."
+    }
+  },
+  "screens": {
+    "ADMIN_DASHBOARD": {
+      "name": "Panel",
+      "description": "Indicadores de la plataforma y empresas recientes."
+    },
+    "ADMIN_COMPANIES": {
+      "name": "Empresas",
+      "description": "Alta y administración de empresas y sus administradores."
+    },
+    "ADMIN_ERRORS": {
+      "name": "Errores del sistema",
+      "description": "Fallos del servidor y de la aplicación web, y su seguimiento.",
+      "short_name": "Errores"
+    },
+    "ADMIN_FACE_SECURITY": {
+      "name": "Seguridad facial",
+      "description": "Ajustes automáticos de la prueba de vida, empresas bajo ataque y mediciones del destello.",
+      "short_name": "Seguridad"
+    },
+    "ADMIN_FRAUD_CASES": {
+      "name": "Casos de fraude",
+      "description": "Revisión de intentos sospechosos o de riesgo alto con su evidencia.",
+      "short_name": "Fraude"
+    },
+    "ADMIN_BILLING": {
+      "name": "Facturación",
+      "description": "Plan, cargos, pagos y saldo de cada empresa; suspensión por falta de pago y reactivación."
+    },
+    "ADMIN_USAGE": {
+      "name": "Consumo",
+      "description": "Peticiones, datos, tiempo de proceso, errores y almacenamiento por empresa y por usuario."
+    },
+    "ADMIN_PERFORMANCE": {
+      "name": "Rendimiento",
+      "description": "Tiempos de respuesta de las APIs, funciones clave, base de datos y pantallas; alertas de peticiones lentas."
+    },
+    "ADMIN_DRIFT": {
+      "name": "Deriva de señales",
+      "description": "Deriva semanal de las señales del motor facial por plataforma y, por empresa, casos y revisiones aprobadas sin mirar.",
+      "short_name": "Deriva"
+    },
+    "COMPANY_DASHBOARD": {
+      "name": "Panel",
+      "description": "Resumen de la empresa: empleados y validaciones pendientes.",
+      "short_name": "Inicio"
+    },
+    "COMPANY_EMPLOYEES": {
+      "name": "Empleados",
+      "description": "Alta, consulta y edición de los empleados de la empresa."
+    },
+    "COMPANY_DEPARTMENTS": {
+      "name": "Departamentos",
+      "description": "Departamentos de la empresa con sus responsables y empleados asignados.",
+      "short_name": "Áreas"
+    },
+    "COMPANY_VALIDATIONS": {
+      "name": "Validaciones",
+      "description": "Revisión de los registros faciales pendientes.",
+      "short_name": "Validar"
+    },
+    "COMPANY_ATTENDANCE": {
+      "name": "Tablero del día",
+      "description": "Quién está en turno, en descanso o ya salió; historial de jornadas con su evidencia.",
+      "short_name": "Tablero"
+    },
+    "COMPANY_VERIFICATIONS": {
+      "name": "Verificaciones",
+      "description": "Dónde y cuándo se verificó la identidad de tu gente, en el mapa."
+    },
+    "COMPANY_SHIFTS": {
+      "name": "Turnos",
+      "description": "Turnos, su asignación a los empleados y las solicitudes de cambio."
+    },
+    "COMPANY_CALENDAR": {
+      "name": "Calendario",
+      "description": "Días festivos, vacaciones, permisos y bajas médicas."
+    },
+    "COMPANY_SITES": {
+      "name": "Sitios de trabajo",
+      "description": "Sucursales y plantas con su geovalla: dónde se ficha en sitio.",
+      "short_name": "Sitios"
+    },
+    "COMPANY_VALIDATORS": {
+      "name": "Validadores",
+      "description": "Tabletas o teléfonos que identifican a los empleados en un acceso."
+    },
+    "COMPANY_API": {
+      "name": "Integraciones (API)",
+      "description": "Claves de la API para conectar otros sistemas (nómina, ERP).",
+      "short_name": "API"
+    },
+    "COMPANY_DOCUMENTS": {
+      "name": "Documentos",
+      "description": "Documentos de la empresa para su facturación: constancia fiscal, escritura de constitución y más."
+    },
+    "VALIDATOR_CHECKPOINT": {
+      "name": "Identificar empleados",
+      "description": "Punto de control: identifica a los empleados con rostro o QR.",
+      "short_name": "Identificar"
+    },
+    "EMPLOYEE_ATTENDANCE": {
+      "name": "Mi asistencia",
+      "description": "Entrada, descansos y salida con rostro y ubicación; vacaciones y permisos.",
+      "short_name": "Asistencia"
+    },
+    "EMPLOYEE_ENROLL": {
+      "name": "Registro facial",
+      "description": "El empleado registra su rostro (aún sin registro o rechazado).",
+      "short_name": "Mi rostro"
+    },
+    "EMPLOYEE_PENDING": {
+      "name": "Registro facial",
+      "description": "El registro facial del empleado espera la validación de la empresa.",
+      "short_name": "Mi rostro"
+    },
+    "EMPLOYEE_VERIFY": {
+      "name": "Identificación",
+      "description": "El empleado se identifica con su rostro o su código QR.",
+      "short_name": "Identificar"
+    },
+    "EMPLOYEE_QR": {
+      "name": "Mi código QR",
+      "description": "Credencial QR del empleado (solo con identidad aprobada).",
+      "short_name": "Mi QR"
+    },
+    "EMPLOYEE_SELECT_COMPANY": {
+      "name": "Cambiar de empresa",
+      "description": "Para quien trabaja en varias empresas: elegir a cuál entrar.",
+      "short_name": "Empresa"
+    },
+    "PROFILE": {
+      "name": "Mi perfil",
+      "description": "Cuenta, contraseña y sesiones abiertas.",
+      "short_name": "Perfil"
+    },
+    "EMPLOYEE_DOCUMENTS": {
+      "name": "Documentos",
+      "description": "Comprobante de domicilio e identificación oficial que pide la empresa.",
+      "short_name": "Mis documentos"
+    }
+  },
+  "voice_questions": {
+    "FULL_NAME": {
+      "name": "¿Cuál es tu nombre completo?",
+      "description": "Se compara con el nombre y los apellidos registrados del empleado."
+    },
+    "BIRTH_DATE": {
+      "name": "¿Cuál es tu fecha de nacimiento?",
+      "description": "Se compara con la fecha de nacimiento registrada (día, mes y año)."
+    },
+    "COMPANY_NAME": {
+      "name": "¿Cómo se llama la empresa donde trabajas?",
+      "description": "Se compara con el nombre de la empresa."
+    },
+    "EMPLOYEE_NUMBER": {
+      "name": "¿Cuál es tu número de empleado?",
+      "description": "Se compara con el número de empleado registrado; solo se pregunta si lo tiene."
+    },
+    "DEPARTMENT": {
+      "name": "¿En qué departamento trabajas?",
+      "description": "Se compara con el departamento asignado; solo se pregunta si tiene uno."
+    },
+    "WORK_SITE": {
+      "name": "¿En qué sitio o sucursal trabajas?",
+      "description": "Se compara con el sitio de trabajo de su turno; solo se pregunta si su turno tiene uno."
+    },
+    "FIRST_NAME": {
+      "name": "¿Cuál es tu nombre (sin apellidos)?",
+      "description": "Se compara con el nombre registrado del empleado, sin los apellidos."
+    },
+    "SURNAMES": {
+      "name": "¿Cuáles son tus apellidos?",
+      "description": "Se compara con los apellidos registrados del empleado."
+    },
+    "FIRST_SURNAME": {
+      "name": "¿Cuál es tu primer apellido?",
+      "description": "Se compara con el primer apellido; solo se pregunta si los apellidos son dos palabras."
+    },
+    "SECOND_SURNAME": {
+      "name": "¿Cuál es tu segundo apellido?",
+      "description": "Se compara con el segundo apellido; solo se pregunta si los apellidos son dos palabras."
+    },
+    "BIRTH_MONTH": {
+      "name": "¿En qué mes naciste?",
+      "description": "Se compara con el mes de la fecha de nacimiento, por su nombre o su número."
+    },
+    "BIRTH_YEAR": {
+      "name": "¿En qué año naciste?",
+      "description": "Se compara con el año de la fecha de nacimiento, completo o sus dos últimas cifras."
+    },
+    "BIRTH_DAY": {
+      "name": "¿Qué día del mes naciste?",
+      "description": "Se compara con el día de la fecha de nacimiento."
+    },
+    "ARITHMETIC_SUM": {
+      "name": "¿Cuánto suman los dos números que te mostramos?",
+      "description": "Prueba de atención: el total de dos números al azar; cambia en cada intento."
+    }
+  },
+  "voice_profiles": {
+    "FEMALE_WARM": {
+      "name": "Femenina cálida",
+      "description": "Voz femenina de tono cálido"
+    },
+    "FEMALE_CLEAR": {
+      "name": "Femenina clara",
+      "description": "Voz femenina nítida y pausada"
+    },
+    "MALE_CALM": {
+      "name": "Masculina serena",
+      "description": "Voz masculina tranquila"
+    },
+    "MALE_DEEP": {
+      "name": "Masculina grave",
+      "description": "Voz masculina de tono grave"
+    },
+    "NEUTRAL": {
+      "name": "Neutra del sistema",
+      "description": "La voz predeterminada del dispositivo"
+    }
+  }
+}

@@ -37,7 +37,7 @@ from app.services import image_storage
 from app.services.attack_signatures import capture_value
 from app.services.face_service import SECURITY_REASONS
 from app.services.face_signals import AttemptSignals
-from app.services.image_storage import FRAUD_EVIDENCE
+from app.services.image_storage import FRAUD_EVIDENCE, image_type
 from app.services.risk_rules import CASE_ACTIONS
 
 logger = logging.getLogger(__name__)
@@ -108,6 +108,16 @@ def _kind_and_reason(reason: str | None, signals: AttemptSignals) -> tuple[str, 
     return FraudKind.OTHER, reason or "RISK_ALERT"
 
 
+def _subject(log: VerificationLog) -> str:
+    """De quién es el caso: el empleado; sin empleado (un 1:N que no identificó a nadie), quien operaba la cámara: el
+    dispositivo de la API pública (su huella, 32 caracteres: cabe en `subject`) o la cuenta."""
+    if log.employee_id is not None:
+        return f"employee:{log.employee_id}"
+    if log.device_hash is not None:
+        return f"device:{log.device_hash[:32]}"
+    return f"actor:{log.user_id}"
+
+
 def observe(
     db: Session,
     *,
@@ -123,7 +133,7 @@ def observe(
         return None
     kind, reason = _kind_and_reason(log.reason, signals)
     now = datetime.now(UTC)
-    subject = f"employee:{log.employee_id}" if log.employee_id is not None else f"actor:{log.user_id}"
+    subject = _subject(log)
     repo = FraudCaseRepository(db)
     case_id, attempts, evidence = repo.observe(
         {
@@ -189,14 +199,6 @@ def _attempt(
     )
 
 
-def _image_type(data: bytes) -> str:
-    if data.startswith(b"\x89PNG"):
-        return "image/png"
-    if data[8:12] == b"WEBP":
-        return "image/webp"
-    return "image/jpeg"
-
-
 def store_evidence(db: Session, case: OpenedCase, frames: list[tuple[str, int, bytes]], log_id: int) -> int:
     """Sube los fotogramas del intento al bucket (CIFRADOS, sin transacción abierta) y guarda su referencia en una
     transacción corta. De mejor esfuerzo: si el bucket o la BD fallan, el caso queda sin ellos (falla registrada y lo
@@ -216,7 +218,7 @@ def store_evidence(db: Session, case: OpenedCase, frames: list[tuple[str, int, b
             kind=kind,
             position=position,
             uid=secrets.token_hex(8),
-            content_type=_image_type(image),
+            content_type=image_type(image),
         )
         for kind, position, image in frames
     ]

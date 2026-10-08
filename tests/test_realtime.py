@@ -9,10 +9,10 @@ from app.core.database import SessionLocal
 from app.models import RoleScreen, UserRole
 from app.services.catalog_service import clear_catalog_cache
 from tests.conftest import COMPANY_EMAIL, COMPANY_PASSWORD, DESKTOP_UA, create_employee, login
+from tests.test_envelope import KEYS as ENVELOPE_KEYS
 from tests.test_validators import validator_headers
 
 URL = "/api/ws/validation"
-ENVELOPE_KEYS = {"success", "statusCode", "code", "message", "data", "errors", "traceId", "timestamp"}
 
 
 def token(client, email=COMPANY_EMAIL, password=COMPANY_PASSWORD) -> str:
@@ -193,7 +193,9 @@ def test_each_role_validates_only_the_fields_of_its_screens(client, company_head
     [
         (f"{URL}?lang=en-US", {}, "Validation channel ready", "Invalid channel message"),
         # Sin `?lang=` (o con uno que la API no habla), la cabecera; sin ninguna, es-MX.
-        (f"{URL}?lang=fr", {"Accept-Language": "en-US,en;q=0.9"}, "Validation channel ready", None),
+        (f"{URL}?lang=ja", {"Accept-Language": "en-US,en;q=0.9"}, "Validation channel ready", None),
+        (f"{URL}?lang=pt-BR", {}, "Canal de validação pronto", None),  # cualquiera de los siete idiomas
+        (f"{URL}?lang=fr", {}, "Canal de validation prêt", None),  # una etiqueta sin región también
         (URL, {}, "Canal de validación listo", "Mensaje del canal inválido"),
         (f"{URL}?lang=es-MX", {"Accept-Language": "en-US"}, "Canal de validación listo", None),  # `?lang=` gana
     ],
@@ -207,8 +209,7 @@ def test_the_channel_speaks_the_language_of_its_url(client, company_headers, url
         if invalid:
             socket.send_json({"type": "validate", "id": "req-lang-01", "field": 5})
             assert socket.receive_json()["message"] == invalid
+            # El número de empleado es opcional: vacío es válido y no se consulta nada (en el idioma del canal).
             empty = validate(socket, "   ", msg_id="req-lang-02")
-            assert empty["code"] == "EMPTY" and empty["message"] in {
-                "El número de empleado es obligatorio",
-                "Employee number is required",
-            }
+            assert empty["code"] == "EMPTY" and empty["data"]["valid"]
+            assert empty["message"] in {"Opcional: puede quedar vacío", "Optional: can be left blank"}

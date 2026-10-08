@@ -11,7 +11,7 @@ from sqlalchemy import Row, case, delete, func, select, text, update
 from sqlalchemy.orm import Session, lazyload
 
 from app.core.soft_delete import with_deleted
-from app.models import Employee, FraudCase, FraudCaseAttempt, FraudCaseEvent, FraudEvidence
+from app.models import Employee, FraudCase, FraudCaseAttempt, FraudCaseEvent, FraudEvidence, User
 from app.models.fraud import ACTIVE_CASE
 from app.repositories.aggregates import LOG_COUNT_CAP, affected_rows, dialect_insert, paginate
 
@@ -112,17 +112,21 @@ class FraudCaseRepository:
         stmt = select(FraudEvidence).where(FraudEvidence.id == evidence_id, FraudEvidence.case_id == case_id)
         return self.db.scalar(stmt)
 
-    def employees(self, ids: Sequence[int]) -> dict[int, Employee]:
-        """La ficha de los empleados de una página de casos (de varias empresas: alcance de la plataforma), en una
-        consulta por su llave primaria. Referencias del historial: también los que están en «Eliminados»."""
+    def employees(self, ids: Sequence[int]) -> tuple[dict[int, Employee], dict[int, str | None]]:
+        """La ficha de los empleados de una página de casos (de varias empresas: alcance de la plataforma) y la versión
+        de la foto de perfil de cada cuenta, en una consulta por sus llaves primarias. Referencias del historial:
+        también los que están en «Eliminados». Solo el nombre, el número y esa columna de la cuenta (§3.1.3): sin las
+        cargas completas de la cuenta y la empresa."""
         if not ids:
-            return {}
+            return {}, {}
         stmt = (
-            select(Employee)
+            select(Employee, User.avatar_version)
+            .join(User, User.id == Employee.user_id)
             .where(Employee.id.in_(sorted(set(ids))))
-            .options(lazyload(Employee.user), lazyload(Employee.company))  # solo el nombre y el número (§3.1.3)
+            .options(lazyload(Employee.user), lazyload(Employee.company))
         )
-        return {e.id: e for e in self.db.scalars(with_deleted(stmt))}
+        rows = self.db.execute(with_deleted(stmt)).all()
+        return {e.id: e for e, _ in rows}, {e.user_id: version for e, version in rows}
 
     # ------------------------------------------------------------------ mantenimiento
 

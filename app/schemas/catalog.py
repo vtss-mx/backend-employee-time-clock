@@ -115,6 +115,12 @@ class CatalogsRead(BaseModel):
     flash_modes: list[CatalogItem]
     face_errors: list[FaceErrorItem]
     enrollment_flags: list[CatalogItem]
+    #: Preguntas de la verificación por voz del registro facial (migración 0079): la app las muestra al empleado y la
+    #: empresa las ve en la revisión del video, en el idioma de la petición.
+    voice_questions: list[CatalogItem]
+    #: Voces de la guía por audio del registro facial (migración 0088): la empresa elige con cuál se dictan las
+    #: indicaciones; la síntesis es del navegador (regla 13).
+    voice_profiles: list[CatalogItem]
     api_scopes: list[CatalogItem]
     api_key_statuses: list[StatusItem]
     error_statuses: list[StatusItem]
@@ -139,6 +145,7 @@ class CatalogsRead(BaseModel):
     payment_methods: list[CatalogItem]
     #: Documentos de la empresa (migración 0075): tipos de los archivos que se guardan para facturarle.
     company_document_types: list[CatalogItem]
+    employee_document_types: list[CatalogItem]
     #: Monedas en que se puede cobrar a una empresa (la de su plan).
     currencies: list[CurrencyItem]
     #: Consumo (ADMIN): grupos del almacenamiento de cada empresa.

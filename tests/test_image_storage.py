@@ -29,6 +29,7 @@ from app.models import (
     Employee,
     EnrollmentStatus,
     FaceEnrollment,
+    FaceEnrollmentDraft,
     FaceStatus,
     Payment,
     StorageDeletion,
@@ -73,11 +74,18 @@ def _enroll(client, company_headers, **who) -> FaceEnrollment:
     return _row(response.json()["data"]["enrollment_id"])
 
 
-def _face_object(enrollment: FaceEnrollment) -> str:
+def _face_object(enrollment: FaceEnrollment, draft: int = 1) -> str:
+    """El objeto de la foto de un registro propio: su foto inicial (el borrador `draft` del paso 1, la primera de la
+    prueba), que pasa a ser la foto de referencia sin volver a subirse (decisión del dueño, 2026-10-07)."""
     return (
-        f"test/companies/{enrollment.company_id}/employees/{enrollment.employee_id}/face-enrollments/"
-        f"{enrollment.id}.jpg.enc"
+        f"test/companies/{enrollment.company_id}/employees/{enrollment.employee_id}/face-enrollments/drafts/"
+        f"{draft}.jpg.enc"
     )
+
+
+def _voice_objects(bucket) -> set[str]:
+    """Los videos de la verificación por voz del registro (viven junto a la foto; se borran con ella)."""
+    return {name for name in bucket.objects if "/voice/" in name}
 
 
 def _queue() -> set[str]:
@@ -107,7 +115,7 @@ def test_a_face_photo_goes_encrypted_to_the_bucket_and_only_its_reference_to_the
     assert b"face:juan" not in data and decrypt_bytes(data) == b"face:juan"  # el bucket nunca la ve legible
     digest = hashlib.sha256(data).hexdigest()
     assert metadata == {
-        "kind": "face-enrollment",
+        "kind": "face-enrollment-draft",
         "company_id": str(enrollment.company_id),
         "content_type": "image/jpeg",
         "sha256": digest,
@@ -115,8 +123,10 @@ def test_a_face_photo_goes_encrypted_to_the_bucket_and_only_its_reference_to_the
     }
     assert (enrollment.photo_object, enrollment.photo_size, enrollment.photo_sha256) == (name, 9, digest)
     assert enrollment.photo_uploaded_at is not None
-    # Subida "solo si no existe" verificada con lo que reportó el bucket (sin otra llamada).
-    assert bucket.calls == [("put", name)]
+    # Subida "solo si no existe" verificada con lo que reportó el bucket (sin otra llamada) en el paso 1; el paso 2 no
+    # vuelve a subirla (la foto inicial es la de referencia); después, los tres videos.
+    assert bucket.calls[0] == ("put", name) and [call for call in bucket.calls if call[1] == name] == [("put", name)]
+    assert len(_voice_objects(bucket)) == 3
 
     detail = client.get(f"/api/enrollments/{enrollment.id}", headers=company_headers).json()["data"]
     assert detail["photo"] == f"data:image/jpeg;base64,{base64.b64encode(b'face:juan').decode()}"
@@ -126,7 +136,7 @@ def test_a_face_photo_goes_encrypted_to_the_bucket_and_only_its_reference_to_the
 @pytest.mark.parametrize("storage", ["down", "disabled", "tampered"])
 def test_without_the_bucket_nothing_is_saved_halfway(client, company_headers, bucket, storage):
     """Bucket caído, sin configurar o que reporta otra cosa: 503 STORAGE_UNAVAILABLE reintentable con el
-    sobre de siempre y NADA guardado (ni registro, ni estado del empleado, ni objeto)."""
+    sobre de siempre y NADA guardado (ni foto inicial, ni registro, ni estado del empleado, ni objeto)."""
     headers = _new_employee(client, company_headers)
     if storage == "down":
         bucket.down = {"put"}
@@ -134,28 +144,31 @@ def test_without_the_bucket_nothing_is_saved_halfway(client, company_headers, bu
         use_storage(DisabledStorage("faltan GCS_BUCKET o GCS_CREDENTIALS_FILE en el .env"))
     else:
         bucket.tamper = True
-    response = submit_enrollment(client, headers)
+    response = submit_enrollment(client, headers)  # la foto inicial (paso 1) es la que sube al bucket
     assert response.status_code == 503 and response.json()["code"] == "STORAGE_UNAVAILABLE"
     assert response.headers["Retry-After"] == "10" and response.json()["traceId"]
-    assert _count(FaceEnrollment) == 0
+    assert _count(FaceEnrollment) == 0 and _count(FaceEnrollmentDraft) == 0
     with SessionLocal() as db:
         assert db.scalar(select(Employee.face_status)) == FaceStatus.NOT_ENROLLED
     assert bucket.objects == {}  # lo que alcanzó a subirse (y no se verificó) se borró
 
 
 def test_an_upload_whose_transaction_fails_is_removed_from_the_bucket(client, company_headers, bucket, monkeypatch):
+    """El registro en persona sube su foto y DESPUÉS guarda las muestras: si la BD falla ahí, el objeto se borra (o,
+    sin bucket, queda en la cola). (El registro propio ya no sube nada en el paso 2: usa la foto inicial.)"""
     from app.services.face_service import FaceService
+    from tests.test_in_person_face import in_person
 
-    headers = _new_employee(client, company_headers)
+    employee = create_employee(client, company_headers).json()["data"]
     monkeypatch.setattr(FaceService, "store", _broken)  # la BD falla DESPUÉS de subir la foto
-    response = submit_enrollment(client, headers)
+    response = in_person(client, company_headers, employee["id"], "enroll")
     assert response.status_code == 503 and response.json()["code"] == "DATABASE_UNAVAILABLE"
     assert _count(FaceEnrollment) == 0 and bucket.objects == {}
     assert [operation for operation, _ in bucket.calls] == ["put", "delete"]
 
     bucket.calls.clear()
     bucket.down = {"delete"}  # el bucket tampoco deja borrar: el objeto queda en la cola del mantenimiento
-    assert submit_enrollment(client, headers).status_code == 503
+    assert in_person(client, company_headers, employee["id"], "enroll").status_code == 503
     (name,) = bucket.objects
     assert _queue() == {name}
     bucket.down = set()
@@ -255,9 +268,11 @@ def test_no_table_can_hold_an_image():
     }
     # También el embedding CIFRADO de las capturas recientes (anti-reenvío perceptual, 30 días): un vector, no una
     # imagen (migración 0062).
+    # Y la plantilla de la foto inicial del registro (su borrador, paso 1 de 3; migración 0083): el vector, cifrado.
     assert binary == {
         "biometrics.face_embeddings.embedding_encrypted",
         "biometrics.capture_traces.embedding_encrypted",
+        "biometrics.face_enrollment_drafts.template_encrypted",
     }
 
 
@@ -336,29 +351,33 @@ def test_read_rules(bucket):
 def test_a_rejected_photo_leaves_the_bucket(client, company_headers, bucket):
     enrollment = _enroll(client, company_headers)
     name = _face_object(enrollment)
+    clips = _voice_objects(bucket)
     rejected = client.post(
         f"/api/enrollments/{enrollment.id}/reject", json={"reason": "No es el empleado"}, headers=company_headers
     )
     assert rejected.status_code == 200 and rejected.json()["data"]["photo"] is None
     row = _row(enrollment.id)
     assert (row.photo_object, row.photo_size, row.photo_sha256, row.photo_uploaded_at) == (None, None, None, None)
-    assert _queue() == {name}  # encolado en la misma transacción del rechazo
-    assert _run() == {DELETED: 1} and bucket.objects == {} and _queue() == set()
+    assert _queue() == {name, *clips}  # encolados en la misma transacción del rechazo (la foto y sus videos)
+    assert _run() == {DELETED: 4} and bucket.objects == {} and _queue() == set()
 
 
 def test_requesting_a_new_enrollment_removes_pending_photos(client, company_headers, bucket):
     enrollment = _enroll(client, company_headers)
+    clips = _voice_objects(bucket)
     reset = client.post(f"/api/employees/{enrollment.employee_id}/face/reset", headers=company_headers)
     assert reset.status_code == 200
-    assert _row(enrollment.id).photo_object is None and _queue() == {_face_object(enrollment)}
-    assert _run() == {DELETED: 1} and bucket.objects == {}
+    assert _row(enrollment.id).photo_object is None and _queue() == {_face_object(enrollment), *clips}
+    assert _run() == {DELETED: 4} and bucket.objects == {}
 
 
 def test_deleting_an_employee_removes_their_photos_from_the_bucket(client, company_headers, bucket):
     enrollment = _enroll(client, company_headers)
+    clips = _voice_objects(bucket)
     assert client.delete(f"/api/employees/{enrollment.employee_id}", headers=company_headers).status_code == 200
-    assert _queue() == {_face_object(enrollment)}  # encolado en la MISMA transacción que borró al empleado
-    assert _run() == {DELETED: 1} and bucket.objects == {}
+    # Encolados en la MISMA transacción que borró al empleado: la foto y sus videos (borrado REAL, regla 13).
+    assert _queue() == {_face_object(enrollment), *clips}
+    assert _run() == {DELETED: 4} and bucket.objects == {}
 
 
 def _queued(*names: str) -> None:
@@ -431,10 +450,13 @@ def test_the_admin_sees_how_the_bucket_is_doing(client, company_headers, admin_h
     assert storage["count_cap"] == 10_000
     assert storage["images"] == [
         {"kind": "face-enrollment", "label": "Fotos de referencia del registro facial", "stored": 2},
+        {"kind": "face-enrollment-draft", "label": "Fotos iniciales del registro facial (borradores)", "stored": 0},
         {"kind": "payment-receipt", "label": "Comprobantes de pago", "stored": 0},
         {"kind": "user-avatar", "label": "Fotos de perfil (un objeto por tamaño)", "stored": 0},
         {"kind": "fraud-evidence", "label": "Fotogramas de evidencia de casos de fraude", "stored": 0},
         {"kind": "company-document", "label": "Documentos de las empresas", "stored": 0},
+        {"kind": "employee-document", "label": "Documentos de identidad de los empleados", "stored": 0},
+        {"kind": "enrollment-voice", "label": "Videos de la verificación por voz del registro facial", "stored": 6},
     ]
     (deletions,) = storage["tasks"]
     assert deletions["task"] == "delete" and deletions["pending"] == 1
@@ -460,7 +482,7 @@ def test_storage_status_command(client, company_headers, bucket, monkeypatch, ca
     out = capsys.readouterr().out
     assert "gs://bucket-de-pruebas/test/" in out
     assert "- Fotos de referencia del registro facial: en el bucket: 1" in out
-    assert "- Objetos por borrar del bucket: 1" in out and "último error" in out
+    assert "- Objetos por borrar del almacenamiento: 1" in out and "último error" in out
     assert "migrar" not in out  # las imágenes solo viven en el bucket: no hay nada que migrar
 
 
@@ -468,7 +490,7 @@ def test_storage_status_without_a_bucket(client, monkeypatch, capsys):
     use_storage(DisabledStorage("faltan GCS_BUCKET o GCS_CREDENTIALS_FILE en el .env"))
     assert _cli(monkeypatch, "storage", "status") == 0
     out = capsys.readouterr().out
-    assert "apagado (faltan GCS_BUCKET" in out and "- Objetos por borrar del bucket: 0" in out
+    assert "apagado (faltan GCS_BUCKET" in out and "- Objetos por borrar del almacenamiento: 0" in out
     assert "último error" not in out  # el mantenimiento nunca corrió
 
 

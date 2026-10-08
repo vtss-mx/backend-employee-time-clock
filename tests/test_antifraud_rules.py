@@ -163,6 +163,7 @@ def rank(catalog: str, code: str) -> int:
         ("risk_signals.FLASH_FLAT.points", 30, 10, True),
         ("adaptive_learning", True, False, False),
         ("fraud_evidence", True, False, False),
+        ("voice_verification", True, False, True),
     ],
 )
 def test_each_field_knows_which_way_is_safer(field, before, after, relaxes):
@@ -183,7 +184,9 @@ def test_only_what_changes_is_in_the_diff_and_signals_are_flattened():
 def test_presets_get_stricter_from_standard_to_maximum():
     standard, high, maximum = (policy_rules.PRESETS[code] for code in ("STANDARD", "HIGH", "MAXIMUM"))
     assert standard["risk_medium_score"] > high["risk_medium_score"] > maximum["risk_medium_score"]
-    assert standard["flash_liveness"] == "OBSERVE" and maximum["anti_spoofing_level"] == "MAXIMUM"
+    # El destello se retiró (2026-10-06): ningún nivel lo enciende.
+    assert standard["flash_liveness"] == high["flash_liveness"] == maximum["flash_liveness"] == "OFF"
+    assert maximum["anti_spoofing_level"] == "MAXIMUM"
     assert not any(policy_rules.relaxes(f, standard[f], high[f], rank) for f in standard if f != "risk_signals")
     assert not any(policy_rules.relaxes(f, high[f], maximum[f], rank) for f in high if f != "risk_signals")
     # Fase 2b (decisión del dueño, 2026-10-06): Máximo exige las pruebas de presencia; Estándar y Alto solo miden.

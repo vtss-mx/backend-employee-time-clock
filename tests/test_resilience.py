@@ -115,17 +115,13 @@ def test_worker_pool_fifo_and_backpressure():
 
 
 def test_face_busy_returns_503(client, company_headers, monkeypatch):
-    from contextlib import contextmanager
-
     from app.facial_recognition import QueueFullError
 
     headers = approved_employee(client, company_headers)
     app.dependency_overrides.pop(get_pipeline, None)  # usar la dependencia real
 
-    @contextmanager
-    def full():
+    def full() -> None:
         raise QueueFullError("llena")
-        yield  # pragma: no cover
 
     monkeypatch.setattr(dependencies, "lease_pipeline", full)
     response = client.post("/api/face/check", files={"image": ("c.jpg", b"face:juan", "image/jpeg")}, headers=headers)

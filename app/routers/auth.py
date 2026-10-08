@@ -6,10 +6,11 @@
 """
 
 import logging
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Cookie, Depends, Request, Response
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.opaque_tokens import split_token
@@ -17,6 +18,7 @@ from app.core.responses import ApiResponse, ok
 from app.core.tokens import jwks
 from app.dependencies import (
     CurrentUser,
+    DbSession,
     EmployeeAccount,
     OptionalTokenPayload,
     Pagination,
@@ -26,7 +28,7 @@ from app.dependencies import (
 )
 from app.i18n import Text
 from app.middleware.rate_limit import enforce, ip_rate_limit
-from app.models import Screen, SessionRevocationReason
+from app.models import Screen, SessionRevocationReason, User
 from app.schemas.auth import (
     ChangePasswordRequest,
     CompanySelection,
@@ -39,11 +41,20 @@ from app.schemas.auth import (
     TokenResponse,
 )
 from app.schemas.common import ErrorResponse
+from app.schemas.passkey import (
+    ChallengeOptions,
+    PasskeyList,
+    PasskeyLogin,
+    PasskeyRead,
+    PasskeyRegistration,
+    PasskeyRename,
+)
 from app.schemas.user import UserRead
-from app.services.auth_service import AuthService, default_company_id
+from app.services.auth_service import AuthService, default_company_id, ensure_account_usable
 from app.services.device_service import ensure_device_authorized
 from app.services.location_service import ensure_location_allowed
 from app.services.navigation_service import user_read
+from app.services.passkey_service import PasskeyService
 from app.services.policy_service import ensure_device_allowed
 from app.services.remembered_account_service import RememberedAccountService
 from app.services.session_service import IssuedSession, SessionService
@@ -109,6 +120,19 @@ def login(
     # Límite adicional por cuenta para frenar fuerza bruta sobre un mismo correo.
     enforce(f"login:email:{payload.email}", settings.RATE_LIMIT_LOGIN_PER_MINUTE)
     user = AuthService(db).authenticate(payload.email, payload.password)
+    return _start_session(user, payload, request, response, db, remembered)
+
+
+def _start_session(
+    user: User,
+    payload: LoginRequest | PasskeyLogin,
+    request: Request,
+    response: Response,
+    db: Session,
+    remembered: str | None,
+) -> ApiResponse[TokenResponse]:
+    """Lo que sigue a autenticar a la persona (con su contraseña o con una llave de acceso), igual para los dos: las
+    reglas del dispositivo y la ubicación de un validador, UNA sesión y recordar la cuenta en el dispositivo."""
     # Con un solo empleo entra directo a su empresa; con varios, la elige después (POST /auth/company).
     user.use_company(default_company_id(user))
     # Antes de crear la sesión: desde un dispositivo no permitido no se emite ningún token.
@@ -136,6 +160,106 @@ def login(
         db.rollback()
         logger.warning("No se pudo recordar la cuenta en este dispositivo; la sesión sí se inició", exc_info=True)
     return ok(_token_response(issued), code="LOGIN_SUCCESS")
+
+
+# ---------------------------------------------------------------- llaves de acceso (WebAuthn / passkeys)
+
+PASSKEY_ERRORS: dict[int | str, dict[str, Any]] = {
+    401: {"model": ErrorResponse},
+    404: {"model": ErrorResponse, "description": "La llave no es de esta cuenta"},
+    409: {"model": ErrorResponse, "description": "Reto ya usado, llave ya registrada o tope de llaves"},
+    422: {"model": ErrorResponse, "description": "Reto vencido o credencial que no verifica"},
+}
+
+
+@router.post(
+    "/login/passkey/options",
+    response_model=ApiResponse[ChallengeOptions],
+    summary="Entrar con una llave de acceso: el reto (sellado, de un solo uso) y las opciones del navegador",
+    description=(
+        "Sin sesión. Devuelve `options` para `navigator.credentials.get` (sin lista de llaves: la persona elige en su "
+        "dispositivo, con verificación obligatoria) y `token`, el reto sellado que debe volver con la firma."
+    ),
+    responses={429: {"model": ErrorResponse}},
+    dependencies=[Depends(ip_rate_limit("login", lambda: settings.RATE_LIMIT_LOGIN_IP_PER_MINUTE))],
+)
+def passkey_login_options(db: PlatformDb) -> ApiResponse[ChallengeOptions]:
+    return ok(PasskeyService(db).login_options(), code="PASSKEY_LOGIN_OPTIONS")
+
+
+@router.post(
+    "/login/passkey",
+    response_model=ApiResponse[TokenResponse],
+    summary="Iniciar sesión con una llave de acceso (WebAuthn)",
+    description=(
+        "La misma sesión que `/auth/login` y las mismas reglas (empresa suspendida, estado de la cuenta, dispositivo y "
+        "ubicación de un validador, `remember`). Una firma que no verifica, un reto vencido o ya usado: 401 "
+        "`PASSKEY_LOGIN_FAILED`. Una llave copiada (su contador no avanzó): 401 `PASSKEY_CLONED` y la llave se revoca."
+    ),
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}, 429: {"model": ErrorResponse}},
+    dependencies=[Depends(ip_rate_limit("login", lambda: settings.RATE_LIMIT_LOGIN_IP_PER_MINUTE))],
+)
+def passkey_login(
+    payload: PasskeyLogin, request: Request, response: Response, db: PlatformDb, remembered: RememberCookie = None
+) -> ApiResponse[TokenResponse]:
+    # Límite por credencial (como el de la contraseña por correo): frena a quien prueba firmas contra una misma llave.
+    enforce(f"login:passkey:{str(payload.credential.get('id', ''))[:200]}", settings.RATE_LIMIT_LOGIN_PER_MINUTE)
+    user = PasskeyService(db).authenticate(payload.token, payload.credential)
+    ensure_account_usable(user)
+    return _start_session(user, payload, request, response, db, remembered)
+
+
+@router.post(
+    "/passkeys/options",
+    response_model=ApiResponse[ChallengeOptions],
+    summary="Registrar una llave de acceso: el reto (sellado, de un solo uso) y las opciones del navegador",
+    responses=PASSKEY_ERRORS,
+)
+def passkey_registration_options(user: CurrentUser, db: DbSession) -> ApiResponse[ChallengeOptions]:
+    return ok(PasskeyService(db).registration_options(user), code="PASSKEY_OPTIONS")
+
+
+@router.post(
+    "/passkeys",
+    response_model=ApiResponse[PasskeyRead],
+    status_code=201,
+    summary="Registrar una llave de acceso en esta cuenta",
+    responses=PASSKEY_ERRORS,
+)
+def register_passkey(payload: PasskeyRegistration, user: CurrentUser, db: DbSession) -> ApiResponse[PasskeyRead]:
+    passkey = PasskeyService(db).register(user, payload.token, payload.name, payload.credential)
+    return ok(PasskeyRead.model_validate(passkey), code="PASSKEY_REGISTERED", status_code=201)
+
+
+@router.get("/passkeys", response_model=ApiResponse[PasskeyList], summary="Mis llaves de acceso (paginado)")
+def list_passkeys(user: CurrentUser, db: DbSession, page: Pagination) -> ApiResponse[PasskeyList]:
+    passkeys, total = PasskeyService(db).page(user, page)
+    items = [PasskeyRead.model_validate(p) for p in passkeys]
+    return ok(PasskeyList.of(items, total, page), code="PASSKEYS_LISTED", params={"count": total})
+
+
+@router.patch(
+    "/passkeys/{passkey_id}",
+    response_model=ApiResponse[PasskeyRead],
+    summary="Renombrar una de mis llaves de acceso",
+    responses=PASSKEY_ERRORS,
+)
+def rename_passkey(
+    passkey_id: int, payload: PasskeyRename, user: CurrentUser, db: DbSession
+) -> ApiResponse[PasskeyRead]:
+    passkey = PasskeyService(db).rename(user, passkey_id, payload.name)
+    return ok(PasskeyRead.model_validate(passkey), code="PASSKEY_RENAMED")
+
+
+@router.delete(
+    "/passkeys/{passkey_id}",
+    response_model=ApiResponse[None],
+    summary="Revocar una de mis llaves de acceso (deja de servir al instante)",
+    responses=PASSKEY_ERRORS,
+)
+def revoke_passkey(passkey_id: int, user: CurrentUser, db: DbSession) -> ApiResponse[None]:
+    PasskeyService(db).revoke(user, passkey_id)
+    return ok(None, code="PASSKEY_REVOKED")
 
 
 @router.get(

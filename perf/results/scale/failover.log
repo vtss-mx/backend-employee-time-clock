@@ -1,26 +1,26 @@
- Container timeclock-scale-k6-run-f8d954e78e68 Creating 
- Container timeclock-scale-k6-run-f8d954e78e68 Created 
+ Container timeclock-scale-k6-run-400e4f90b9d0 Creating 
+ Container timeclock-scale-k6-run-400e4f90b9d0 Created 
 
 
   █ TOTAL RESULTS 
 
     CUSTOM
-    ok.............................: 9001   199.725169/s
+    ok.............................: 9001   199.424328/s
 
     HTTP
-    http_req_duration..............: avg=6.79ms p(50)=6.93ms p(95)=10.58ms p(99)=16.77ms max=140.24ms
-      { expected_response:true }...: avg=6.79ms p(50)=6.93ms p(95)=10.58ms p(99)=16.77ms max=140.24ms
+    http_req_duration..............: avg=9.23ms p(50)=8.7ms  p(95)=16.97ms p(99)=32.07ms max=256.4ms 
+      { expected_response:true }...: avg=9.23ms p(50)=8.7ms  p(95)=16.97ms p(99)=32.07ms max=256.4ms 
     http_req_failed................: 0.00%  0 out of 9002
-    http_reqs......................: 9002   199.747358/s
+    http_reqs......................: 9002   199.446484/s
 
     EXECUTION
-    iteration_duration.............: avg=6.85ms p(50)=6.99ms p(95)=10.66ms p(99)=16.83ms max=140.3ms 
-    iterations.....................: 9001   199.725169/s
-    vus............................: 0      min=0         max=4  
+    iteration_duration.............: avg=9.32ms p(50)=8.79ms p(95)=17.1ms  p(99)=31.99ms max=256.46ms
+    iterations.....................: 9001   199.424328/s
+    vus............................: 2      min=1         max=6  
     vus_max........................: 200    min=200       max=200
 
     NETWORK
-    data_received..................: 218 MB 4.8 MB/s
+    data_received..................: 223 MB 4.9 MB/s
     data_sent......................: 4.9 MB 109 kB/s
 
 

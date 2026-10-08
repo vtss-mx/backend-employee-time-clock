@@ -11,7 +11,10 @@ from app.schemas.common import Page
 class VerificationPolicyRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    block_glasses: bool = Field(description="Exigir retirar lentes (incluye lentes de sol)")
+    block_glasses: bool = Field(
+        description="Exigir retirar lentes (incluye lentes de sol). Apagado por omisión en toda empresa desde el "
+        "2026-10-07 (decisión del dueño); encendido, un rostro con lentes no se registra ni se verifica"
+    )
     block_headwear: bool = Field(description="Exigir retirar gorra, sombrero o visera (salvo empleados exentos)")
     block_mask: bool = Field(description="Exigir retirar cubrebocas")
     liveness_challenge: bool = Field(description="Prueba de vida: girar la cabeza en una dirección aleatoria")
@@ -38,6 +41,12 @@ class VerificationPolicyRead(BaseModel):
         default=True, description="Asistencia: rechazar registros más lejos de lo que se puede viajar desde el anterior"
     )
     max_travel_kmh: int = Field(default=200, description="Velocidad máxima creíble entre dos registros (km/h)")
+    verification_location: str = Field(
+        default="OBSERVE",
+        description="Ubicación de cada verificación de identidad (empleado, validador y API; catalog.signal_modes): "
+        "OFF no la pide, OBSERVE la registra (mapa de «Verificaciones») y ENFORCE la exige. La lee la empresa para "
+        "saber si enviarla; la configura el ADMIN. Distinta de validator_location (prueba de presencia del validador)",
+    )
     # --- Candados contra engaños (cada uno se puede desactivar) ---
     anti_spoofing_level: str = Field(
         default="STANDARD", description="Sensibilidad del anti-spoofing (catalog.antispoof_levels)"
@@ -48,8 +57,9 @@ class VerificationPolicyRead(BaseModel):
     )
     liveness_timeout_seconds: int = Field(default=60, description="Segundos para responder el reto completo")
     flash_liveness: str = Field(
-        default="OBSERVE",
-        description="Destello de colores en la pantalla (catalog.flash_modes): OFF, OBSERVE (solo medir) o ENFORCE",
+        default="OFF",
+        description="Destello de colores en la pantalla (catalog.flash_modes): OFF, OBSERVE (solo medir) o ENFORCE. "
+        "Retirado de la experiencia por decisión del dueño (2026-10-06): OFF en toda empresa",
     )
     block_virtual_cameras: bool = Field(
         default=True, description="Rechazar cámaras virtuales (programas que inyectan video)"
@@ -58,6 +68,17 @@ class VerificationPolicyRead(BaseModel):
         default=True, description="Rechazar imágenes con metadatos de cámara o de edición (no son capturas en vivo)"
     )
     detect_static_captures: bool = Field(default=True, description="Rechazar capturas idénticas (una foto fija)")
+    voice_verification: bool = Field(
+        default=True,
+        description="Registro facial (decisión del dueño, 2026-10-06): tras las fotos, tres preguntas en video sobre "
+        "los datos del empleado (voz y rostro comparados en el servidor; la empresa revisa el video al validar)",
+    )
+    voice_guidance_enabled: bool = Field(
+        default=False,
+        description="Guía por audio del registro facial (decisión del dueño, 2026-10-08): la app dicta las "
+        "indicaciones con voz; la síntesis es del navegador",
+    )
+    voice_profile: str = Field(default="FEMALE_WARM", description="Voz de la guía por audio (catalog.voice_profiles)")
     detect_replays: bool = Field(default=True, description="Rechazar capturas que ya se habían recibido (reenvío)")
     check_capture_continuity: bool = Field(
         default=True, description="Exigir que todas las capturas sean de la misma toma (cámara, encuadre y luz)"
@@ -214,10 +235,16 @@ class VerificationPolicyUpdate(BaseModel):
     fraud_evidence: bool | None = None
     flash_paced: bool | None = None
     capture_burst: bool | None = None
+    voice_verification: bool | None = None
+    #: Guía por audio (decisión del dueño, 2026-10-08): si se dicta y con cuál voz (código de catalog.voice_profiles).
+    voice_guidance_enabled: bool | None = None
+    voice_profile: str | None = Field(default=None, max_length=30)
     #: Antifraude 2b: códigos activos de catalog.signal_modes (los valida el servicio).
     validator_signing: str | None = Field(default=None, max_length=20)
     validator_location: str | None = Field(default=None, max_length=20)
     site_codes: str | None = Field(default=None, max_length=20)
+    #: Ubicación de cada verificación de identidad (codigos activos de catalog.signal_modes; los valida el servicio).
+    verification_location: str | None = Field(default=None, max_length=20)
     #: Por qué se cambia (se guarda en el historial; recomendado al relajar la seguridad).
     reason: str | None = Field(default=None, max_length=500)
 

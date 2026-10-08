@@ -111,7 +111,6 @@ MESSAGES: Messages = {
     "EMPLOYEE_NOT_FOUND": "Empleado no encontrado",
     "EMPLOYEE_NUMBER_AVAILABLE": "Número de empleado disponible",
     "EMPLOYEE_NUMBER_INVALID": "El número de empleado debe tener 1-30 caracteres: letras, números, guion o guion bajo",
-    "EMPLOYEE_NUMBER_REQUIRED": "El número de empleado es obligatorio",
     "EMPLOYEE_NUMBER_TAKEN": "El número de empleado ya está registrado",
     "EMPLOYEE_RESTORED": "Empleado restaurado. Debe registrar su rostro de nuevo.",
     "EMPLOYEE_TOO_YOUNG": "El empleado debe tener al menos {count} años",

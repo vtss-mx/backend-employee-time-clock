@@ -70,6 +70,29 @@ MESSAGES: Messages = {
     "MY_QR_STATUS": "Estado de tu código QR",
     "NOT_YOUR_COMPANY": "No trabajas en esa empresa",
     "NO_LONGER_IN_COMPANY": "Ya no tienes acceso a esta empresa. Inicia sesión de nuevo.",
+    "PASSKEYS_LISTED": {
+        "one": "{count} llave de acceso",
+        "other": "{count} llaves de acceso",
+    },
+    "PASSKEY_ALREADY_REGISTERED": "Esa llave de acceso ya está registrada",
+    "PASSKEY_CHALLENGE_INVALID": "El reto de la llave de acceso venció o no es válido. Intenta de nuevo.",
+    "PASSKEY_CHALLENGE_USED": "Ese reto ya se usó. Intenta de nuevo.",
+    "PASSKEY_CLONED": (
+        "Esa llave de acceso se usó desde una copia y se revocó por seguridad. Entra con tu contraseña y registra una "
+        "nueva."
+    ),
+    "PASSKEY_INVALID": "No se pudo verificar la llave de acceso que envió tu dispositivo. Intenta de nuevo.",
+    "PASSKEY_LIMIT_REACHED": {
+        "one": "Ya tienes {count} llave de acceso. Revoca una para registrar otra.",
+        "other": "Ya tienes {count} llaves de acceso. Revoca una para registrar otra.",
+    },
+    "PASSKEY_LOGIN_FAILED": "No se pudo entrar con esa llave de acceso. Intenta de nuevo o usa tu contraseña.",
+    "PASSKEY_LOGIN_OPTIONS": "Reto para entrar con una llave de acceso",
+    "PASSKEY_NOT_FOUND": "Llave de acceso no encontrada",
+    "PASSKEY_OPTIONS": "Reto para registrar una llave de acceso",
+    "PASSKEY_REGISTERED": "Llave de acceso registrada",
+    "PASSKEY_RENAMED": "Nombre de la llave guardado",
+    "PASSKEY_REVOKED": "Llave de acceso revocada",
     "PASSWORD_CHANGED": {
         "zero": "Contraseña actualizada.",
         "one": "Contraseña actualizada. Se cerró {count} sesión en otros dispositivos.",

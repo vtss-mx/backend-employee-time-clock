@@ -7,8 +7,8 @@ from fastapi import APIRouter
 
 from app.main import app
 from tests.conftest import approved_employee, create_employee
+from tests.test_envelope import KEYS as ENVELOPE_KEYS
 
-ENVELOPE_KEYS = {"success", "statusCode", "code", "message", "data", "errors", "traceId", "timestamp"}
 ISO_UTC = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$")
 
 
@@ -103,4 +103,6 @@ def test_unhandled_exception_keeps_trace_id(client):
 def test_success_is_derived_from_status_code(status, expected):
     from app.core.responses import ApiResponse
 
-    assert ApiResponse(statusCode=status, success=not expected).success is expected
+    texts = {"message": "Listo", "errors": [], "texts": []}
+    response = ApiResponse(statusCode=status, success=not expected, message="Listo", i18n={"es-MX": texts})
+    assert response.success is expected

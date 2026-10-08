@@ -50,6 +50,13 @@
       "description": "Escanea su QR y confirma que el rostro es de su dueño",
       "sort_order": 3,
       "active": true
+    },
+    {
+      "code": "API_FACE",
+      "name": "Rostro (aplicación móvil)",
+      "description": "Verificación o identificación desde la aplicación móvil de la empresa, con su llave de la API",
+      "sort_order": 4,
+      "active": true
     }
   ],
   "validator_modes": [
@@ -228,6 +235,13 @@
       "description": "Consultar los validadores de identidad (GET /validators): nombre, modo, domicilio y estado.",
       "sort_order": 3,
       "active": true
+    },
+    {
+      "code": "VERIFICATION",
+      "name": "Verificación",
+      "description": "Verificar o identificar el rostro de un empleado desde la aplicación móvil de la empresa (POST /verification/*). Solo verifica: no consulta empleados ni identificaciones.",
+      "sort_order": 4,
+      "active": true
     }
   ],
   "api_key_statuses": [
@@ -372,7 +386,7 @@
     {
       "code": "SPOOF_DETECTED",
       "name": "Posible foto o pantalla",
-      "description": "El anti-spoofing detectó una foto impresa, una pantalla o un video.",
+      "description": "La detección de suplantación encontró una foto impresa, una pantalla o un video.",
       "message": "No se pudo confirmar que seas una persona frente a la cámara. Intenta de nuevo.",
       "sort_order": 15,
       "active": true
@@ -3391,7 +3405,7 @@
     {
       "code": "REFRESH_REUSE_DETECTED",
       "name": "Posible robo de sesión",
-      "description": "Se presentó un token de renovación ya usado: se asume robo y se cierra la sesión.",
+      "description": "Se presentó una credencial de renovación ya usada: se asume robo y se cierra la sesión.",
       "message": "Tu sesión ya no es válida. Inicia sesión de nuevo.",
       "sort_order": 10,
       "active": true
@@ -3577,7 +3591,7 @@
     {
       "code": "ACCESSORIES_DETECTED",
       "name": "Accesorios",
-      "description": "{accessories} se arma con las frases (phrase) del catálogo de accesorios.",
+      "description": "{accessories} se arma con las frases del catálogo de accesorios.",
       "message": "Quítate {accessories} para continuar",
       "retryable": true,
       "sort_order": 17,
@@ -3622,7 +3636,7 @@
     {
       "code": "LIVENESS_FAILED",
       "name": "Prueba de vida no superada",
-      "description": "En el registro facial (en la identificación se usa catalog.verification_reasons).",
+      "description": "En el registro facial (en la identificación se usan los motivos de verificación).",
       "message": "No se detectó el movimiento solicitado. Intenta de nuevo.",
       "retryable": true,
       "sort_order": 22,
@@ -3631,7 +3645,7 @@
     {
       "code": "LIVENESS_MISMATCH",
       "name": "Otra persona en el reto",
-      "description": "En el registro facial (en la identificación se usa catalog.verification_reasons).",
+      "description": "En el registro facial (en la identificación se usan los motivos de verificación).",
       "message": "Las capturas no corresponden a la misma persona. Intenta de nuevo.",
       "retryable": true,
       "sort_order": 23,
@@ -3834,7 +3848,7 @@
     {
       "code": "SPOOF",
       "name": "Posible foto o pantalla",
-      "description": "El anti-spoofing sugiere que las capturas podrían ser de una foto o una pantalla.",
+      "description": "La detección de suplantación sugiere que las capturas podrían ser de una foto o una pantalla.",
       "sort_order": 4,
       "active": true
     },
@@ -3850,6 +3864,157 @@
       "name": "Parecido con otro empleado",
       "description": "El rostro se parece, con el nivel de sospecha de la empresa, al de otro empleado aprobado: revisa a los más parecidos antes de aprobar.",
       "sort_order": 6,
+      "active": true
+    },
+    {
+      "code": "VOICE_RETRIES",
+      "name": "Respuestas repetidas en el video",
+      "description": "En la verificación por voz alguna pregunta necesitó más de un intento: revisa el video antes de aceptar.",
+      "sort_order": 7,
+      "active": true
+    },
+    {
+      "code": "VIDEO_FACE_MISMATCH",
+      "name": "Rostro distinto en algún video",
+      "description": "En algún intento de la verificación por voz el rostro del video no coincidió con las fotos del registro: revisa el video antes de aceptar.",
+      "sort_order": 8,
+      "active": true
+    }
+  ],
+  "voice_questions": [
+    {
+      "code": "FULL_NAME",
+      "name": "¿Cuál es tu nombre completo?",
+      "description": "Se compara con el nombre y los apellidos registrados del empleado.",
+      "sort_order": 1,
+      "active": true
+    },
+    {
+      "code": "BIRTH_DATE",
+      "name": "¿Cuál es tu fecha de nacimiento?",
+      "description": "Se compara con la fecha de nacimiento registrada (día, mes y año).",
+      "sort_order": 2,
+      "active": true
+    },
+    {
+      "code": "COMPANY_NAME",
+      "name": "¿Cómo se llama la empresa donde trabajas?",
+      "description": "Se compara con el nombre de la empresa.",
+      "sort_order": 3,
+      "active": true
+    },
+    {
+      "code": "EMPLOYEE_NUMBER",
+      "name": "¿Cuál es tu número de empleado?",
+      "description": "Se compara con el número de empleado registrado; solo se pregunta si lo tiene.",
+      "sort_order": 4,
+      "active": true
+    },
+    {
+      "code": "DEPARTMENT",
+      "name": "¿En qué departamento trabajas?",
+      "description": "Se compara con el departamento asignado; solo se pregunta si tiene uno.",
+      "sort_order": 5,
+      "active": true
+    },
+    {
+      "code": "WORK_SITE",
+      "name": "¿En qué sitio o sucursal trabajas?",
+      "description": "Se compara con el sitio de trabajo de su turno; solo se pregunta si su turno tiene uno.",
+      "sort_order": 6,
+      "active": true
+    },
+    {
+      "code": "FIRST_NAME",
+      "name": "¿Cuál es tu nombre (sin apellidos)?",
+      "description": "Se compara con el nombre registrado del empleado, sin los apellidos.",
+      "sort_order": 7,
+      "active": true
+    },
+    {
+      "code": "SURNAMES",
+      "name": "¿Cuáles son tus apellidos?",
+      "description": "Se compara con los apellidos registrados del empleado.",
+      "sort_order": 8,
+      "active": true
+    },
+    {
+      "code": "FIRST_SURNAME",
+      "name": "¿Cuál es tu primer apellido?",
+      "description": "Se compara con el primer apellido; solo se pregunta si los apellidos son dos palabras.",
+      "sort_order": 9,
+      "active": true
+    },
+    {
+      "code": "SECOND_SURNAME",
+      "name": "¿Cuál es tu segundo apellido?",
+      "description": "Se compara con el segundo apellido; solo se pregunta si los apellidos son dos palabras.",
+      "sort_order": 10,
+      "active": true
+    },
+    {
+      "code": "BIRTH_MONTH",
+      "name": "¿En qué mes naciste?",
+      "description": "Se compara con el mes de la fecha de nacimiento, por su nombre o su número.",
+      "sort_order": 11,
+      "active": true
+    },
+    {
+      "code": "BIRTH_YEAR",
+      "name": "¿En qué año naciste?",
+      "description": "Se compara con el año de la fecha de nacimiento, completo o sus dos últimas cifras.",
+      "sort_order": 12,
+      "active": true
+    },
+    {
+      "code": "BIRTH_DAY",
+      "name": "¿Qué día del mes naciste?",
+      "description": "Se compara con el día de la fecha de nacimiento.",
+      "sort_order": 13,
+      "active": true
+    },
+    {
+      "code": "ARITHMETIC_SUM",
+      "name": "¿Cuánto suman los dos números que te mostramos?",
+      "description": "Prueba de atención: el total de dos números al azar; cambia en cada intento.",
+      "sort_order": 14,
+      "active": true
+    }
+  ],
+  "voice_profiles": [
+    {
+      "code": "FEMALE_WARM",
+      "name": "Femenina cálida",
+      "description": "Voz femenina de tono cálido",
+      "sort_order": 1,
+      "active": true
+    },
+    {
+      "code": "FEMALE_CLEAR",
+      "name": "Femenina clara",
+      "description": "Voz femenina nítida y pausada",
+      "sort_order": 2,
+      "active": true
+    },
+    {
+      "code": "MALE_CALM",
+      "name": "Masculina serena",
+      "description": "Voz masculina tranquila",
+      "sort_order": 3,
+      "active": true
+    },
+    {
+      "code": "MALE_DEEP",
+      "name": "Masculina grave",
+      "description": "Voz masculina de tono grave",
+      "sort_order": 4,
+      "active": true
+    },
+    {
+      "code": "NEUTRAL",
+      "name": "Neutra del sistema",
+      "description": "La voz predeterminada del dispositivo",
+      "sort_order": 5,
       "active": true
     }
   ],
@@ -4448,6 +4613,43 @@
       "active": true
     }
   ],
+  "employee_document_types": [
+    {
+      "code": "PASSPORT",
+      "name": "Pasaporte",
+      "description": "Documento de viaje internacional con fotografía.",
+      "sort_order": 1,
+      "active": true
+    },
+    {
+      "code": "NATIONAL_ID",
+      "name": "Credencial para votar (INE)",
+      "description": "Identificación oficial con fotografía.",
+      "sort_order": 2,
+      "active": true
+    },
+    {
+      "code": "DRIVER_LICENSE",
+      "name": "Licencia de conducir",
+      "description": "Licencia de manejo con fotografía.",
+      "sort_order": 3,
+      "active": true
+    },
+    {
+      "code": "OTHER_OFFICIAL_ID",
+      "name": "Otra identificación oficial",
+      "description": "Cualquier identificación oficial con fotografía.",
+      "sort_order": 4,
+      "active": true
+    },
+    {
+      "code": "PROOF_OF_ADDRESS",
+      "name": "Comprobante de domicilio",
+      "description": "Recibo reciente de luz, agua o teléfono.",
+      "sort_order": 5,
+      "active": true
+    }
+  ],
   "currencies": [
     {
       "code": "MXN",
@@ -4585,7 +4787,7 @@
     },
     {
       "code": "MORPH",
-      "name": "Rostro combinado (morphing)",
+      "name": "Rostro combinado",
       "description": "Un registro facial que mezcla los rasgos de dos personas.",
       "sort_order": 7,
       "active": true
@@ -4704,7 +4906,7 @@
     {
       "code": "SPOOF_PROB_LOW",
       "name": "Probabilidad de rostro real baja",
-      "description": "El anti-spoofing pasó, pero la probabilidad de rostro real quedó cerca de su umbral.",
+      "description": "La detección de suplantación pasó, pero la probabilidad de rostro real quedó cerca de su umbral.",
       "sort_order": 1,
       "active": true,
       "kind": "PRESENTATION",
@@ -4743,7 +4945,7 @@
     {
       "code": "REPLAY_PERCEPTUAL",
       "name": "Reenvío perceptual",
-      "description": "Una captura casi idéntica (pHash y embedding) a otra de un intento anterior del mismo empleado. Regla dura al exigirla.",
+      "description": "Una captura casi idéntica (por su huella visual y su vector facial) a otra de un intento anterior del mismo empleado. Regla dura al exigirla.",
       "sort_order": 4,
       "active": true,
       "kind": "REPLAY",
@@ -5185,7 +5387,7 @@
     {
       "code": "VALIDATOR_UNSIGNED",
       "name": "Identificación sin firma del dispositivo",
-      "description": "La identificación del validador no trajo la firma de su dispositivo o su reto ya había vencido. La app siempre firma; un programa con un token copiado, no.",
+      "description": "La identificación del validador no trajo la firma de su dispositivo o su reto ya había vencido. La aplicación siempre firma; un programa con una sesión copiada, no.",
       "sort_order": 38,
       "active": true,
       "kind": "INJECTION",
@@ -5198,7 +5400,7 @@
     {
       "code": "VALIDATOR_SIGNATURE_INVALID",
       "name": "Firma del dispositivo alterada",
-      "description": "La firma de la identificación no corresponde a su reto ni a su contenido. Solo una app alterada o un ataque la produce. Regla dura al exigirla.",
+      "description": "La firma de la identificación no corresponde a su reto ni a su contenido. Solo una aplicación alterada o un ataque la produce. Regla dura al exigirla.",
       "sort_order": 39,
       "active": true,
       "kind": "INJECTION",
@@ -5211,7 +5413,7 @@
     {
       "code": "VALIDATOR_KEY_MISMATCH",
       "name": "Dispositivo distinto al de la sesión",
-      "description": "Firmó la identificación un dispositivo distinto al que inició sesión: típico de un token copiado a otro equipo. También pasa si el navegador borró su llave.",
+      "description": "Firmó la identificación un dispositivo distinto al que inició sesión: típico de una sesión copiada a otro equipo. También pasa si el navegador borró su llave.",
       "sort_order": 40,
       "active": true,
       "kind": "INTERNAL",
@@ -5224,7 +5426,7 @@
     {
       "code": "VALIDATOR_LOCATION_MISSING",
       "name": "Identificación sin ubicación",
-      "description": "El validador requiere ubicación y la identificación no la trajo: se retiró el permiso o la petición no salió de la app.",
+      "description": "El validador requiere ubicación y la identificación no la trajo: se retiró el permiso o la petición no salió de la aplicación.",
       "sort_order": 41,
       "active": true,
       "kind": "LOCATION",
@@ -5250,7 +5452,7 @@
     {
       "code": "VALIDATOR_OUT_OF_ZONE",
       "name": "Validador fuera de su lugar",
-      "description": "La identificación se hizo lejos del lugar donde opera el validador: una tableta que salió del sitio o un token usado en otro lado.",
+      "description": "La identificación se hizo lejos del lugar donde opera el validador: una tableta que salió del sitio o una sesión usada en otro lado.",
       "sort_order": 43,
       "active": true,
       "kind": "LOCATION",
@@ -5339,7 +5541,7 @@
     {
       "code": "STEP_UP",
       "name": "Un paso más",
-      "description": "Se pide en el momento un reto más exigente (tres movimientos y destello obligatorio) sin repetir el escaneo.",
+      "description": "Se pide en el momento un reto más exigente (tres movimientos) sin repetir el escaneo.",
       "sort_order": 3,
       "active": true
     },
@@ -5418,21 +5620,21 @@
     {
       "code": "STANDARD",
       "name": "Estándar",
-      "description": "Para la mayoría: dos movimientos en 60 s, anti-spoofing Estándar y cortes de riesgo 30/60/80. El destello (hasta calibrarlo), el dispositivo del empleado, el protocolo de captura y la presencia de los validadores, en Solo medir.",
+      "description": "Para la mayoría: dos movimientos en 60 s, detección de suplantación Estándar y cortes de riesgo 30/60/80. El dispositivo del empleado, la ráfaga de captura y la presencia de los validadores, en Solo medir.",
       "sort_order": 1,
       "active": true
     },
     {
       "code": "HIGH",
       "name": "Alto",
-      "description": "Más exigente: tres movimientos en 45 s, destello obligatorio, anti-spoofing Alto, reenvío perceptual obligatorio, un paso más en un dispositivo nuevo y cortes 25/50/75. El protocolo de captura y la presencia de los validadores, en Solo medir.",
+      "description": "Más exigente: tres movimientos en 45 s, detección de suplantación Alta, reenvío perceptual obligatorio, un paso más en un dispositivo nuevo y cortes 25/50/75. La ráfaga de captura y la presencia de los validadores, en Solo medir.",
       "sort_order": 2,
       "active": true
     },
     {
       "code": "MAXIMUM",
       "name": "Máximo",
-      "description": "Para fraude confirmado: tres movimientos en 30 s, anti-spoofing Máximo, reglas duras obligatorias, la empresa aprueba cada dispositivo y el riesgo alto se niega. Exige destello dictado y ráfaga (si faltan, un paso más), firma y ubicación de validadores y código de sitio. Más reintentos con poca luz.",
+      "description": "Para fraude confirmado: tres movimientos en 30 s, detección de suplantación Máxima, reglas duras obligatorias, la empresa aprueba cada equipo y el riesgo alto se niega. Exige la ráfaga de captura (o un paso más), firma y ubicación de validadores y código de sitio. Más reintentos con poca luz.",
       "sort_order": 3,
       "active": true
     }
@@ -5744,6 +5946,17 @@
       "badge": "OPEN_SLOW_ALERTS"
     },
     {
+      "code": "ADMIN_DRIFT",
+      "name": "Deriva de señales",
+      "description": "Deriva semanal de las señales del motor facial por plataforma y, por empresa, casos y revisiones aprobadas sin mirar.",
+      "sort_order": 7,
+      "active": true,
+      "path": "/admin/drift",
+      "short_name": "Deriva",
+      "icon": "TrendingDown",
+      "badge": null
+    },
+    {
       "code": "COMPANY_DASHBOARD",
       "name": "Panel",
       "description": "Resumen de la empresa: empleados y validaciones pendientes.",
@@ -5797,6 +6010,17 @@
       "short_name": "Tablero",
       "icon": "Clock",
       "badge": "PENDING_ATTENDANCE_REVIEWS"
+    },
+    {
+      "code": "COMPANY_VERIFICATIONS",
+      "name": "Verificaciones",
+      "description": "Dónde y cuándo se verificó la identidad de tu gente, en el mapa.",
+      "sort_order": 15,
+      "active": true,
+      "path": "/company/verifications",
+      "short_name": null,
+      "icon": "MapPin",
+      "badge": null
     },
     {
       "code": "COMPANY_SHIFTS",
@@ -5951,6 +6175,17 @@
       "short_name": "Perfil",
       "icon": "UserCircle2",
       "badge": null
+    },
+    {
+      "code": "EMPLOYEE_DOCUMENTS",
+      "name": "Documentos",
+      "description": "Comprobante de domicilio e identificación oficial que pide la empresa.",
+      "sort_order": 22,
+      "active": true,
+      "path": "/employee/documents",
+      "short_name": "Mis documentos",
+      "icon": "IdCard",
+      "badge": null
     }
   ],
   "role_screens": [
@@ -5988,6 +6223,10 @@
     },
     {
       "role_code": "ADMIN",
+      "screen_code": "ADMIN_DRIFT"
+    },
+    {
+      "role_code": "ADMIN",
       "screen_code": "PROFILE"
     },
     {
@@ -6013,6 +6252,10 @@
     {
       "role_code": "COMPANY",
       "screen_code": "COMPANY_ATTENDANCE"
+    },
+    {
+      "role_code": "COMPANY",
+      "screen_code": "COMPANY_VERIFICATIONS"
     },
     {
       "role_code": "COMPANY",
@@ -6073,6 +6316,10 @@
     {
       "role_code": "EMPLOYEE",
       "screen_code": "PROFILE"
+    },
+    {
+      "role_code": "EMPLOYEE",
+      "screen_code": "EMPLOYEE_DOCUMENTS"
     }
   ],
   "menu_module_screens": [
@@ -6109,6 +6356,10 @@
       "module_code": "OPERATIONS"
     },
     {
+      "screen_code": "ADMIN_DRIFT",
+      "module_code": "OPERATIONS"
+    },
+    {
       "screen_code": "COMPANY_DASHBOARD",
       "module_code": "OVERVIEW"
     },
@@ -6126,6 +6377,10 @@
     },
     {
       "screen_code": "COMPANY_ATTENDANCE",
+      "module_code": "ATTENDANCE"
+    },
+    {
+      "screen_code": "COMPANY_VERIFICATIONS",
       "module_code": "ATTENDANCE"
     },
     {
@@ -6183,6 +6438,10 @@
     {
       "screen_code": "PROFILE",
       "module_code": "ACCOUNT"
+    },
+    {
+      "screen_code": "EMPLOYEE_DOCUMENTS",
+      "module_code": "IDENTITY"
     }
   ]
 }

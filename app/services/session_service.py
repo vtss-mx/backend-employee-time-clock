@@ -21,7 +21,7 @@ from app.models import AuthSession, SessionRevocationReason, User
 from app.repositories.session_repository import SessionRepository
 from app.schemas.common import PageParams
 from app.services.auth_service import AuthService, ensure_account_usable
-from app.services.catalog_service import get_catalogs
+from app.services.catalog_service import session_text
 from app.services.policy_service import ensure_device_allowed
 
 
@@ -33,7 +33,7 @@ def session_closed(reason: str | None, code: str) -> AuthenticationError:
     elif reason == SessionRevocationReason.COMPANY_SUSPENDED:
         # La app muestra la pantalla de empresa suspendida (el mismo código del 403 al iniciar sesión).
         code = "COMPANY_SUSPENDED"
-    return AuthenticationError(get_catalogs().session_message(reason), code=code)
+    return AuthenticationError(session_text(reason), code=code)
 
 
 @dataclass(frozen=True)

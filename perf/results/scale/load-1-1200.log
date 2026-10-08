@@ -1,35 +1,36 @@
- Container timeclock-scale-k6-run-436686965c80 Creating 
- Container timeclock-scale-k6-run-436686965c80 Created 
+ Container timeclock-scale-k6-run-540c14e77a90 Creating 
+ Container timeclock-scale-k6-run-540c14e77a90 Created 
+time="2026-10-07T18:05:35Z" level=warning msg="Insufficient VUs, reached 1500 active VUs and cannot initialize more" executor=constant-arrival-rate scenario=load
 
 
   █ TOTAL RESULTS 
 
-    checks_total.......: 23268  1072.595152/s
-    checks_succeeded...: 38.06% 8858 out of 23268
-    checks_failed......: 61.93% 14410 out of 23268
+    checks_total.......: 21349  755.448311/s
+    checks_succeeded...: 19.79% 4226 out of 21349
+    checks_failed......: 80.20% 17123 out of 21349
 
     ✗ respuesta 200
-      ↳  38% — ✓ 8858 / ✗ 14410
+      ↳  19% — ✓ 4226 / ✗ 17123
 
     CUSTOM
-    shed_503.......................: 14410  664.264059/s
+    shed_503.......................: 17123  605.908541/s
 
     HTTP
-    http_req_duration..............: avg=821.35ms p(50)=278.92ms p(95)=5.04s p(99)=7.01s max=12.02s
-      { expected_response:true }...: avg=1.02s    p(50)=458.96ms p(95)=4.73s p(99)=7.11s max=12.02s
-    http_req_failed................: 61.92% 14410 out of 23269
-    http_reqs......................: 23269  1072.641249/s
+    http_req_duration..............: avg=1.51s p(50)=50.28ms p(95)=13.07s p(99)=18.13s max=22.83s
+      { expected_response:true }...: avg=4.62s p(50)=739.3ms p(95)=16.65s p(99)=19.03s max=22.83s
+    http_req_failed................: 80.20% 17123 out of 21350
+    http_reqs......................: 21350  755.483697/s
 
     EXECUTION
-    dropped_iterations.............: 732    33.743323/s
-    iteration_duration.............: avg=821.45ms p(50)=278.98ms p(95)=5.04s p(99)=7.01s max=12.02s
-    iterations.....................: 23268  1072.595152/s
-    vus............................: 217    min=217            max=1487
-    vus_max........................: 1495   min=1000           max=1495
+    dropped_iterations.............: 2651   93.807367/s
+    iteration_duration.............: avg=1.51s p(50)=50.34ms p(95)=13.07s p(99)=18.13s max=22.83s
+    iterations.....................: 21349  755.448311/s
+    vus............................: 73     min=73             max=1500
+    vus_max........................: 1500   min=1000           max=1500
 
     NETWORK
-    data_received..................: 53 MB  2.4 MB/s
-    data_sent......................: 13 MB  590 kB/s
+    data_received..................: 67 MB  2.4 MB/s
+    data_sent......................: 12 MB  416 kB/s
 
 
 

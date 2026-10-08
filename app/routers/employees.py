@@ -309,7 +309,7 @@ def enroll_face_in_person(
         liveness=liveness,
         camera_label=camera_label,
     )
-    return ok(result, result.message, code="FACE_ENROLLED_IN_PERSON", status_code=201)
+    return ok(result, code="FACE_ENROLLED_IN_PERSON", status_code=201)
 
 
 @router.post(
@@ -348,7 +348,7 @@ def verify_face_in_person(
         client=client,
     )
     code = "IDENTITY_VERIFIED" if result.verified else "IDENTITY_NOT_VERIFIED"
-    return ok(result, result.message, code=code)
+    return ok(result, result.text, code=code)
 
 
 # ---------------- QR ----------------

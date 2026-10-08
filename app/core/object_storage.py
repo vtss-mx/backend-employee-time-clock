@@ -30,7 +30,7 @@ import threading
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 from google.api_core.exceptions import NotFound, PreconditionFailed
 from google.cloud import storage
@@ -39,6 +39,7 @@ from google.oauth2 import service_account
 
 from app.core.config import settings
 from app.core.observability import observed
+from app.i18n import Text
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +54,8 @@ class StorageError(Exception):
 
 
 class StorageNotConfigured(StorageError):
-    """No hay bucket o llave configurados."""
+    """No hay bucket o llave configurados. Al no encontrarlos, su argumento es el motivo para el ADMIN (un `Text`:
+    el estado del servidor lo muestra en el idioma de quien lo lee; `str(error)`, en el del proceso)."""
 
 
 class StorageUnavailable(StorageError):
@@ -123,11 +125,12 @@ class DisabledStorage:
 
     configured = False
 
-    def __init__(self, reason: str) -> None:
+    def __init__(self, reason: Text) -> None:
+        #: Por qué está apagado, diferido (el ADMIN lo lee en su idioma).
         self.reason = reason
 
     def describe(self) -> dict[str, str | None]:
-        return {"backend": "disabled", "bucket": None, "reason": self.reason}
+        return {"backend": "disabled", "bucket": None, "reason": str(self.reason)}
 
     def _unavailable(self) -> StorageNotConfigured:
         return StorageNotConfigured(f"almacenamiento de imágenes no configurado: {self.reason}")
@@ -252,13 +255,13 @@ def service_account_credentials(scope: str = SCOPE) -> service_account.Credentia
     (objetos: leer y escribir) y la regla de ciclo de vida del bucket (administrarlo: `storage_lifecycle`)."""
     bucket, path = settings.GCS_BUCKET, settings.GCS_CREDENTIALS_FILE
     if not bucket or not path:
-        raise StorageNotConfigured("faltan GCS_BUCKET o GCS_CREDENTIALS_FILE en el .env")
+        raise StorageNotConfigured(Text("STORAGE_NOT_CONFIGURED"))
     try:
         raw = Path(path).read_bytes()
     except OSError as exc:
-        raise StorageNotConfigured(f"no se pudo leer la llave de la cuenta de servicio ({type(exc).__name__})") from exc
+        raise StorageNotConfigured(Text("STORAGE_KEY_UNREADABLE", {"error": type(exc).__name__})) from exc
     if not raw.strip():
-        raise StorageNotConfigured("la llave de la cuenta de servicio aún no está montada (archivo vacío)")
+        raise StorageNotConfigured(Text("STORAGE_KEY_NOT_MOUNTED"))
     try:
         return service_account.Credentials.from_service_account_info(json.loads(raw), scopes=[scope])
     except (ValueError, KeyError, TypeError, AttributeError) as exc:
@@ -277,9 +280,9 @@ def load_storage() -> ObjectStorage:
         credentials = service_account_credentials()
     except InvalidServiceAccount as exc:
         logger.error("La llave de GCS_CREDENTIALS_FILE no es una cuenta de servicio válida: %s", exc)
-        return DisabledStorage("la llave de la cuenta de servicio no es válida")
+        return DisabledStorage(Text("STORAGE_KEY_INVALID"))
     except StorageNotConfigured as exc:
-        return _disabled(str(exc))
+        return _disabled(cast(Text, exc.args[0]))
     try:
         instance = GcsStorage(
             settings.GCS_BUCKET,
@@ -290,14 +293,14 @@ def load_storage() -> ObjectStorage:
         )
     except Exception:  # el cliente no se pudo crear: la API arranca igual
         logger.exception("No se pudo crear el cliente de Google Cloud Storage")
-        return DisabledStorage("no se pudo crear el cliente de Google Cloud Storage")
+        return DisabledStorage(Text("STORAGE_CLIENT_FAILED"))
     logger.info(
         "Almacenamiento de imágenes: gs://%s/%s/ (objetos cifrados)", settings.GCS_BUCKET, settings.storage_prefix
     )
     return instance
 
 
-def _disabled(reason: str) -> DisabledStorage:
+def _disabled(reason: Text) -> DisabledStorage:
     logger.warning(
         "Almacenamiento de imágenes apagado: %s. Registrar rostros y comprobantes responderá 503 "
         "STORAGE_UNAVAILABLE hasta configurarlo.",

@@ -35,6 +35,12 @@ class FrameTelemetry(_Strict):
     mean_ms: float = Field(ge=0, le=100_000)
     #: Coeficiente de variación del intervalo (desviación / media): una cámara real varía; un video sintético, no.
     cv: float = Field(ge=0, le=1_000)
+    #: Con qué reloj se midieron los intervalos (compatibilidad universal, docs/rd/compatibilidad-biometria.md):
+    #: `presentation`, cuándo llegó cada cuadro (`VideoFrameCallbackMetadata.presentationTime`, lo da Chrome, Safari y
+    #: Firefox); `render`, el `now` de la llamada, que es el instante de DIBUJAR y va alineado al refresco de la
+    #: pantalla (60/120 Hz): una cámara real de 30 cuadros en fase con la pantalla da intervalos idénticos en él. None:
+    #: una versión anterior de la app, que medía con `render`.
+    clock: Literal["presentation", "render"] | None = None
 
 
 class ScreenTelemetry(_Strict):
@@ -46,8 +52,33 @@ class ScreenTelemetry(_Strict):
     touch_points: int = Field(ge=0, le=1_000)
 
 
+#: Quién integró el SDK móvil de la API pública de verificación (`docs/sdk/contrato-verificacion.md` §7): el nativo de
+#: cada plataforma o un envoltorio sobre él (.NET MAUI, React Native, Flutter).
+type NativeClient = Literal["android-sdk", "ios-sdk", "maui-sdk", "react-native-sdk", "flutter-sdk"]
+
+
+class NativeTelemetry(_Strict):
+    """Lo que informa un SDK móvil (API pública de verificación, migración 0084) además de lo del navegador: quién lo
+    integró, en qué plataforma corre, versiones y modelo de equipo. Nunca datos de la persona (el nombre que el usuario
+    le puso a su equipo, cuentas, identificadores de publicidad) ni la lista de cámaras. Lo que el SDK no puede medir
+    viaja como `null` («sin medir»: nunca cuenta como sospechoso)."""
+
+    client: NativeClient
+    #: La plataforma REAL donde corre (también con un envoltorio).
+    platform: Literal["android", "ios"]
+    sdk_version: str = Field(max_length=40, pattern=r"^\d+\.\d+\.\d+([-+][0-9A-Za-z.-]{1,20})?$")
+    os_version: str = Field(max_length=20, pattern=r"^[0-9A-Za-z._-]{1,20}$")
+    #: Modelo de equipo (Android `Build.MODEL`; iOS el identificador de hardware, p. ej. `iPhone16,2`).
+    device_model: str = Field(max_length=64, pattern=r"^[\x20-\x7E]{1,64}$")
+    #: La cámara usada es una cámara frontal física integrada (None: sin medir).
+    front_camera_physical: bool | None = None
+    #: El SDK corre en un emulador o simulador (None: sin medir).
+    emulator: bool | None = None
+
+
 class CaptureTelemetry(_Strict):
-    """Telemetría de una toma (versión 1). La app oficial siempre la manda; su ausencia también es una señal."""
+    """Telemetría de una toma (versión 1). La app oficial siempre la manda; su ausencia también es una señal. Los SDK
+    móviles agregan `native` (la aplicación web nunca lo manda: su forma no cambia)."""
 
     v: Literal[1]
     #: `navigator.webdriver`.
@@ -59,6 +90,7 @@ class CaptureTelemetry(_Strict):
     track: TrackTelemetry | None = None
     frames: FrameTelemetry | None = None
     screen: ScreenTelemetry | None = None
+    native: NativeTelemetry | None = None
 
 
 class LocationSample(_Strict):

@@ -116,6 +116,13 @@ class Company(SoftDeleteMixin, TimestampMixin, Base):
     #: cuesta: cada validador activo cuenta como un empleado en el cobro (`billing.headcount_days`). Nunca queda por
     #: debajo de los validadores activos que ya tiene (`CompanyService.update`): ninguno se queda sin servicio.
     max_validators: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"), nullable=False)
+    #: Onboarding con documentos (decisión del dueño del producto, 2026-10-07): lo decide el ADMIN por empresa (como
+    #: `api_enabled`, no obligatorio para todas). Encendido, el empleado sube en su registro el comprobante de domicilio
+    #: y una identificación oficial (OCR de mejor esfuerzo) y la empresa los revisa en su expediente junto con el
+    #: registro facial. Apagado, la pantalla del empleado no aparece y la empresa no los exige.
+    require_employee_documents: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false(), nullable=False
+    )
     #: Suspensión por falta de pago (automática) o por decisión del ADMIN: nadie de la empresa inicia
     #: sesión ni opera hasta que se reactive (403 COMPANY_SUSPENDED). Vive junto a `active` porque la
     #: autenticación de CADA petición ya carga la empresa (sin consultas de más); el plan y el saldo

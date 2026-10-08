@@ -14,6 +14,10 @@ class FaceCheckResponse(BaseModel):
     detection_score: float
     quality_score: float
     yaw_ratio: float | None = None
+    #: Accesorios detectados por consenso entre las capturas (códigos de `catalog.accessories`), estén o no bloqueados
+    #: por la política: la app los muestra como insignias sobre el rostro (decisión del dueño, 2026-10-07). Los que la
+    #: política bloquea no llegan aquí: la validación responde 422 ACCESSORIES_DETECTED con ellos en `details`.
+    accessories: list[str] = []
 
 
 class FaceLearningSummary(BaseModel):

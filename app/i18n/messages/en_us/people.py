@@ -114,7 +114,6 @@ MESSAGES: Messages = {
     "EMPLOYEE_NUMBER_INVALID": (
         "The employee number must have 1–30 characters: letters, numbers, hyphens, or underscores"
     ),
-    "EMPLOYEE_NUMBER_REQUIRED": "Employee number is required",
     "EMPLOYEE_NUMBER_TAKEN": "The employee number is already registered",
     "EMPLOYEE_RESTORED": "Employee restored. They need to enroll their face again.",
     "EMPLOYEE_TOO_YOUNG": "The employee must be at least {count} years old",

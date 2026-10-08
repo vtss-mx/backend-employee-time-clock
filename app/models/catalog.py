@@ -228,6 +228,13 @@ class CatalogCompanyDocumentType(CatalogEntry, Base):
     __tablename__ = "company_document_types"
 
 
+class CatalogEmployeeDocumentType(CatalogEntry, Base):
+    """Tipos de documento de identidad del empleado (pasaporte, INE, licencia, comprobante de domicilio...): los que el
+    empleado sube en el onboarding y la empresa revisa en su expediente (`workforce.employee_documents`)."""
+
+    __tablename__ = "employee_document_types"
+
+
 class CatalogStorageCategory(CatalogEntry, Base):
     """Grupos del almacenamiento que ocupa cada empresa (personal, biometría, asistencia...)."""
 
@@ -491,6 +498,23 @@ class CatalogEnrollmentFlag(CatalogEntry, Base):
     __tablename__ = "enrollment_flags"
 
 
+class CatalogVoiceQuestion(CatalogEntry, Base):
+    """Preguntas de la verificación por voz y video del registro facial (decisión del dueño, 2026-10-06): `name` es la
+    pregunta que oye el empleado y `description` lo que la empresa compara al revisar el video."""
+
+    __tablename__ = "voice_questions"
+
+
+class CatalogVoiceProfile(CatalogEntry, Base):
+    """Perfiles de voz de la GUÍA POR AUDIO del registro facial (decisión del dueño, 2026-10-08): la empresa elige con
+    cuál voz se dictan las indicaciones («quédate quieto», «voltea a la derecha»...). `name` es el nombre que ve el
+    ADMIN y `description` su aclaración; la síntesis ocurre en el navegador (nada sale del servidor, regla 13), y la
+    app mapea cada código a los parámetros de la voz (género, tono, velocidad). La política de cada empresa guarda el
+    código elegido (`verification_policy.voice_profile`)."""
+
+    __tablename__ = "voice_profiles"
+
+
 class CatalogScreen(CatalogEntry, Base):
     """Pantallas de la aplicación: el frontend arma el menú y sus rutas con las que recibe del backend.
 
@@ -553,9 +577,10 @@ class RoleScreen(Base):
 
 
 #: Columnas de texto de los catálogos que una persona lee (las que tienen traducción); los idiomas de las traducciones
-#: (el de omisión, es-MX, son las columnas de cada catálogo). Un idioma nuevo = su valor aquí y en una migración.
+#: (el de omisión, es-MX, son las columnas de cada catálogo). Un idioma nuevo = su valor aquí y en una migración que
+#: amplíe el CHECK `locale` e inserte sus filas (como la `0078`).
 TRANSLATED_FIELDS = ("name", "description", "message", "phrase", "instruction", "employee_note", "short_name")
-TRANSLATION_LOCALES = ("en-US",)
+TRANSLATION_LOCALES = ("en-US", "pt-BR", "fr-FR", "de-DE", "it-IT", "es-ES")
 
 
 class CatalogTranslation(Base):

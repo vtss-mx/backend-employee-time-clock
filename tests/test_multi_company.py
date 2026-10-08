@@ -77,6 +77,12 @@ def test_email_and_phone_are_unique_per_person(client, admin_headers, company_he
     assert check(company_headers, "email", EMAIL) == "TAKEN"  # ya trabaja aquí
     assert check(other, "email", COMPANY_EMAIL) == "TAKEN"  # administrador
     assert check(other, "phone", "+52 662 765 4321") == "AVAILABLE"
+    # Al EDITAR a alguien, el correo de una persona de otra empresa no se puede ligar: ya es de otra persona.
+    mine = create_employee(client, other, number="PAN-9", email="pan9@persona.com", phone="+52 662 765 4329").json()[
+        "data"
+    ]
+    params = {"field": "email", "value": EMAIL, "exclude_id": mine["id"]}
+    assert client.get("/api/validation", params=params, headers=other).json()["data"]["code"] == "TAKEN"
 
 
 def test_phone_is_validated_live_together_with_the_email(client, admin_headers, company_headers):

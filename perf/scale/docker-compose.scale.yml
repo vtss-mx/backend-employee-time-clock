@@ -20,6 +20,11 @@ services:
     env_file: !override
       - ${PERF_ENV_FILE}
 
+  # La caché compartida con la contraseña de un solo uso (la MISMA imagen y orden de arranque que en producción).
+  redis:
+    env_file: !override
+      - ${PERF_ENV_FILE}
+
   migrate:
     env_file: !override
       - ${PERF_ENV_FILE}

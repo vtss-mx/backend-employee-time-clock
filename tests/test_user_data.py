@@ -82,11 +82,11 @@ def test_preferences_live_in_the_database(client, company_headers):
     unknown = client.patch("/api/users/me/preferences", json={"theme": "dark"}, headers=other_device)
     assert unknown.status_code == 422
 
-    # El idioma de la persona (regla 16): solo es-MX o en-US; cambiarlo no toca lo demás.
+    # El idioma de la persona (regla 16): solo uno de los siete idiomas de la plataforma; cambiarlo no toca lo demás.
     english = client.patch("/api/users/me/preferences", json={"locale": "en-US"}, headers=other_device)
     assert english.json()["data"] == {"sidebar_collapsed": True, "locale": "en-US"}
     assert client.get("/api/users/me", headers=other_device).json()["data"]["preferences"]["locale"] == "en-US"
-    invalid = client.patch("/api/users/me/preferences", json={"locale": "fr-FR"}, headers=other_device)
+    invalid = client.patch("/api/users/me/preferences", json={"locale": "ja-JP"}, headers=other_device)
     assert invalid.status_code == 422
     assert client.patch("/api/users/me/preferences", json={"sidebar_collapsed": False}).status_code == 401
 

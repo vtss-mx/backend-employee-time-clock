@@ -21,22 +21,20 @@ la empresa"):
   (el ADMIN) o la empresa: la empresa elimina y restaura solo lo que ella subió; el ADMIN, cualquiera.
 """
 
-from datetime import datetime
-
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String
+from sqlalchemy import Boolean, ForeignKey, Index, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
 from app.core.db_schemas import CATALOG, TENANCY
 from app.core.soft_delete import SoftDeleteMixin
-from app.models.mixins import trash_index
+from app.models.mixins import StoredFileReference, trash_index
 
 #: Largos de los datos que escribe una persona (nombre original ya limpio y la nota).
 DOCUMENT_FILE_NAME_MAX = 200
 DOCUMENT_NOTE_MAX = 300
 
 
-class CompanyDocument(SoftDeleteMixin, Base):
+class CompanyDocument(SoftDeleteMixin, StoredFileReference, Base):
     """Un archivo de la empresa (constancia de situación fiscal, acta constitutiva...): su referencia en el bucket."""
 
     __tablename__ = "company_documents"
@@ -59,16 +57,7 @@ class CompanyDocument(SoftDeleteMixin, Base):
     file_name: Mapped[str] = mapped_column(String(DOCUMENT_FILE_NAME_MAX), nullable=False)
     #: Nota corta de quien lo subió (opcional).
     note: Mapped[str | None] = mapped_column(String(DOCUMENT_NOTE_MAX))
-    #: Formato real, reconocido por su contenido (nunca lo que declara el navegador).
-    content_type: Mapped[str] = mapped_column(String(100), nullable=False)
-    #: Clave al azar del objeto (32 caracteres hexadecimales): lo nombra sin esperar el id de la fila.
-    uid: Mapped[str] = mapped_column(String(32), nullable=False)
-    #: La referencia (`StoredImage`): nombre del objeto, tamaño del archivo, SHA-256 del objeto cifrado y cuándo se
-    #: subió (verificado).
-    object_name: Mapped[str] = mapped_column(String(300), nullable=False)
-    byte_size: Mapped[int] = mapped_column(Integer, nullable=False)
-    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
-    uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # Formato, clave, nombre, tamaño, SHA-256 y fecha del objeto cifrado vienen de `StoredFileReference`.
     #: Correo literal de quien lo subió y si fue la plataforma (ADMIN) o la empresa.
     uploaded_by: Mapped[str] = mapped_column(String(255), nullable=False)
     uploaded_by_platform: Mapped[bool] = mapped_column(Boolean, nullable=False)

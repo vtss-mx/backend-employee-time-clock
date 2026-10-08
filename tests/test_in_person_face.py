@@ -1,15 +1,19 @@
 """La empresa con el empleado presente: registra su rostro (aprobado al momento) y verifica su
 identidad 1:1 con su propia cámara."""
 
-from tests.conftest import create_company, create_employee, login, turn_files
+from tests.conftest import create_company, create_employee, enrollment_challenge, login, turn_files
 from tests.test_validators import validator_headers
 
 
 def in_person(
     client, headers, employee_id: int, action: str, person: str = "juan", *, frames: int = 3, turn_person=None
 ):
-    """Captura en persona: reto de la empresa, capturas frontales y la del giro."""
-    challenge = client.post("/api/face/challenge", headers=headers).json()["data"]
+    """Captura en persona: reto de la empresa (el del registro, con los cuatro movimientos, al registrar), capturas
+    frontales y las de los movimientos."""
+    if action == "enroll":
+        challenge = enrollment_challenge(client, headers)
+    else:
+        challenge = client.post("/api/face/challenge", headers=headers).json()["data"]
     files = [("images", (f"f{i}.jpg", f"face:{person}".encode(), "image/jpeg")) for i in range(frames)]
     files += turn_files(challenge, turn_person or person)
     return client.post(

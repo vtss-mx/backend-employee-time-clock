@@ -13,8 +13,8 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
 from app.core.lifecycle import draining
-from app.core.responses import ApiResponse, envelope_response, ok
-from app.i18n import t
+from app.core.responses import ApiResponse, envelope_response, ok, single_error
+from app.i18n import Text
 from app.services import health_service
 
 router = APIRouter(prefix="/health", tags=["Salud"])
@@ -29,25 +29,25 @@ def live() -> ApiResponse[dict]:
 @router.get("", response_model=ApiResponse[dict], summary="Estado del servicio (alias de /ready)")
 def ready() -> JSONResponse:
     if draining():  # sin consultar dependencias: lo único que importa es dejar de recibir tráfico
-        message = t(health_service.MESSAGES["shutting_down"])
+        message = Text(health_service.MESSAGES["shutting_down"])
         return envelope_response(
             503,
             "SHUTTING_DOWN",
             message,
             data={"status": "shutting_down"},
-            errors=[{"code": "SHUTTING_DOWN", "message": message}],
+            errors=single_error("SHUTTING_DOWN", message),
             headers={"Retry-After": "1"},
         )
     data = health_service.readiness()
     status = data["status"]
-    message = t(health_service.MESSAGES[status])
+    message = Text(health_service.MESSAGES[status])
     if status == "unavailable":
         return envelope_response(
             503,
             "SERVICE_UNAVAILABLE",
             message,
             data=data,
-            errors=[{"code": "DATABASE_UNAVAILABLE", "message": message}],
+            errors=single_error("DATABASE_UNAVAILABLE", message),
             headers={"Retry-After": "5"},
         )
     return envelope_response(200, "READY" if status == "ok" else "DEGRADED", message, data=data)

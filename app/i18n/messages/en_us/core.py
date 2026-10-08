@@ -130,7 +130,7 @@ MESSAGES: Messages = {
     "VALIDATION_ERROR": "The submitted data isn't valid",
     "WEDNESDAY": "Wednesday",
     "WS_AUTHENTICATED": "Validation channel ready",
-    "WS_AUTH_REQUIRED": 'The first message must be {{"type": "auth", "token": ...}}',
+    "WS_AUTH_REQUIRED": 'The first message must be `{{"type": "auth", "token": ...}}`',
     "WS_AUTH_TIMEOUT": "Authentication wasn't received in time",
     "WS_BAD_JSON": "The message isn't valid JSON or is too large",
     "WS_BAD_MESSAGE": "Invalid channel message",

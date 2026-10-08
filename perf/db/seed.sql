@@ -149,6 +149,31 @@ SET photo_object = 'production/companies/' || company_id || '/employees/' || emp
     photo_size = 180000,
     photo_sha256 = md5(id::text) || md5(id::text),
     photo_uploaded_at = now();
+-- Verificación por voz y video (migración 0079): todo registro la exigió y la superó dos minutos después de enviarse,
+-- salvo uno de cada mil que quedó a medias (lo que el mantenimiento depura por el índice parcial
+-- ix_face_enrollments_voice_pending); tres respuestas por registro terminado (dos en el que quedó a medias), cada una
+-- con la referencia de su video cifrado en el bucket: la BD nunca guarda el video.
+UPDATE biometrics.face_enrollments
+SET voice_required = true,
+    voice_passed_at = CASE WHEN id % 1000 = 7 THEN NULL ELSE submitted_at + interval '2 minutes' END,
+    voice_attempts = id % 3;
+INSERT INTO biometrics.enrollment_voice_answers (company_id, enrollment_id, employee_id, question, position, attempts, transcript, similarity, face_similarity, duration_ms, created_at, uid, content_type, object_name, byte_size, sha256, uploaded_at)
+SELECT e.company_id, e.id, e.employee_id, q.code, q.position, 1 + (e.id + q.position) % 2, 'respuesta ' || e.id, 0.9, 0.8,
+       2000 + e.id % 1500, e.submitted_at + make_interval(secs => 30 * q.position), md5('clip' || e.id || q.position),
+       'video/webm',
+       'production/companies/' || e.company_id || '/employees/' || e.employee_id || '/voice-clips/' || e.id || '-' || q.position || '.webm.enc',
+       110000, md5(e.id::text || q.position) || md5(q.code), e.submitted_at + make_interval(secs => 30 * q.position)
+FROM biometrics.face_enrollments e, (VALUES ('FULL_NAME', 0), ('COMPANY_NAME', 1), ('DEPARTMENT', 2)) AS q(code, position)
+WHERE e.id % 1000 <> 7 OR q.position < 2;
+-- Los tres pasos independientes del registro (migración 0083): uno de cada diez empleados sin registro tiene su foto
+-- inicial como borrador (la plantilla cifrada y la referencia de su objeto en el bucket), la mitad ya vencida (lo que
+-- depura el mantenimiento por ix_face_enrollment_drafts_expires).
+INSERT INTO biometrics.face_enrollment_drafts (company_id, employee_id, template_encrypted, model_name, dimension, detection_score, quality_score, photo_content_type, photo_object, photo_size, photo_sha256, photo_uploaded_at, checked_at, expires_at)
+SELECT pg_temp.co(i), i, decode(md5(i::text), 'hex'), 'sface+facenet', 640, 0.9, 0.8, 'image/jpeg',
+       'production/companies/' || pg_temp.co(i) || '/employees/' || i || '/face-enrollments/drafts/' || i || '.jpg.enc',
+       180000, md5(i::text) || md5('d' || i), now() - interval '1 hour', now() - interval '1 hour',
+       now() + CASE WHEN i % 20 = 0 THEN interval '-1 hour' ELSE interval '71 hours' END
+FROM generate_series(1, 99600) i WHERE i % 10 = 0;
 INSERT INTO biometrics.face_embeddings (employee_id, company_id, enrollment_id, embedding_encrypted, model_name, dimension, detection_score, quality_score, active, learned, matches, last_matched_at, created_at)
 SELECT i, pg_temp.co(i), i, decode(md5(i::text || k), 'hex'), 'sface+facenet', 640, 0.9, 0.8, true, k = 4, (i * k) % 50,
        CASE WHEN k = 4 THEN now() - make_interval(days => i % 200) END, now() - make_interval(days => i % 300)

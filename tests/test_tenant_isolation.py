@@ -33,20 +33,23 @@ from app.models import (
     Employee,
     EmployeeAbsence,
     EmployeeQr,
+    EnrollmentVoiceAnswer,
     FaceEmbedding,
     FaceEnrollment,
+    Passkey,
     ShiftAssignment,
+    User,
     ValidatorDevice,
     VerificationLog,
     WorkBreak,
     WorkSession,
 )
-from tests.avatar_support import upload
+from tests.avatar_support import fetch, me, upload
 from tests.conftest import create_company, login, qr_content
 from tests.document_support import PDF
 from tests.test_api_keys import call, new_key
 from tests.test_shifts import address, assign, create_shift, create_site, shift_body
-from tests.test_validators import approved, validator_headers
+from tests.test_validators import PASSWORD, approved, validator_headers
 
 MARK = "zzb"
 TODAY = business_today()
@@ -194,7 +197,18 @@ def tenants(client, company_headers, admin_headers) -> dict:
         b_company = db.get(Employee, employee["id"]).company_id
         qr_id = db.scalar(select(func.max(EmployeeQr.id)).where(EmployeeQr.employee_id == employee["id"]))
         enrollment_id = db.scalar(select(FaceEnrollment.id).where(FaceEnrollment.employee_id == employee["id"]))
+        answer_id = db.scalar(
+            select(func.min(EnrollmentVoiceAnswer.id)).where(EnrollmentVoiceAnswer.enrollment_id == enrollment_id)
+        )
         auth_session = db.scalar(select(AuthSession.id).where(AuthSession.user_id == employee["user_id"]))
+        # Una llave de acceso (WebAuthn) del administrador de B, directo en la base: la ceremonia real vive en
+        # tests/test_passkeys.py; aquí solo importa que un id ajeno responda 404.
+        b_admin = db.scalar(select(User.id).where(User.email == "admin@panificadora.com"))
+        passkey = Passkey(user_id=b_admin, credential_id="zzb-credencial", public_key="zzb-llave", name="ZZB llave")
+        db.add(passkey)
+        db.flush()
+        passkey_id = passkey.id
+        db.commit()
         absence_id = db.scalar(select(EmployeeAbsence.id).where(EmployeeAbsence.note == "ZZB vacaciones"))
     session_id = _work_session(b_company, employee["id"], assignment["id"])
     assert b_validator  # su cuenta y su dispositivo existen (y operan) en B
@@ -219,6 +233,7 @@ def tenants(client, company_headers, admin_headers) -> dict:
             "user_id": employee["user_id"],
             "department_id": department["id"],
             "enrollment_id": enrollment_id,
+            "answer_id": answer_id,
             "validator_id": validator["id"],
             "device_id": device["id"],
             "key_id": b_key["id"],
@@ -235,6 +250,7 @@ def tenants(client, company_headers, admin_headers) -> dict:
             "qr_id": qr_id,
             "work_session_id": session_id,
             "auth_session_id": auth_session,
+            "passkey_id": passkey_id,
         },
     }
 
@@ -244,6 +260,8 @@ _NOTE = {"note": "No corresponde a esta empresa"}
 #: (método, ruta) → (actor de A, cuerpo). `{x}` se llena con el id del dato de B; "action" no es un id.
 ROUTES: dict[tuple[str, str], tuple[str, object]] = {
     ("DELETE", "/auth/sessions/{session_id}"): ("company", None),
+    ("PATCH", "/auth/passkeys/{passkey_id}"): ("company", {"name": "Intruso"}),
+    ("DELETE", "/auth/passkeys/{passkey_id}"): ("company", None),
     ("GET", "/users/me/qr/{qr_id}"): ("employee", None),
     ("GET", "/users/{user_id}/avatar"): ("company", None),
     ("GET", "/employees/{employee_id}"): ("company", None),
@@ -268,6 +286,7 @@ ROUTES: dict[tuple[str, str], tuple[str, object]] = {
     ("POST", "/departments/{department_id}/managers"): ("company", {"employee_id": "a:employee"}),
     ("DELETE", "/departments/{department_id}/managers/{employee_id}"): ("company", None),
     ("GET", "/enrollments/{enrollment_id}"): ("company", None),
+    ("GET", "/enrollments/{enrollment_id}/voice/{answer_id}/clip"): ("company", None),
     ("POST", "/enrollments/{enrollment_id}/approve"): ("company", None),
     ("POST", "/enrollments/{enrollment_id}/reject"): ("company", {"reason": "Intruso"}),
     ("GET", "/validators/{validator_id}"): ("company", None),
@@ -294,6 +313,14 @@ ROUTES: dict[tuple[str, str], tuple[str, object]] = {
     ("GET", "/documents/{document_id}/file"): ("company", None),
     ("DELETE", "/documents/{document_id}"): ("company", None),
     ("POST", "/documents/{document_id}/restore"): ("company", None),
+    # Documentos de identidad del empleado (onboarding con OCR): el empleado solo los suyos; la empresa, por el
+    # expediente de un empleado de su empresa (un empleado de B: 404 EMPLOYEE_NOT_FOUND antes de tocar el documento).
+    ("GET", "/me/documents/{document_id}/file"): ("employee", None),
+    ("DELETE", "/me/documents/{document_id}"): ("employee", None),
+    ("POST", "/me/documents/{document_id}/restore"): ("employee", None),
+    ("GET", "/validations/employees/{employee_id}/documents"): ("company", None),
+    ("GET", "/validations/employees/{employee_id}/documents/{document_id}/file"): ("company", None),
+    ("PATCH", "/validations/employees/{employee_id}/documents/{document_id}/data"): ("company", {}),
     ("GET", "/shifts/{shift_id}"): ("company", None),
     ("PUT", "/shifts/{shift_id}"): ("company", shift_body("Intruso")),
     ("PATCH", "/shifts/{shift_id}/status"): ("company", {"active": False}),
@@ -497,6 +524,11 @@ def test_integration_key_of_a_never_reaches_b(client, tenants):
     assert call(client, a_key, f"/employees/{b['employee_id']}").status_code == 404
     assert call(client, a_key, "/attendance", employee_id=b["employee_id"]).status_code == 404
     assert call(client, a_key, "/attendance/feed", employee_id=b["employee_id"]).status_code == 404
+    # La verificación facial de la aplicación móvil (SDK): el empleado de B no existe para la llave de A.
+    from tests.test_verification_api import attempt
+
+    crossed = attempt(client, a_key, reference={"employee_id": str(b["employee_id"])})
+    assert crossed.status_code == 404 and crossed.json()["code"] == "EMPLOYEE_NOT_FOUND"
     # Y la llave de B, con la de A en la mano, nunca ve lo de A (la empresa sale de la llave, no del cliente).
     mine = call(client, tenants["b_key"]["secret"], "/employees").json()["data"]["items"]
     assert {item["employee_number"] for item in mine} == {"ZZB-001"}
@@ -523,6 +555,30 @@ def test_validator_and_live_validation_of_a_do_not_see_b(client, tenants):
         "/api/validation", params={"field": "employee_number", "value": "ZZB-001"}, headers=a["company"]
     )
     assert available.json()["code"] == "AVAILABLE"
+
+
+def test_a_never_sees_a_profile_photo_of_the_people_of_b(client, tenants):
+    """La empresa ve las fotos de SU gente (decisión del dueño, 2026-10-06), nunca las de otra: el administrador, el
+    validador y el empleado de B —también inactivo— responden a cada actor de A 404 (igual que sin foto) y ningún
+    listado de A trae la ruta de sus fotos."""
+    b_admin = login(client, "admin@panificadora.com", "Empresa1234")
+    urls = {me(client, login(client, "zzbana@empresa.com", "Empleado123"))["avatar"]}
+    for headers in (b_admin, login(client, "zzbval@empresa.com", PASSWORD)):
+        urls.add(upload(client, headers).json()["data"]["avatar"])
+    inactive = {"active": False}
+    assert client.patch(
+        f"/api/employees/{tenants['b']['employee_id']}/status", json=inactive, headers=b_admin
+    ).is_success
+    actors = {name: headers for name, headers in tenants["a"].items() if name != "key"}
+    for url in urls:
+        assert url and fetch(client, b_admin, url).status_code == 200  # B sí la ve
+        for name, headers in actors.items():
+            assert fetch(client, headers, url).json()["code"] == "AVATAR_NOT_FOUND", (name, url)
+    paths = {url.split("?")[0] for url in urls}
+    for path in _get_routes_without_ids():
+        for name, headers in actors.items():
+            response = client.get(f"/api{path}", params={"size": 50}, headers=headers)
+            assert not any(photo in response.text for photo in paths), (name, path)
 
 
 def test_the_database_refuses_to_link_rows_of_two_companies(tenants):

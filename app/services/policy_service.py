@@ -29,7 +29,7 @@ from app.services.face_security import thresholds
 
 @dataclass(frozen=True)
 class PolicySnapshot:
-    block_glasses: bool = True
+    block_glasses: bool = False  # apagado por omisión (decisión del dueño, 2026-10-07); el ADMIN lo enciende
     block_headwear: bool = True
     block_mask: bool = True
     liveness_challenge: bool = True
@@ -46,7 +46,7 @@ class PolicySnapshot:
     anti_spoofing_level: str = "STANDARD"
     liveness_steps: int = 2
     liveness_timeout_seconds: int = 60
-    flash_liveness: str = "OBSERVE"
+    flash_liveness: str = "OFF"  # destello retirado (decisión del dueño, 2026-10-06)
     block_virtual_cameras: bool = True
     reject_foreign_images: bool = True
     detect_static_captures: bool = True
@@ -78,12 +78,21 @@ class PolicySnapshot:
     risk_signals: dict[str, dict[str, Any]] = field(default_factory=dict)
     fraud_evidence: bool = True
     # --- Protocolo de captura (antifraude 2a, migración 0066): nacen midiendo ---
-    flash_paced: bool = True
+    flash_paced: bool = False  # retirado con el destello
     capture_burst: bool = True
+    #: Verificación por voz y video del registro facial (decisión del dueño, 2026-10-06).
+    voice_verification: bool = True
+    #: Guía por audio del registro facial (decisión del dueño, 2026-10-08): la app dicta las indicaciones con voz. Es
+    #: una ayuda, no un candado; apagada por omisión. `voice_profile` = la voz (catálogo); la síntesis es del navegador.
+    voice_guidance_enabled: bool = False
+    voice_profile: str = "FEMALE_WARM"
     # --- Presencia (antifraude 2b, migración 0070): firma y ubicación de los validadores, código de sitio ---
     validator_signing: str = "OBSERVE"
     validator_location: str = "OBSERVE"
     site_codes: str = "OBSERVE"
+    #: Ubicación de cada verificación de identidad (decisión del dueño, 2026-10-07): OFF/OBSERVE/ENFORCE. ENFORCE la
+    #: exige antes del motor (`identity_core.ensure_verification_location`); por omisión OBSERVE.
+    verification_location: str = "OBSERVE"
     #: Del nivel de anti-spoofing (catálogo): umbral y si basta una captura sospechosa.
     antispoof_threshold: float = field(default=0.05, compare=False)
     antispoof_any_frame: bool = field(default=False, compare=False)

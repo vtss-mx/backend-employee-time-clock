@@ -58,8 +58,8 @@ RUNTIME: tuple[tuple[str, str, str, str], ...] = (
         "UVICORN_TIMEOUT_KEEP_ALIVE",
         "5",
         "Segundos que se conserva una conexión HTTP inactiva. Debe ser MAYOR que el keepalive_timeout del gateway "
-        "hacia la API (4 s en docker/nginx.conf): así quien cierra primero es el proxy, nunca uvicorn a media "
-        "reutilización. Rango: 1 o más.",
+        "hacia la API (NGINX_UPSTREAM_KEEPALIVE_TIMEOUT del `.env` de la raíz, 4 s): así quien cierra primero es el "
+        "proxy, nunca uvicorn a media reutilización. Rango: 1 o más.",
     ),
     (
         _STARTUP,
@@ -124,6 +124,8 @@ SECRETS = (
     "DB_APP_PASSWORD",
     "DB_READONLY_PASSWORD",
     "PITR_CIPHER_PASS",
+    "REDIS_PASSWORD",
+    "RATE_LIMIT_HASH_SALT",
 )
 
 HEADER = """\
@@ -273,8 +275,9 @@ def banner(title: str) -> str:
 
 def generated_secrets() -> dict[str, str]:
     """Secretos nuevos: llave ES256 (PEM en base64), llave Fernet, las contraseñas de la base (el dueño, el usuario
-    de la API y el de solo lectura: cada uno la suya) y la llave del repositorio de pgBackRest (PITR, propia: no se
-    deriva de DATA_ENCRYPTION_KEY para que rotar una no deje ilegible el otro)."""
+    de la API y el de solo lectura: cada uno la suya), la llave del repositorio de pgBackRest (PITR, propia: no se
+    deriva de DATA_ENCRYPTION_KEY para que rotar una no deje ilegible el otro), la contraseña de Redis y la sal de los
+    límites de peticiones."""
     key = ec.generate_private_key(ec.SECP256R1())
     pem = key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption())
     return {
@@ -284,6 +287,10 @@ def generated_secrets() -> dict[str, str]:
         "DB_APP_PASSWORD": secrets.token_urlsafe(24),
         "DB_READONLY_PASSWORD": secrets.token_urlsafe(24),
         "PITR_CIPHER_PASS": secrets.token_urlsafe(48),
+        # La contraseña de Redis (la leen la API y el servicio redis de docker compose) y la sal de las huellas de los
+        # límites de peticiones (token_urlsafe(32) son 43 caracteres: caben en la llave de BLAKE2, de hasta 64 bytes).
+        "REDIS_PASSWORD": secrets.token_urlsafe(32),
+        "RATE_LIMIT_HASH_SALT": secrets.token_urlsafe(32),
     }
 
 

@@ -45,6 +45,31 @@ def test_authenticating_a_request_costs_two_queries_for_every_role(client, compa
         assert len(statements) <= 2, statements
 
 
+def test_catalogs_from_the_shared_cache_cost_no_catalog_queries(client, company_headers):
+    """Con Redis, una réplica cuya copia local venció recarga los catálogos con UNA lectura de Redis y cero consultas
+    SQL (Redis no cuenta como consulta); la petición queda en el presupuesto de la autenticación."""
+    from app.core.cache import use_cache
+    from app.services import catalog_service
+    from tests.redis_support import FakeRedis, shared
+
+    server = FakeRedis()
+    use_cache(shared(server))
+    try:
+        catalog_service.clear_catalog_cache()
+        assert client.get("/api/catalogs", headers=company_headers).status_code == 200  # la base → Redis
+        with count_queries() as statements:
+            assert client.get("/api/catalogs", headers=company_headers).status_code == 200
+        budget = len(statements)
+        assert budget <= 2, statements
+        catalog_service._cache.clear()  # otra réplica (o esta, vencida): Redis responde, la base no se toca
+        server.calls.clear()
+        with count_queries() as statements:
+            assert client.get("/api/catalogs", headers=company_headers).status_code == 200
+        assert len(statements) == budget and server.calls == ["get"]
+    finally:
+        use_cache(None)
+
+
 def test_lists_do_not_query_once_per_row(client, company_headers):
     """Empleados y validaciones: el número de consultas no crece con el tamaño de la página."""
     from tests.conftest import create_employee, login, submit_enrollment
@@ -138,7 +163,9 @@ def test_the_board_with_days_off_does_not_query_once_per_row(client, company_hea
 #: Consultas por petición de cada ruta (la clave es la ruta sin parámetros de página).
 BUDGETS = {
     # Asistencia y calendario (empresa)
-    "/api/attendance/board": 12,
+    # +1 (foto de perfil, decisión del dueño 2026-10-06): la versión de la foto de las cuentas de la página, en UNA
+    # consulta por la llave primaria (la página no carga las cuentas a propósito: ver `ShiftRepository.assigned_on`).
+    "/api/attendance/board": 13,
     "/api/attendance/sessions": 6,
     "/api/calendar/absences": 5,
     "/api/calendar/workdays": 5,
@@ -166,6 +193,12 @@ BUDGETS = {
     # ADMIN de la plataforma
     "/api/admin/companies": 6,
     "/api/admin/errors": 5,
+    # Personas con su foto de perfil (decisión del dueño, 2026-10-06): la versión viaja con la cuenta que la página ya
+    # carga (empleados con su cuenta por JOIN; administradores: la cuenta misma; quién provocó cada error: la lectura de
+    # sus cuentas que ya se hacía): las mismas consultas que antes de la foto.
+    "/api/admin/companies/{id}/employees": 6,
+    "/api/admin/companies/{id}/admins": 6,
+    "/api/admin/errors/{id}/occurrences": 7,
     # +1 (migración 0062): el cociente rostro/fondo del destello medido (otra lectura acotada de las métricas); +1
     # (0066): el protocolo de captura (destello dictado, ráfaga y pulso) en UNA lectura acotada.
     "/api/admin/face-security": 8,
@@ -183,11 +216,13 @@ BUDGETS = {
     "/api/admin/usage/companies/{id}": 11,
     # Imágenes en el bucket: el detalle del registro facial no carga la foto de la BD (su referencia viene en
     # la misma fila) y el estado del ADMIN son conteos fijos (guardadas de cada tipo, cola de borrados y su
-    # última vuelta).
-    "GET /api/enrollments/{id}": 5,
-    # +1 (migración 0061): las fotos de perfil en el bucket, un conteo más con tope; +1 (0062): la evidencia de los
-    # casos de fraude; +1 (0075): los documentos de las empresas.
-    "/api/admin/errors/server": 9,
+    # última vuelta). +1 (0079): las respuestas de la verificación por voz del registro (una consulta, acotada a
+    # las preguntas de la sesión).
+    "GET /api/enrollments/{id}": 6,
+    # Los conteos con tope de TODOS los tipos de imagen del bucket (fotos del registro y su foto inicial, comprobantes,
+    # fotos de perfil, evidencia, documentos y videos) van en UNA consulta con un subconteo por tipo (antes, una por
+    # tipo: 10 con seis tipos); un tipo nuevo en `STORED_IMAGES` ya no agrega consultas (0083).
+    "/api/admin/errors/server": 5,
     # Foto de perfil (migración 0061; la imagen vive en el bucket): leerla es la autenticación + UNA consulta (quién
     # puede verla y su referencia, juntas); subirla o quitarla, una transacción corta de sentencias fijas (bloquear la
     # cuenta, encolar la foto anterior para el bucket, borrar su referencia, guardar la nueva y la versión).
@@ -212,6 +247,15 @@ BUDGETS = {
     # consulta cada uno); el historial de la política, la empresa (404), su conteo, su página y sus cuentas; los
     # contadores del menú, un conteo con tope.
     "/api/admin/fraud-cases": 7,
+    # Deriva de señales (antifraude fase 3): cada lectura filtra una ventana (la pedida o la más reciente) y la lista
+    # de empresas no une con `companies` (el nombre va copiado en la fila).
+    "/api/admin/drift": 5,
+    "/api/admin/drift/companies": 5,
+    "/api/admin/drift/summary": 8,
+    # Llaves de acceso: las de la cuenta (una página) y entrar con una (la llave con su cuenta y sus empleos, el reto
+    # usado, el contador y la sesión: lo mismo que la contraseña).
+    "/api/auth/passkeys": 4,
+    "POST /api/auth/login/passkey": 14,
     "/api/admin/fraud-cases/count": 3,
     "GET /api/admin/fraud-cases/{id}": 9,
     "/api/admin/companies/{id}/verification-policy/changes": 5,
@@ -222,11 +266,35 @@ BUDGETS = {
     # consulta más, su huella, cada RISK_IDENTITY_GALLERY_MAX_AGE_SECONDS). El registro de asistencia reutiliza la
     # lectura del registro anterior que ya hacía el viaje imposible (LOCATION_JUMP y NETWORK_JUMP salen de ella).
     "POST /api/verification/face": 16,
+    # API pública de verificación (SDK móviles, migración 0084). La llave cuesta 3 consultas (su hash, sus permisos y su
+    # empresa; su último uso, a lo más una vez por minuto) en lugar de las 2 de la sesión; el empleado se lee por su id
+    # o su número (1) y no hay dispositivo del empleado (−2: la prueba del dispositivo es una firma, sin consultas). El
+    # reto: la política (en caché), si la empresa está bajo ataque (1) y reemplazar el reto del dispositivo (2).
+    "POST /api/integrations/v1/verification/challenge": 7,
+    "POST /api/integrations/v1/verification/verify": 16,
+    # El 1:N cuesta 2 más que el 1:1 (medido, no estimado): el 1:1 lee al empleado y sus muestras ANTES del análisis;
+    # el 1:N las lee DESPUÉS, del ganador que encontró la galería en memoria (su fila para la respuesta y sus muestras
+    # para el consenso de la ráfaga), y además revisa que la galería siga fresca (empleados activos y cuenta de
+    # muestras: 2). Todo es un número fijo: no depende de cuántos empleados tenga la empresa.
+    "POST /api/integrations/v1/verification/identify": 18,
     "POST /api/me/attendance/{action}": 28,
     # Registro facial con muchas fotos (decisión del dueño, 2026-10-06): las mismas consultas con 3 que con 36 fotos.
     # Las referencias se guardan en UNA inserción (`add_all`) y las huellas de todas las fotos útiles en UNA sentencia
-    # atómica (`CaptureFingerprintRepository.claim`); elegirlas es solo CPU.
-    "POST /api/enrollment/face": 13,
+    # atómica (`CaptureFingerprintRepository.claim`); elegirlas es solo CPU. +5 (0079, verificación por voz): borrar
+    # un registro anterior sin terminar (1) y las preguntas elegibles (el nombre de la empresa, el departamento, la
+    # asignación de turno vigente y los sitios del turno: una consulta cada uno), sin importar cuántas fotos. +1 (0083,
+    # los tres pasos independientes): leer la foto inicial ANTES del reto (sin ella, 409 sin gastar el reto ni segundos
+    # de CPU). Tomarla (`DELETE … RETURNING`, atómico) reemplaza al UPDATE que anotaba la foto subida: su referencia va
+    # en la misma inserción del registro y no se vuelve a subir.
+    "POST /api/enrollment/face": 19,
+    # Los tres pasos independientes del registro (decisión del dueño, 2026-10-07; migración 0083). La foto inicial: la
+    # política, la cola del bucket del borrador anterior, su borrado y la inserción del nuevo con su referencia. El
+    # avance: el borrador (o el registro pendiente con sus respuestas y, para decir «2 de 3», las preguntas elegibles:
+    # el nombre de la empresa y la asignación de turno vigente). La sesión de voz: el registro pendiente, sus respuestas
+    # aceptadas y las mismas preguntas elegibles.
+    "POST /api/enrollment/photo": 6,
+    "GET /api/enrollment/progress": 7,
+    "POST /api/enrollment/voice/start": 7,
     # Borrado lógico (migración 0068): la papelera de cada listado cuesta lo mismo que el listado (la misma página por
     # el índice parcial `ix_*_deleted`, sin consultas de más: la condición de lo vigente viaja en la sentencia), y
     # restaurar es el registro con su candado, la revisión de cada dato único que puede chocar y su lectura.
@@ -487,6 +555,30 @@ def test_company_admin_and_integration_lists_fit_their_budget(client, company_he
         assert_flat(client, url, admin_headers, url)
     overview = cost(client, "GET", "/api/admin/face-security", admin_headers)
     assert overview <= BUDGETS["/api/admin/face-security"], overview
+
+    # Personas con su foto de perfil (decisión del dueño, 2026-10-06): los listados del ADMIN que muestran gente la
+    # traen de la cuenta que ya cargan (o en la misma consulta), nunca con una consulta por fila.
+    from sqlalchemy import select
+
+    from app.models import ErrorOccurrence
+
+    with SessionLocal() as db:
+        company_id = db.scalar(select(Employee.company_id).where(Employee.id == crew[0]))
+        report_id = db.scalar(select(ErrorReport.id).order_by(ErrorReport.id))
+        users = list(db.scalars(select(Employee.user_id).where(Employee.id.in_(crew))))
+        db.add_all(
+            ErrorOccurrence(report_id=report_id, user_id=user_id, company_id=company_id, message="La base tardó")
+            for user_id in users
+        )
+        db.commit()
+    admin = {"admin_email": "segundo@empresa.com", "admin_password": "Empresa1234"}
+    assert client.post(f"/api/admin/companies/{company_id}/admins", json=admin, headers=admin_headers).is_success
+    for url, budget in (
+        (f"/api/admin/companies/{company_id}/employees", "/api/admin/companies/{id}/employees"),
+        (f"/api/admin/companies/{company_id}/admins", "/api/admin/companies/{id}/admins"),
+        (f"/api/admin/errors/{report_id}/occurrences", "/api/admin/errors/{id}/occurrences"),
+    ):
+        assert_flat(client, url, admin_headers, budget)
 
 
 def test_the_trash_and_restoring_fit_their_budget(client, company_headers, admin_headers):
@@ -762,14 +854,15 @@ def test_recording_with_the_face_fits_its_budget(client, company_headers, worker
 def test_an_enrollment_costs_the_same_with_36_photos_as_with_3(client, company_headers):
     """El registro con muchas fotos (decisión del dueño, 2026-10-06): elegir las referencias es CPU; guardar las
     referencias es una inserción y recordar las huellas de todas las útiles, una sentencia (sin contar el reto)."""
-    from tests.conftest import create_employee, login, turn_files
+    from tests.conftest import create_employee, enrollment_challenge, initial_photo, login, turn_files
     from tests.test_enrollment_selection import photo
 
     def cost_of(number: str, count: int) -> int:
         email = f"{number.lower()}@empresa.com"
         assert create_employee(client, company_headers, number=number, email=email).status_code == 201
         headers = login(client, email, "Empleado123")
-        challenge = client.post("/api/face/challenge", headers=headers).json()["data"]
+        assert initial_photo(client, headers, photo(0, name=f"{number}~0.9~p")).status_code == 201
+        challenge = enrollment_challenge(client, headers)
         images = [photo(i, name=f"{number}~0.9~v{i}") for i in range(count)]
         files = [("images", (f"f{i}.jpg", image, "image/jpeg")) for i, image in enumerate(images)]
         files += turn_files(challenge, number)
@@ -870,3 +963,52 @@ def test_the_company_tax_id_fits_its_budget(client, admin_headers):
     assert client.delete(url, headers=admin_headers).status_code == 200
     restored = cost(client, "POST", f"{url}/restore", admin_headers)
     assert restored <= BUDGETS["POST /api/admin/companies/{id}/restore"], restored
+
+
+def test_drift_and_passkey_routes_fit_their_budget(client, admin_headers, company_headers):
+    """Deriva de señales (ADMIN): listados por ventana sin N+1 (la página de 50 cuesta lo mismo que la de 1) y el
+    resumen en un número fijo de consultas; llaves de acceso: la lista propia y el inicio de sesión con una."""
+    from datetime import UTC, datetime
+
+    from app.core.database import SessionLocal
+    from app.services import drift_service
+    from tests.passkey_support import FakeAuthenticator, login_with, register
+    from tests.test_drift import WEEK
+
+    with SessionLocal() as db:
+        drift_service.compute_window(db, WEEK, datetime.now(UTC))
+    assert_flat(client, "/api/admin/drift", admin_headers, "/api/admin/drift")
+    assert cost(client, "GET", "/api/admin/drift/companies", admin_headers) <= BUDGETS["/api/admin/drift/companies"]
+    summary = cost(client, "GET", "/api/admin/drift/summary", admin_headers)
+    assert summary <= BUDGETS["/api/admin/drift/summary"], summary
+    for i in range(3):
+        assert register(client, company_headers, FakeAuthenticator(), name=f"Llave {i}").status_code == 201
+    listed = cost(client, "GET", "/api/auth/passkeys?size=50", company_headers)
+    assert listed <= BUDGETS["/api/auth/passkeys"], listed
+    device = FakeAuthenticator()
+    assert register(client, company_headers, device).status_code == 201
+    with count_queries() as statements:
+        assert login_with(client, device).status_code == 200
+    assert len(statements) <= BUDGETS["POST /api/auth/login/passkey"], statements
+
+
+def test_the_mobile_verification_api_fits_its_budget(client, company_headers):
+    """La API pública de verificación (SDK móviles): el reto, el 1:1 y el 1:N con la galería en memoria cuestan un
+    número fijo de consultas (las del reto aparte del envío)."""
+    from tests.test_api_keys import new_key
+    from tests.test_verification_api import attempt, challenge
+
+    approved_employee(client, company_headers)
+    secret = new_key(client, company_headers, scopes=["VERIFICATION"])["secret"]
+    attempt(client, secret)  # calienta catálogos, política, umbrales y el último uso de la llave
+    attempt(client, secret, action="identify")  # la galería ya en memoria
+    with count_queries() as statements:
+        issued = challenge(client, secret)
+    assert issued.status_code == 200
+    assert len(statements) <= BUDGETS["POST /api/integrations/v1/verification/challenge"], statements
+    for action in ("verify", "identify"):
+        issued = challenge(client, secret).json()["data"]
+        with count_queries() as statements:
+            response = attempt(client, secret, action=action, issued=issued)
+        assert response.json()["data"]["decision"] == "ALLOW", response.text
+        assert len(statements) <= BUDGETS[f"POST /api/integrations/v1/verification/{action}"], statements

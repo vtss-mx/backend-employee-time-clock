@@ -8,12 +8,21 @@ from app.core.db_schemas import ALL_SCHEMAS, ATTENDANCE, AUTH, BILLING, BIOMETRI
 from app.models.catalog_seed import load_catalog_seed
 
 EXPECTED = {
-    AUTH: {"users", "user_avatars", "auth_sessions", "remembered_accounts", "rate_limit_counters"},
+    AUTH: {
+        "users",
+        "user_avatars",
+        "auth_sessions",
+        "remembered_accounts",
+        "rate_limit_counters",
+        "passkeys",  # llaves de acceso (WebAuthn) de la persona y sus retos de un solo uso (antifraude fase 3, 0081)
+        "passkey_challenges",
+    },
     TENANCY: {"companies", "verification_policy", "company_api_keys", "company_api_key_scopes", "company_documents"},
     WORKFORCE: {
         "employees",
         "employee_qr_codes",
         "employee_devices",
+        "employee_documents",
         "validators",
         "validator_devices",
         "departments",
@@ -32,7 +41,9 @@ EXPECTED = {
     },
     BIOMETRICS: {
         "face_enrollments",
+        "face_enrollment_drafts",
         "face_enrollment_flags",
+        "enrollment_voice_answers",
         "face_embeddings",
         "face_challenges",
         "capture_fingerprints",
@@ -55,6 +66,10 @@ EXPECTED = {
         "perf_hours",
         "perf_days",
         "slow_request_alerts",
+        # Antifraude fase 3 (migración 0081): deriva por ventana, fraude interno por empresa y bitácora del motor.
+        "signal_drift",
+        "company_fraud_weekly",
+        "engine_versions",
         # Antifraude (migración 0062).
         "policy_changes",
         "risk_assessments",

@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 
 from app.core.clock import business_today
 from app.core.exceptions import ConflictError, NotFoundError, UnprocessableError
-from app.i18n import t
+from app.i18n import LazyText, t
 from app.models import CompanyHoliday, Employee, EmployeeAbsence, EmployeeWorkday, User
 from app.repositories.calendar_repository import CalendarRepository
 from app.repositories.employee_repository import EmployeeRepository
@@ -43,6 +43,17 @@ from app.services.trash import commit_restore, ensure_deleted, ensure_live
 UPCOMING_DAYS = 366
 
 
+def day_off_phrase(type_code: str) -> LazyText:
+    """La frase de un tipo de ausencia («Estás de vacaciones»), diferida: se lee del catálogo en el idioma del mensaje
+    que la lleva (sin el tipo en el catálogo, la genérica)."""
+
+    def phrase() -> str:
+        row = get_catalogs().get("day_off_types", type_code)
+        return str(row["phrase"]) if row else t("DAY_OFF_FALLBACK_PHRASE")
+
+    return phrase
+
+
 def day_off_span(absence: EmployeeAbsence, catalogs: Catalogs) -> DayOff:
     """Una ausencia aprobada como día libre, con el nombre y la frase de su tipo (catálogo)."""
     row = catalogs.get("day_off_types", absence.type_code)
@@ -51,7 +62,7 @@ def day_off_span(absence: EmployeeAbsence, catalogs: Catalogs) -> DayOff:
         name=row["name"] if row else absence.type_code,
         starts_on=absence.starts_on,
         ends_on=absence.ends_on,
-        phrase=row["phrase"] if row else t("DAY_OFF_FALLBACK_PHRASE"),
+        phrase=day_off_phrase(absence.type_code),
     )
 
 

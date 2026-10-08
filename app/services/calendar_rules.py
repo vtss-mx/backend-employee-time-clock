@@ -14,7 +14,7 @@ from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
-from app.i18n import Text
+from app.i18n import LazyText, Text
 
 #: Clase de día libre de un festivo (las ausencias usan el código de su tipo: VACATION, PERMISSION...).
 HOLIDAY = "HOLIDAY"
@@ -66,9 +66,9 @@ class DayOff:
     name: str
     starts_on: date
     ends_on: date
-    #: Cómo se le dice al empleado ("Estás de vacaciones", del catálogo en el idioma de la petición); los festivos
-    #: usan su propio texto.
-    phrase: str = ""
+    #: Cómo se le dice al empleado ("Estás de vacaciones", del catálogo), diferido: dentro de un mensaje se arma en el
+    #: idioma de ese mensaje (el sobre lo arma en cada idioma); los festivos usan su propio texto.
+    phrase: LazyText | str = ""
 
     def explain(self, work_date: date, today: date) -> Text:
         """El motivo para el empleado: "Hoy es día festivo: Navidad", "Estás de vacaciones del ... al ..."."""

@@ -59,6 +59,7 @@ def last_reasons() -> dict[str, dict]:
 
 
 def test_a_clean_attempt_is_allowed_recorded_linked_and_remembered(client, company_headers):
+    set_policy(client, company_headers, flash_liveness="OBSERVE", flash_paced=False)  # retirado: se enciende aquí
     headers = approved_employee(client, company_headers)
     response = verify(client, headers)
     assert response.json()["data"]["verified"] is True and response.json()["data"]["review"] is False
@@ -76,6 +77,7 @@ def test_a_clean_attempt_is_allowed_recorded_linked_and_remembered(client, compa
 
 
 def test_signals_measured_in_observe_mode_are_recorded_without_points(client, company_headers):
+    set_policy(client, company_headers, flash_liveness="OBSERVE", flash_paced=False)  # retirado: se enciende aquí
     headers = approved_employee(client, company_headers)
     challenge = client.post("/api/face/challenge", headers=headers).json()["data"]
     files = [("images", (f"f{i}.jpg", b"lowreal:juan", "image/jpeg")) for i in range(2)]
@@ -117,21 +119,16 @@ def test_medium_risk_asks_for_one_more_step_without_repeating_the_scan(client, c
     asked = verify(client, headers, camera=None)
     assert asked.status_code == 422 and asked.json()["code"] == "STEP_UP_REQUIRED"
     step_up = asked.json()["errors"][0]["details"]["challenge"]
-    assert step_up["step_up"] is True and step_up["flash_required"] is True and len(step_up["actions"]) == 3
-    # El destello del paso extra aunque la empresa solo lo mida (dictado por el servidor: sus colores no viajan).
-    assert step_up["flash"] == [] and step_up["flash_pace"]["total"] >= 2
+    assert step_up["step_up"] is True and step_up["flash_required"] is False and len(step_up["actions"]) == 3
+    # El destello se retiró de la experiencia (decisión del dueño, 2026-10-06): tampoco en el paso extra.
+    assert step_up["flash"] == [] and step_up["flash_pace"] is None
     with SessionLocal() as db:
         assert (
             db.scalars(select(VerificationLog.reason).order_by(VerificationLog.id.desc())).first() == "STEP_UP_REQUIRED"
         )
-    # Sin el destello obligatorio del paso extra no basta.
-    files = [("images", (f"f{i}.jpg", b"face:juan", "image/jpeg")) for i in range(2)] + turn_files(step_up, "juan")
-    incomplete = client.post(VERIFY, data={"challenge_id": step_up["challenge_id"]}, files=files, headers=headers)
-    assert incomplete.status_code == 422 and incomplete.json()["code"] == "LIVENESS_REQUIRED"
-    # Completo, pasa (sigue sin cámara: el riesgo medio ya se atendió con el paso extra).
-    again = verify(client, headers, camera=None)
-    challenge = again.json()["errors"][0]["details"]["challenge"]
-    done = verify(client, headers, camera=None, challenge=challenge)
+    # El paso extra se responde con sus tres movimientos (ya sin destello); completo, pasa (sigue sin cámara: el riesgo
+    # medio ya se atendió con el paso extra).
+    done = verify(client, headers, camera=None, challenge=step_up)
     assert done.json()["data"]["verified"] is True and assessments()[-1].step_up is True
     # Un paso más no es un fallo: no cuenta para el bloqueo ni abre un caso.
     with SessionLocal() as db:

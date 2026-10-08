@@ -1,0 +1,30 @@
+ Container timeclock-scale-k6-run-a141f0d3fc40 Creating 
+ Container timeclock-scale-k6-run-a141f0d3fc40 Created 
+
+
+  █ TOTAL RESULTS 
+
+    checks_total.......: 12001   596.727789/s
+    checks_succeeded...: 100.00% 12001 out of 12001
+    checks_failed......: 0.00%   0 out of 12001
+
+    ✓ respuesta 200
+
+    HTTP
+    http_req_duration..............: avg=51.93ms p(50)=40.57ms p(95)=135.29ms p(99)=193.66ms max=347.13ms
+      { expected_response:true }...: avg=51.93ms p(50)=40.57ms p(95)=135.29ms p(99)=193.66ms max=347.13ms
+    http_req_failed................: 0.00%  0 out of 12002
+    http_reqs......................: 12002  596.777512/s
+
+    EXECUTION
+    iteration_duration.............: avg=52.11ms p(50)=40.73ms p(95)=135.49ms p(99)=193.8ms  max=347.28ms
+    iterations.....................: 12001  596.727789/s
+    vus............................: 22     min=11         max=86 
+    vus_max........................: 600    min=600        max=600
+
+    NETWORK
+    data_received..................: 201 MB 10 MB/s
+    data_sent......................: 6.6 MB 329 kB/s
+
+
+

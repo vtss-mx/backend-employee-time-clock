@@ -25,14 +25,24 @@ class UserRepository:
         rows = self.db.execute(with_deleted(select(User.id, User.email).where(User.id.in_(ids))))
         return {row.id: row.email for row in rows}
 
-    def accounts_by_ids(self, user_ids: Iterable[int | None]) -> dict[int, tuple[str, UserRole]]:
-        """Correo y rol de varios usuarios en UNA consulta (para decidir qué se puede mostrar); también de cuentas en
-        «Eliminados» (referencias del historial)."""
+    def accounts_by_ids(self, user_ids: Iterable[int | None]) -> dict[int, tuple[str, UserRole, str | None]]:
+        """Correo, rol y versión de la foto de perfil de varios usuarios en UNA consulta (para decidir qué se puede
+        mostrar); también de cuentas en «Eliminados» (referencias del historial; la suya ya no tiene foto: se borró de
+        verdad al eliminarla y su versión quedó en NULL)."""
         ids = {i for i in user_ids if i is not None}
         if not ids:
             return {}
-        rows = self.db.execute(with_deleted(select(User.id, User.email, User.role).where(User.id.in_(ids))))
-        return {row.id: (row.email, row.role) for row in rows}
+        stmt = select(User.id, User.email, User.role, User.avatar_version).where(User.id.in_(ids))
+        return {row.id: (row.email, row.role, row.avatar_version) for row in self.db.execute(with_deleted(stmt))}
+
+    def avatar_versions(self, user_ids: Iterable[int]) -> dict[int, str | None]:
+        """La versión de la foto de perfil de varias cuentas vigentes en UNA consulta por su llave primaria: para los
+        listados que a propósito no cargan la cuenta junto con el empleado (el tablero del día)."""
+        ids = set(user_ids)
+        if not ids:
+            return {}
+        rows = self.db.execute(select(User.id, User.avatar_version).where(User.id.in_(ids)))
+        return {row.id: row.avatar_version for row in rows}
 
     # ---------- Cuentas de una empresa (eliminarla y restaurarla las lleva consigo) ----------
 

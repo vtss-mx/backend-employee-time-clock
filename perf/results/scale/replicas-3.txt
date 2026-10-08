@@ -1,3 +1,0 @@
-172.20.0.4 /timeclock-scale-backend-1
-172.20.0.7 /timeclock-scale-backend-2
-172.20.0.6 /timeclock-scale-backend-3

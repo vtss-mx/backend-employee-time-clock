@@ -37,10 +37,10 @@ from app.schemas.capture import LocationSample
 from app.schemas.common import PageParams
 from app.services.api_key_service import ApiClient, authenticate, require_scope
 from app.services.capture_protocol import max_burst_bytes
-from app.services.catalog_service import get_catalogs
+from app.services.catalog_service import face_error_text, get_catalogs
 from app.services.client_evidence import ClientEvidence, DeviceProofInput, parse_telemetry
 from app.services.employee_access import approved_employee
-from app.services.liveness_service import MAX_STEPS, LivenessResponse
+from app.services.liveness_service import MAX_CHALLENGE_STEPS, LivenessResponse
 from app.services.navigation_service import IDENTITY_SCREENS
 from app.services.request_signing import RequestProof
 from app.services.session_service import SessionService
@@ -285,13 +285,13 @@ def get_pipeline(db: DbSession) -> Generator[FacePipeline]:
         pipeline = lease.__enter__()
     except FaceEngineUnavailable as exc:
         raise ServiceUnavailableError(
-            get_catalogs().face_error_message("FACE_SERVICE_UNAVAILABLE"),
+            face_error_text("FACE_SERVICE_UNAVAILABLE"),
             code="FACE_SERVICE_UNAVAILABLE",
             retry_after=settings.FACE_ENGINE_RETRY_SECONDS,
         ) from exc
     except (QueueFullError, QueueTimeoutError) as exc:
         raise ServiceUnavailableError(
-            get_catalogs().face_error_message("FACE_SERVICE_BUSY"),
+            face_error_text("FACE_SERVICE_BUSY"),
             code="FACE_SERVICE_BUSY",
             retry_after=3,
         ) from exc
@@ -338,9 +338,21 @@ def read_image_upload(file: UploadFile) -> bytes:
     return data
 
 
+def read_video_upload(file: UploadFile) -> bytes:
+    """El clip de una respuesta de la verificación por voz: acotado a FACE_VIDEO_MAX_MB (413 VIDEO_TOO_LARGE) y nunca
+    vacío. Su formato se reconoce por el CONTENIDO (`app/speech/audio.py`), no por lo que declare el cliente."""
+    max_bytes = int(settings.FACE_VIDEO_MAX_MB * 1024 * 1024)
+    data = file.file.read(max_bytes + 1)
+    if len(data) > max_bytes:
+        raise PayloadTooLargeError(key="VIDEO_TOO_LARGE", params={"size": Megabytes(max_bytes)})
+    if not data:
+        raise UnprocessableError(code="VIDEO_UNSUPPORTED_FORMAT")
+    return data
+
+
 def _image_error(code: str) -> UnprocessableError:
     """Un archivo de imagen que no sirve: el mensaje es el del error de captura del catálogo (`face_errors`)."""
-    return UnprocessableError(get_catalogs().face_error_message(code), code=code)
+    return UnprocessableError(face_error_text(code), code=code)
 
 
 def read_image_uploads(files: list[UploadFile], *, max_files: int) -> list[bytes]:
@@ -376,7 +388,7 @@ def liveness_response(
     limit = settings.WS_MAX_MESSAGE_BYTES
     return LivenessResponse(
         challenge_id=challenge_id,
-        steps=tuple(read_image_uploads(challenge_image, max_files=MAX_STEPS)) if challenge_image else (),
+        steps=tuple(read_image_uploads(challenge_image, max_files=MAX_CHALLENGE_STEPS)) if challenge_image else (),
         flash=tuple(read_image_uploads(flash_image, max_files=MAX_FLASH_COLORS)) if flash_image else (),
         burst=sheet,
         burst_meta=burst_meta,
@@ -400,6 +412,11 @@ MAX_FLASH_COLORS = 6
 
 def face_check_rate_limit(user: CurrentUser) -> None:
     enforce(f"face-check:user:{user.id}", settings.RATE_LIMIT_FACE_CHECK_PER_MINUTE)
+
+
+def voice_answer_rate_limit(user: CurrentUser) -> None:
+    """Respuestas en video de la verificación por voz por usuario (cada una transcribe y analiza el rostro)."""
+    enforce(f"voice:user:{user.id}", settings.RATE_LIMIT_VOICE_ANSWERS_PER_MINUTE)
 
 
 def request_meta(request: Request) -> tuple[str | None, str | None]:
@@ -501,19 +518,36 @@ _api_key_header = APIKeyHeader(
 )
 
 
+def _api_client(
+    request: Request, db: Session, api_key: str | None, *, rule: str = "api-key", limit: int | None = None
+) -> ApiClient:
+    ip, _ = request_meta(request)
+    # La llave se busca por su hash antes de saber de qué empresa es (plataforma); todo lo demás de la petición
+    # es solo de la empresa de la llave (seguridad por fila).
+    use_platform(db)
+    client = authenticate(db, api_key, ip, rule=rule, limit=limit)
+    use_company(db, client.company_id)
+    note_company(client.company_id)
+    return client
+
+
 def get_api_client(
     request: Request, db: DbSession, api_key: Annotated[str | None, Security(_api_key_header)]
 ) -> ApiClient:
     """La llave de la cabecera: a qué empresa (y con qué permisos) da acceso esta petición. El consumo
     de la petición se le cuenta a esa empresa."""
-    ip, _ = request_meta(request)
-    # La llave se busca por su hash antes de saber de qué empresa es (plataforma); todo lo demás de la petición
-    # es solo de la empresa de la llave (seguridad por fila).
-    use_platform(db)
-    client = authenticate(db, api_key, ip)
-    use_company(db, client.company_id)
-    note_company(client.company_id)
-    return client
+    return _api_client(request, db, api_key)
+
+
+def get_api_client_for_verification(
+    request: Request, db: DbSession, api_key: Annotated[str | None, Security(_api_key_header)]
+) -> ApiClient:
+    """La llave de la API pública de verificación (SDK móviles): la misma autenticación con su propio límite por llave
+    (`RATE_LIMIT_API_VERIFICATION_PER_MINUTE`). Su nombre empieza por `get_api_client`: la prueba de autorización la
+    reconoce como una ruta de la API de integración (solo llave, nunca una sesión)."""
+    return _api_client(
+        request, db, api_key, rule="api-verify-key", limit=settings.RATE_LIMIT_API_VERIFICATION_PER_MINUTE
+    )
 
 
 ApiClientDep = Annotated[ApiClient, Depends(get_api_client)]
@@ -527,6 +561,19 @@ def require_api_scope(scope: ApiScope) -> Callable[[ApiClient], ApiClient]:
         return client
 
     return dependency
+
+
+def require_verification_api(
+    client: Annotated[ApiClient, Depends(get_api_client_for_verification)],
+) -> ApiClient:
+    """La API pública de verificación: la llave con el permiso `VERIFICATION` (403 `API_SCOPE_REQUIRED`). Solo abre la
+    verificación: el permiso no lee empleados, asistencia ni validadores (ni los otros permisos abren esto)."""
+    require_scope(client, ApiScope.VERIFICATION.value)
+    return client
+
+
+#: La llave de la aplicación móvil de la empresa con el permiso de verificación.
+VerificationClient = Annotated[ApiClient, Depends(require_verification_api)]
 
 
 def require_validators_api(

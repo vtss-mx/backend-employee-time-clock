@@ -107,3 +107,9 @@ def test_full_pipeline_on_a_real_capture(engine):
     assert analysis.detection_score > 0.8 and analysis.embedding.shape == (engine.embedding_dim,)
     assert analysis.real_probability is not None and analysis.accessories is not None
     assert pipeline.model_name == engine.model_name
+    # El fotograma de un video de la verificación por voz: solo el vector (sin pose ni calidad); sin rostro, None.
+    vector = pipeline.identity_of(PHOTO.read_bytes())
+    assert vector is not None and vector.shape == (engine.embedding_dim,)
+    assert cosine_similarity(vector, analysis.embedding) > 0.9
+    blank = cv2.imencode(".jpg", np.full((240, 240, 3), 128, dtype=np.uint8))[1].tobytes()
+    assert pipeline.identity_of(blank) is None

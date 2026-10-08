@@ -1,11 +1,15 @@
-"""Idiomas de la API (regla 16 de la raíz): es-MX (por omisión) y en-US.
+"""Idiomas de la API (regla 16 de la raíz): es-MX (por omisión), en-US, pt-BR, fr-FR, de-DE, it-IT y es-ES.
 
-- Negociación: `Accept-Language` (pesos `q`, `es*` → es-MX, `en*` → en-US, lo demás o nada → es-MX), `?lang=` en el
-  canal en vivo, `Content-Language` y `Vary: Accept-Language` en cada respuesta JSON, sin consultas de más.
-- Catálogo de mensajes: los dos idiomas con las mismas llaves por área, los mismos `{parámetros}` y las mismas formas
+- Negociación: `Accept-Language` (pesos `q`; `es-ES`/`es-EA`/`es-IC` → es-ES, otro `es*` → es-MX, `en*`, `pt*`, `fr*`,
+  `de*`, `it*` → su idioma, lo demás o nada → es-MX), `?lang=` en el canal en vivo, `Content-Language` y
+  `Vary: Accept-Language` en cada respuesta JSON, sin consultas de más.
+- Catálogo de mensajes: los siete idiomas con las mismas llaves por área, los mismos `{parámetros}` y las mismas formas
   de plural; cada llave que el código nombra existe; ningún texto escrito a mano en un error ni en `ok(...)`.
-- Catálogos de la BD: cada texto de cada registro tiene su traducción (y ninguna sobra), con sus mismos marcadores y
-  dentro del largo de su columna; la API los entrega en el idioma de la petición (también el menú de `/users/me`).
+- Formatos por idioma (fecha, hora, separador de miles, listas) y la regla CLDR del plural (en pt-BR y fr-FR el cero es
+  `one`), como `Intl` en la aplicación web.
+- Catálogos de la BD: cada texto de cada registro tiene su traducción en cada idioma (y ninguna sobra), con sus mismos
+  marcadores y dentro del largo de su columna; la API los entrega en el idioma de la petición (también el menú de
+  `/users/me`).
 - Textos que se guardan (`stored`): se traducen al leerse, en el idioma de quien lee.
 """
 
@@ -41,21 +45,30 @@ from app.i18n import (
     MissingTextError,
     Text,
     current_locale,
+    error_text,
+    format_clock,
+    format_count,
+    format_date,
     format_list,
     has_text,
     locale_of,
     negotiate,
     read_stored,
+    recorded_texts,
+    recording_texts,
+    render_text,
     stored,
     strict,
     t,
     use_locale,
 )
-from app.i18n.messages import MESSAGES, en_us, es_mx
+from app.i18n.messages import MESSAGES, de_de, en_us, es_es, es_mx, fr_fr, it_it, pt_br
 from app.i18n.messages.base import merge
+from app.i18n.render import RECORDED_MAX
 from app.models import CatalogTranslation
 from app.models.catalog import TRANSLATED_FIELDS, TRANSLATION_LOCALES
 from app.models.catalog_seed import load_catalog_seed, load_translation_seed
+from app.schemas.verification import VerificationResult
 from app.services import availability_service, face_security, health_service
 from app.services.attendance_service import ACTION_DONE
 from app.services.calendar_rules import official_holidays
@@ -96,17 +109,26 @@ KEY_CALLS = {"t", "Text", "LocalizedValueError", "stored", "company_suspended", 
         ("en", "en-US"),
         ("EN-gb", "en-US"),
         ("en_US", "en-US"),
-        ("es-ES", "es-MX"),
+        ("es-ES", "es-ES"),  # el español de España (y sus regiones) tiene su idioma
+        ("es-EA", "es-ES"),
+        ("es-IC", "es-ES"),
+        ("es-AR", "es-MX"),  # el resto del español, al de México (el de omisión)
         ("es-419,en;q=0.5", "es-MX"),
-        ("fr-FR,en;q=0.8,es;q=0.9", "es-MX"),  # el de mayor peso que la API habla
-        ("fr-FR,en;q=0.8", "en-US"),
+        ("ja-JP,en;q=0.8,es;q=0.9", "es-MX"),  # el de mayor peso que la API habla
+        ("ja-JP,en;q=0.8", "en-US"),
+        ("fr-FR,en;q=0.8,es;q=0.9", "fr-FR"),
+        ("pt-PT", "pt-BR"),  # solo hay portugués de Brasil
+        ("pt", "pt-BR"),
+        ("de-AT", "de-DE"),
+        ("it-CH", "it-IT"),
+        ("ja;q=0.9,pt;q=0.8", "pt-BR"),
         ("en;q=0.7,es;q=0.7", "en-US"),  # mismo peso: el primero
         ("en;q=0,es;q=0.1", "es-MX"),  # q=0 lo excluye
         ("en;q=0", "es-MX"),
         ("en;q=abc,es;q=0.2", "es-MX"),  # un peso mal escrito descarta el rango
         ("en;q=2", "es-MX"),  # fuera de 0-1
         ("en;level=1;q=0.9", "en-US"),  # otros parámetros no estorban
-        ("fr, de, *", "es-MX"),  # nada que la API hable
+        ("ja, ko, *", "es-MX"),  # nada que la API hable
         ("en;foo=bar", "en-US"),  # sin q: peso 1
     ],
 )
@@ -115,13 +137,14 @@ def test_negotiation_follows_rfc_9110(header, expected):
 
 
 def test_a_huge_header_reads_only_its_first_ranges():
-    assert negotiate(",".join(["fr"] * 16 + ["en"])) == "es-MX"
-    assert negotiate(",".join(["fr"] * 15 + ["en"])) == "en-US"
+    assert negotiate(",".join(["ja"] * 16 + ["en"])) == "es-MX"
+    assert negotiate(",".join(["ja"] * 15 + ["en"])) == "en-US"
 
 
 def test_locale_of_a_tag():
-    assert locale_of(None) is None and locale_of("") is None and locale_of("pt-BR") is None
-    assert locale_of(" es ") == "es-MX"
+    assert locale_of(None) is None and locale_of("") is None and locale_of("ja-JP") is None
+    assert locale_of(" es ") == "es-MX" and locale_of("pt-BR") == "pt-BR" and locale_of("es_ES") == "es-ES"
+    assert locale_of("es-ES-u-co-trad") == "es-ES" and locale_of("ES-mx") == "es-MX"
 
 
 def test_negotiation_costs_microseconds():
@@ -147,8 +170,12 @@ def test_every_json_response_says_its_language_and_that_it_varies(client, compan
     assert spanish.json()["message"] == "El servicio está en ejecución"
     english = client.get("/api/health/live", headers=EN)
     assert english.headers["Content-Language"] == "en-US" and english.json()["message"] == "The service is running"
-    unknown = client.get("/api/health/live", headers={"Accept-Language": "fr-FR"})
+    unknown = client.get("/api/health/live", headers={"Accept-Language": "ja-JP"})
     assert unknown.headers["Content-Language"] == "es-MX" and unknown.json()["message"] == spanish.json()["message"]
+    for locale in LOCALES[2:]:
+        other = client.get("/api/health/live", headers={"Accept-Language": locale})
+        assert other.headers["Content-Language"] == locale
+        assert other.json()["message"] == MESSAGES[locale]["ALIVE"]
     # CORS agrega su Vary después: se suman, no se pisan.
     cors = client.get("/api/health/live", headers={**EN, "Origin": "http://localhost:5173"})
     assert {"Accept-Language", "Origin"} <= {part.strip() for part in cors.headers["Vary"].split(",")}
@@ -221,22 +248,38 @@ def _fields(text: str) -> set[str]:
     return {name for _, name, _, _ in string.Formatter().parse(text) if name}
 
 
-def test_both_languages_have_the_same_areas_keys_placeholders_and_plural_forms():
+#: Los paquetes de mensajes de cada idioma que no es el de omisión (`es_es` deriva de `es_mx`: `OVERRIDES` sobre sus
+#: mismos módulos).
+PACKAGES = {"en-US": en_us, "pt-BR": pt_br, "fr-FR": fr_fr, "de-DE": de_de, "it-IT": it_it, "es-ES": es_es}
+
+
+def test_the_packages_cover_every_locale():
+    assert set(PACKAGES) | {"es-MX"} == set(LOCALES) == set(MESSAGES)
+
+
+@pytest.mark.parametrize("locale", sorted(PACKAGES))
+def test_every_language_has_the_same_areas_keys_placeholders_and_plural_forms(locale):
+    package = PACKAGES[locale]
     assert es_mx.AREAS and [a.__name__.rsplit(".", 1)[-1] for a in es_mx.AREAS] == [
-        a.__name__.rsplit(".", 1)[-1] for a in en_us.AREAS
+        a.__name__.rsplit(".", 1)[-1] for a in package.AREAS
     ]
-    for spanish, english in zip(es_mx.AREAS, en_us.AREAS, strict=True):
-        assert spanish.MESSAGES.keys() == english.MESSAGES.keys(), spanish.__name__
+    for spanish, other in zip(es_mx.AREAS, package.AREAS, strict=True):
+        assert spanish.MESSAGES.keys() == other.MESSAGES.keys(), spanish.__name__
         for key, es_text in spanish.MESSAGES.items():
-            en_text = english.MESSAGES[key]
-            assert isinstance(es_text, str) == isinstance(en_text, str), key
+            text = other.MESSAGES[key]
+            assert isinstance(es_text, str) == isinstance(text, str), key
             if isinstance(es_text, str):
-                assert _fields(es_text) == _fields(str(en_text)), key
+                assert _fields(es_text) == _fields(str(text)), key
+                assert text.strip() == text and text, key
                 continue
-            assert isinstance(en_text, dict) and es_text.keys() == en_text.keys() <= FORMS, key
+            assert isinstance(text, dict) and es_text.keys() == text.keys() <= FORMS, key
             assert {"one", "other"} <= es_text.keys(), key
-            for form, text in es_text.items():
-                assert _fields(text) == _fields(en_text[form]), (key, form)
+            for form, es_form in es_text.items():
+                assert _fields(es_form) == _fields(text[form]), (key, form)
+    if locale == "es-ES":
+        # Derivado: solo sobrescribe llaves de es-MX, y al menos una (el vocabulario de España existe).
+        overrides = {key for area in package.AREAS for key in area.OVERRIDES}
+        assert overrides and overrides <= MESSAGES["es-MX"].keys()
 
 
 def test_a_key_repeated_in_two_areas_is_an_error():
@@ -361,6 +404,49 @@ def test_plurals_counts_and_formats_in_both_languages():
     assert t("SENTENCE", {"text": 3.5}) == "3.5."
 
 
+def test_formats_and_plural_rules_of_each_language_match_intl():
+    """Como `Intl` en la aplicación web: fechas 05/10/2026 (es, pt, fr, it), 10/05/2026 (en-US), 05.10.2026 (de-DE);
+    reloj de 24 horas salvo en-US; separador de miles de cada idioma; en pt-BR y fr-FR el cero toma la forma `one`."""
+    day, moment = date(2026, 10, 5), clock(14, 5)
+    assert [format_date(day, locale) for locale in LOCALES] == [
+        "05/10/2026",
+        "10/05/2026",
+        "05/10/2026",
+        "05/10/2026",
+        "05.10.2026",
+        "05/10/2026",
+        "05/10/2026",
+    ]
+    assert [format_clock(moment, locale) for locale in LOCALES] == ["14:05"] + ["2:05 PM"] + ["14:05"] * 5
+    assert [format_count(1234, locale) for locale in LOCALES] == [
+        "1,234",
+        "1,234",
+        "1.234",
+        "1\u202f234",
+        "1.234",
+        "1234",
+        "1234",
+    ]
+    assert format_count(12345, "it-IT") == "12.345" and format_count(1234567, "es-ES") == "1.234.567"
+    assert format_count(0, "fr-FR") == "0" and format_count(-1234, "de-DE") == "-1.234"
+    for locale in LOCALES:
+        with use_locale(locale):
+            sites = MESSAGES[locale]["SITES"]
+            assert isinstance(sites, dict)
+            zero_form = "one" if locale in {"pt-BR", "fr-FR"} else "other"
+            assert t("SITES", {"count": 0}) == sites[zero_form].format(count="0")
+            assert t("SITES", {"count": 1}) == sites["one"].format(count="1")
+            assert t("SITES", {"count": 2}) == sites["other"].format(count="2")
+            assert t("NEXT_SHIFT", {"day": DayMonth(day), "start": moment, "opens": clock(9, 0)})
+            series = MESSAGES[locale]["LIST_SERIES"]
+            assert isinstance(series, str)
+            assert format_list(["A", "B", "C"]) == series.format(items="A, B", last="C")
+    assert t("NEXT_SHIFT", {"day": DayMonth(day), "start": moment, "opens": clock(9, 0)}, locale="de-DE").startswith(
+        MESSAGES["de-DE"]["NEXT_SHIFT"].split("{")[0]
+    )
+    assert "05.10." in t("NEXT_SHIFT", {"day": DayMonth(day), "start": moment, "opens": clock(9, 0)}, locale="de-DE")
+
+
 def test_a_missing_key_or_parameter_never_breaks_a_response_in_production(caplog):
     strict(False)
     try:
@@ -385,7 +471,8 @@ def test_an_error_renders_its_message_when_it_is_read():
             "deleting it"
         )
     assert NotFoundError().message == "El recurso solicitado no existe"  # el mensaje de su código por omisión
-    assert AppError("Texto ya traducido", code="X").message == "Texto ya traducido"
+    # Un texto que no es del catálogo de mensajes (uno de un catálogo de la BD) llega diferido: se arma al leerse.
+    assert AppError(lambda: "Texto de un catálogo", code="X").message == "Texto de un catálogo"
 
 
 def test_ok_uses_the_message_of_its_code():
@@ -469,8 +556,13 @@ def test_every_catalog_text_has_its_translation_and_none_is_left_over():
 def test_the_translations_are_in_the_database_and_the_catalogs_use_them(client, company_headers):
     with SessionLocal() as db:
         stored_rows = db.scalar(select(func.count()).select_from(CatalogTranslation))
-    seeded = sum(len(fields) for codes in load_translation_seed()["en-US"].values() for fields in codes.values())
-    assert stored_rows == seeded
+    seeds = load_translation_seed()
+    seeded = sum(len(fields) for catalogs in seeds.values() for codes in catalogs.values() for fields in codes.values())
+    assert stored_rows == seeded and set(seeds) == set(TRANSLATION_LOCALES)
+    for locale in TRANSLATION_LOCALES:
+        with use_locale(locale):
+            assert get_catalogs().locale == locale
+            assert get_catalogs().name("currencies", "MXN") == seeds[locale]["currencies"]["MXN"]["name"]
     with use_locale("en-US"):
         catalogs = get_catalogs()
         assert catalogs.locale == "en-US" and catalogs.name("currencies", "MXN") == "Mexican peso"
@@ -533,3 +625,42 @@ def test_the_menu_comes_in_the_language_of_the_request(client, company_headers):
 def test_the_seed_files_are_valid_utf8_json():
     for path in sorted((ROOT / "alembic" / "seed").glob("catalogs*.json")):
         assert isinstance(json.loads(path.read_text(encoding="utf-8")), dict), path
+
+
+# ---------------------------------------------------------------- textos de `data` en cada idioma (`i18n.texts`)
+
+
+def test_the_texts_of_data_are_recorded_only_when_asked_and_bounded():
+    """Solo se anotan los `t()` de primer nivel (los de sus parámetros van dentro), solo con la anotación encendida
+    (una petición que cambia algo o un mensaje del canal) y a lo más `RECORDED_MAX`."""
+    t("SITES", {"count": 1})
+    assert recorded_texts() == []  # apagada: una lectura no cuesta nada
+    with recording_texts():
+        t("TWO_SENTENCES", {"first": Text("MONDAY"), "second": Text("FRIDAY")})
+        assert recorded_texts() == [("TWO_SENTENCES", {"first": Text("MONDAY"), "second": Text("FRIDAY")})]
+        for count in range(RECORDED_MAX + 5):
+            t("SITES", {"count": count})
+        assert len(recorded_texts()) == RECORDED_MAX
+        with recording_texts(enabled=False):
+            t("MONDAY")
+        assert len(recorded_texts()) == RECORDED_MAX
+    assert recorded_texts() == []
+
+
+def test_a_rule_error_from_a_library_is_never_shown_in_its_own_language():
+    """Un `ValueError` que no es una `LocalizedValueError` (lo lanzó una librería, en inglés) se muestra con el genérico
+    del catálogo; uno propio, con el suyo."""
+    with use_locale("en-US"):
+        assert str(error_text(ValueError("invalid literal for int()"))) == "The value isn't valid"
+        assert str(error_text(LocalizedValueError("NAME_REQUIRED"))) == "Name is required"
+
+
+def test_a_result_read_back_from_json_keeps_its_text_as_it_came():
+    """Un resultado que se construye con su texto diferido lo conserva (`text`, para el sobre en cada idioma); uno que
+    se vuelve a leer de un JSON (la validación de la respuesta) trae `message` ya armado y su `text` es ese texto."""
+    built = VerificationResult(verified=False, method="FACE", message=Text("QR_FACE_MISMATCH"))
+    with use_locale("en-US"):
+        assert render_text(built.text) != built.message  # diferido: se arma en cada idioma
+    read_back = VerificationResult.model_validate(built.model_dump())
+    with use_locale("en-US"):
+        assert render_text(read_back.text) == built.message

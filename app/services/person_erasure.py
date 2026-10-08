@@ -6,8 +6,16 @@ pero sus datos biométricos y sus fotos se borran para siempre en ese momento �
 en la base— y restaurarlo NO los regresa: registra su rostro de nuevo.
 
 - Empleado (`erase_employee_biometrics`): sus plantillas faciales, sus registros faciales (con las fotos de referencia),
-  las huellas perceptuales de sus capturas (llevan su embedding) y los fotogramas de evidencia de sus casos de fraude.
+  la foto inicial de un registro a medias (su borrador y su plantilla), las huellas perceptuales de sus capturas (llevan
+  su embedding) y los fotogramas de evidencia de sus casos de fraude.
   Su estado facial vuelve a "sin registro" con el motivo que verá si lo restauran.
+- Empleado (`erase_employee_documents`): sus documentos de identidad del onboarding —archivo cifrado en el bucket y los
+  DATOS que el OCR extrajo— se borran también DE VERDAD con la persona (decisión del dueño del producto, 2026-10-07:
+  una identificación oficial lleva la foto y los datos de la persona, no es el expediente de una empresa).
+  Sus filas, las
+  vigentes y las que el propio empleado ya había eliminado de su lista; sus objetos, a la cola del bucket.
+  Restaurarlo NO
+  los regresa: el empleado los vuelve a subir.
 - Cuenta (`erase_account`, `erase_company_accounts`): su foto de perfil (todos los tamaños) y la cuenta recordada en
   los dispositivos.
 
@@ -22,11 +30,17 @@ from sqlalchemy.orm import Session
 from app.i18n import stored
 from app.models import Employee, FaceStatus, User, UserAvatar
 from app.repositories.avatar_repository import AvatarRepository
+from app.repositories.employee_document_repository import EmployeeDocumentRepository
 from app.repositories.face_repository import FaceEmbeddingRepository
 from app.repositories.fraud_repository import FraudCaseRepository
 from app.repositories.remembered_account_repository import RememberedAccountRepository
 from app.repositories.user_repository import UserRepository
-from app.services.image_storage import release_company_evidence, release_employee_images, release_user_avatars
+from app.services.image_storage import (
+    release_company_evidence,
+    release_employee_documents,
+    release_employee_images,
+    release_user_avatars,
+)
 
 #: Lo que ve el empleado al registrar su rostro si lo restauran (se traduce al leerse: `app/i18n/stored.py`).
 FACE_ERASED = stored("FACE_ERASED_ON_DELETE")
@@ -38,6 +52,16 @@ def erase_employee_biometrics(db: Session, employee: Employee) -> None:
     FaceEmbeddingRepository(db).erase_employee(employee.company_id, employee.id)
     employee.face_status = FaceStatus.NOT_ENROLLED
     employee.face_rejection_reason = FACE_ERASED
+
+
+def erase_employee_documents(db: Session, employee: Employee) -> None:
+    """Los documentos de identidad del empleado (archivo cifrado + datos extraídos), para siempre (regla 13, LFPDPPP:
+    una identificación oficial lleva la foto y los datos de la persona). Primero sus objetos del bucket a la cola de
+    borrado (también los de los que él mismo ya había eliminado) y después sus filas, en la MISMA transacción del
+    borrado lógico del empleado; restaurarlo NO los regresa (como la biometría). Nunca quedan ni una fila huérfana ni un
+    objeto sin dueño."""
+    release_employee_documents(db, employee.company_id, employee.id)
+    EmployeeDocumentRepository(db, employee.company_id).erase_employee(employee.id)
 
 
 def erase_account(db: Session, user: User) -> None:

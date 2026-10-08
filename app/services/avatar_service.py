@@ -11,10 +11,12 @@ Decisiones del dueño del producto (README, "Foto de perfil"):
   después, en una sola y breve, se bloquea la cuenta, se encolan los objetos de la foto anterior para salir del
   bucket, se reemplazan las filas y se confirma. Si algo falla antes, lo subido se borra (`image_storage.abandon`);
   si falla la transacción, `image_storage` lo descarta al revertirse.
-- **Quién ve a quién** (`read`): la propia; la empresa (administrador o validador) solo a sus empleados activos y
-  a sus cuentas activas; la plataforma (ADMIN) solo cuentas que no son de empleados (regla 13: el ADMIN nunca ve
-  fotos de los empleados). Cualquier otro caso es 404, igual que una foto que no existe: nada dice que una
-  persona de otra empresa tiene foto.
+- **Quién ve a quién** (`read`; decisión del dueño, 2026-10-06: «las empresas pueden ver las fotos de los empleados
+  y los admin de todos»): la propia; la empresa (administrador o validador: el validador es una cuenta de la
+  empresa) a su gente —empleados activos e inactivos, validadores y administradores—; la plataforma (ADMIN) a toda
+  cuenta vigente; el empleado, solo la suya. Lo que está en «Eliminados» no tiene foto (se borró de verdad). Cualquier
+  otro caso es 404, igual que una foto que no existe: nada dice que una persona de otra empresa tiene foto. Las fotos
+  del registro facial NO son esto: siguen sus propias reglas (la empresa al validar; el ADMIN solo como evidencia).
 """
 
 import base64
@@ -129,7 +131,7 @@ class AvatarService:
         if viewer.id == user_id:
             return self.avatars.visible(user_id, size_px)
         if viewer.role == UserRole.ADMIN:
-            return self.avatars.visible(user_id, size_px, staff_only=True)
+            return self.avatars.visible(user_id, size_px, platform=True)
         company = viewer.current_company
         if viewer.role in (UserRole.COMPANY, UserRole.VALIDATOR) and company is not None:
             return self.avatars.visible(user_id, size_px, company_id=company.id)

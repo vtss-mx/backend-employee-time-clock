@@ -50,7 +50,8 @@ class Employee(SoftDeleteMixin, TimestampMixin, Base):
             postgresql_include=["deleted_at"],
         ),
         # Únicos POR EMPRESA entre los empleados VIGENTES (parciales, migración 0068): la misma persona puede trabajar
-        # en dos empresas y un empleado en la papelera no bloquea su número, RFC, CURP ni NSS a uno nuevo.
+        # en dos empresas y un empleado en la papelera no bloquea su número, RFC, CURP ni NSS a uno nuevo. Los cuatro
+        # son opcionales: un único admite varios NULL (varios empleados sin número), así que no cambian.
         live_unique("uq_employees_company_number", "company_id", "employee_number"),
         live_unique("uq_employees_company_rfc", "company_id", "rfc"),
         live_unique("uq_employees_company_curp", "company_id", "curp"),
@@ -98,7 +99,9 @@ class Employee(SoftDeleteMixin, TimestampMixin, Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey(f"{AUTH}.users.id", ondelete="CASCADE"), nullable=False)
     company_id: Mapped[int] = mapped_column(ForeignKey(f"{TENANCY}.companies.id", ondelete="RESTRICT"), nullable=False)
-    employee_number: Mapped[str] = mapped_column(String(30), nullable=False)
+    # Número de empleado, en mayúsculas. OPCIONAL (decisión del dueño del producto, migración 0076: «el número de
+    # empleado debe ser opcional también»): sin capturar es NULL, nunca "". Con valor, su formato y único en la empresa.
+    employee_number: Mapped[str | None] = mapped_column(String(30))
     # RFC de persona física, CURP y NSS (IMSS), normalizados en mayúsculas. OPCIONALES (decisión del dueño del
     # producto: la plataforma se abre a otros países, donde no existen): sin capturar es NULL, nunca "" (los índices
     # únicos por empresa admiten varios NULL). Con valor se validan completos y son únicos en la empresa.
@@ -159,15 +162,17 @@ def employee_search_text() -> ColumnElement[str]:
     """Texto de búsqueda del empleado: nombre, apellidos, número, RFC, CURP y NSS, en minúsculas.
 
     La búsqueda y el índice GIN de trigramas usan esta MISMA expresión (si cambia, el índice
-    debe recrearse en una migración). Los literales van en el SQL, no como parámetros, para
-    que PostgreSQL reconozca la expresión del índice también en planes preparados.
+    debe recrearse en una migración: la 0076 lo hizo al volver opcional el número). Los literales van en el SQL, no
+    como parámetros, para que PostgreSQL reconozca la expresión del índice también en planes preparados. Cada dato
+    opcional va con `coalesce`: un NULL concatenado vuelve NULL todo el texto y la persona ya no se encontraría ni por
+    su nombre.
     """
     return func.lower(
         Employee.first_name
         + _SPACE
         + Employee.last_name
         + _SPACE
-        + Employee.employee_number
+        + func.coalesce(Employee.employee_number, literal_column("''", String))
         + _SPACE
         + func.coalesce(Employee.rfc, literal_column("''", String))
         + _SPACE

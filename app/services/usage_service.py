@@ -16,6 +16,7 @@ from app.models import BillingStatus, PricePeriod, PricingMode, StorageCategory
 from app.repositories.billing_repository import BillingRepository
 from app.repositories.company_repository import CompanyRepository
 from app.repositories.usage_repository import STORAGE_SOURCES, UsageRepository
+from app.schemas.avatar import avatar_path
 from app.schemas.common import PageParams
 from app.schemas.usage import (
     CompanyUsage,
@@ -189,20 +190,21 @@ class UsageService:
         accounts = self._accounts(company_id, ids)
         items = []
         for r in rows:
-            email, role, name = accounts.get(r.user_id, (None, None, None))
+            email, role, name, version = accounts.get(r.user_id, (None, None, None, None))
             items.append(
                 UserUsage(
                     user_id=r.user_id,
                     email=email,
                     role=role,
                     name=name,
+                    avatar=avatar_path(r.user_id, version),
                     share=share(int(r.requests), whole),
                     **counters(r),
                 )
             )
         return UserUsageList.of(items, total, page)
 
-    def _accounts(self, company_id: int, ids: list[int]) -> dict[int, tuple[str, str, str | None]]:
+    def _accounts(self, company_id: int, ids: list[int]) -> dict[int, tuple[str, str, str | None, str | None]]:
         if not ids:
             return {}
         return self.usage.accounts(company_id, ids)
@@ -230,6 +232,12 @@ def capture_storage(db: Session, day: date) -> int:
     for files in (usage.receipt_bytes(), usage.document_bytes()):
         for company_id, size in files.items():
             totals.setdefault((company_id, StorageCategory.BILLING.value), [0, 0])[1] += size
+    # Los documentos de identidad del empleado (cifrados en el bucket) suman su tamaño real a la ficha del personal.
+    for company_id, size in usage.employee_document_bytes().items():
+        totals.setdefault((company_id, StorageCategory.PEOPLE.value), [0, 0])[1] += size
+    # Los clips de la verificación por voz (cifrados en el bucket) suman su tamaño real a la biometría.
+    for company_id, size in usage.voice_clip_bytes().items():
+        totals.setdefault((company_id, StorageCategory.BIOMETRICS.value), [0, 0])[1] += size
     snapshot = [
         {"company_id": company_id, "category": category, "rows": values[0], "bytes": values[1]}
         for (company_id, category), values in sorted(totals.items())

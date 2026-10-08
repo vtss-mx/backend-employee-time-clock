@@ -70,6 +70,8 @@ def normalize_name(value: str) -> str:
 
 
 def normalize_employee_number(value: str) -> str:
+    """Número de empleado en mayúsculas: 1-30 letras, números, guion o guion bajo. Uno vacío no es un número: el dato
+    es opcional y lo resuelve antes `optional_document`."""
     value = value.strip().upper()
     if not _EMPLOYEE_NUMBER_RE.match(value):
         raise LocalizedValueError("EMPLOYEE_NUMBER_INVALID")
@@ -81,15 +83,17 @@ _DOCUMENT_SEPARATORS = re.compile(r"[\s-]")
 
 
 def is_blank_document(value: str) -> bool:
-    """Documento sin capturar: vacío, o solo espacios y guiones."""
+    """Dato opcional sin capturar: vacío, o solo espacios y guiones (ninguno de ellos es un número ni un documento
+    válido; un «-» se escribe a veces para decir «no tiene»)."""
     return not _DOCUMENT_SEPARATORS.sub("", value)
 
 
 def optional_document(value: str | None, normalize: Callable[[str], str]) -> str | None:
     """RFC, CURP y NSS del empleado son OPCIONALES (decisión del dueño del producto: la plataforma se abre a otros
-    países, donde no existen; el identificador fiscal de la empresa también, `app/schemas/tax_ids.py`). Sin capturar es
-    `None` (NULL en la BD, nunca ""; los índices únicos admiten varios NULL); con valor, `normalize` aplica todas sus
-    reglas (formato, longitud y dígito verificador)."""
+    países, donde no existen; el identificador fiscal de la empresa también, `app/schemas/tax_ids.py`) y el número de
+    empleado también (decisión del dueño, migración 0076). Sin capturar es `None` (NULL en la BD, nunca ""; los índices
+    únicos admiten varios NULL); con valor, `normalize` aplica todas sus reglas (formato, longitud y dígito
+    verificador)."""
     if value is None or is_blank_document(value):
         return None
     return normalize(value)

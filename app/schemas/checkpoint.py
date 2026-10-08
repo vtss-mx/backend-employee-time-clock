@@ -53,7 +53,10 @@ class CheckpointEmployee(BaseModel):
 
     employee_id: int
     name: str
-    employee_number: str
+    #: Opcional (migración 0076): null si el empleado no tiene número.
+    employee_number: str | None = None
+    #: Su foto de perfil (ruta versionada) o None: el validador es una cuenta de la empresa y ve a su gente.
+    avatar: str | None = None
     #: Reto de la siguiente firma (antifraude 2b).
     device_nonce: str | None = None
 
@@ -69,6 +72,8 @@ class CheckpointEvent(BaseModel):
     confidence: float | None = None
     employee_name: str | None = None
     employee_number: str | None = None
+    #: La foto de perfil de quien se identificó (ruta versionada) o None.
+    avatar: str | None = None
 
 
 class CheckpointEventList(Page[CheckpointEvent]):

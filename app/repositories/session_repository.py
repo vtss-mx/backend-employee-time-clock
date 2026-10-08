@@ -11,12 +11,11 @@ from app.repositories.aggregates import affected_rows, paginate
 #: de los modelos se cargaban en ciclo (usuario → empleos → usuario...) con 3 o 4 consultas; la
 #: configuración del validador (`User.validator`) se carga solo si se usa y la referencia del empleo a
 #: su usuario sale del mapa de identidad (sin consulta).
-_AUTH_LOAD = (
-    joinedload(AuthSession.user).options(
-        joinedload(User.company),
-        selectinload(User.employees).options(joinedload(Employee.company), lazyload(Employee.user)),
-    ),
+USER_AUTH_OPTIONS = (
+    joinedload(User.company),
+    selectinload(User.employees).options(joinedload(Employee.company), lazyload(Employee.user)),
 )
+_AUTH_LOAD = (joinedload(AuthSession.user).options(*USER_AUTH_OPTIONS),)
 
 
 class SessionRepository:

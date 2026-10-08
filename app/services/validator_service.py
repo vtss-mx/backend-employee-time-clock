@@ -32,6 +32,7 @@ from app.repositories.user_repository import UserRepository
 from app.repositories.validator_device_repository import ValidatorDeviceRepository
 from app.repositories.validator_repository import ValidatorRepository
 from app.schemas.address import address_of, apply_address
+from app.schemas.avatar import person_avatar
 from app.schemas.common import PageParams, deletion_of
 from app.schemas.validator import (
     ValidatorCreate,
@@ -228,5 +229,7 @@ class ValidatorService:
             location_radius_m=validator.location_radius_m,
             devices_pending=devices.get(DeviceStatus.PENDING, 0),
             devices_approved=devices.get(DeviceStatus.APPROVED, 0),
+            # La cuenta viene con el validador (JOIN de su carga): sin consultas de más.
+            avatar=person_avatar(validator.user_id, validator.user.avatar_version, deleted=validator.deleted),
             **deletion_of(validator),
         )

@@ -60,6 +60,29 @@ MESSAGES: Messages = {
     "MY_QR_STATUS": "Your QR code status",
     "NOT_YOUR_COMPANY": "You don't work at that company",
     "NO_LONGER_IN_COMPANY": "You no longer have access to this company. Sign in again.",
+    "PASSKEYS_LISTED": {
+        "one": "{count} passkey",
+        "other": "{count} passkeys",
+    },
+    "PASSKEY_ALREADY_REGISTERED": "That passkey is already registered",
+    "PASSKEY_CHALLENGE_INVALID": "The passkey challenge expired or isn't valid. Try again.",
+    "PASSKEY_CHALLENGE_USED": "That challenge was already used. Try again.",
+    "PASSKEY_CLONED": (
+        "That passkey was used from a copy and was revoked for safety. Sign in with your password and register a new "
+        "one."
+    ),
+    "PASSKEY_INVALID": "Couldn't verify the passkey your device sent. Try again.",
+    "PASSKEY_LIMIT_REACHED": {
+        "one": "You already have {count} passkey. Revoke one to register another.",
+        "other": "You already have {count} passkeys. Revoke one to register another.",
+    },
+    "PASSKEY_LOGIN_FAILED": "Couldn't sign in with that passkey. Try again or use your password.",
+    "PASSKEY_LOGIN_OPTIONS": "Challenge to sign in with a passkey",
+    "PASSKEY_NOT_FOUND": "Passkey not found",
+    "PASSKEY_OPTIONS": "Challenge to register a passkey",
+    "PASSKEY_REGISTERED": "Passkey registered",
+    "PASSKEY_RENAMED": "Passkey name saved",
+    "PASSKEY_REVOKED": "Passkey revoked",
     "PASSWORD_CHANGED": {
         "zero": "Password updated.",
         "one": "Password updated. {count} session on other devices was closed.",

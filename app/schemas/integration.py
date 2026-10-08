@@ -1,9 +1,50 @@
 from datetime import datetime
+from typing import Self
 
 from pydantic import BaseModel, Field
+from pydantic.json_schema import SkipJsonSchema
 
 from app.models.enums import VerificationMethod
 from app.schemas.common import Page
+from app.schemas.employee import EmployeeList, EmployeeRead
+from app.schemas.validator import ValidatorList, ValidatorRead
+
+#: La integración nunca recibe fotos (regla 13; decisión del dueño, 2026-10-06): el campo no se envía ni se documenta.
+NoPhoto = SkipJsonSchema[str | None]
+
+
+class IntegrationEmployee(EmployeeRead):
+    """Un empleado para la integración: la ficha que ve la empresa, sin su foto de perfil."""
+
+    avatar: NoPhoto = Field(default=None, exclude=True)
+
+
+class IntegrationEmployeeList(Page[IntegrationEmployee]):
+    """Página de empleados para la integración (sin fotos)."""
+
+    @classmethod
+    def of_list(cls, employees: EmployeeList) -> Self:
+        return cls.model_validate(employees, from_attributes=True)
+
+
+class IntegrationValidator(ValidatorRead):
+    """Un validador para la integración: lo que ve la empresa, sin la foto de perfil de su cuenta."""
+
+    avatar: NoPhoto = Field(default=None, exclude=True)
+
+
+class IntegrationValidatorList(ValidatorList):
+    """Página de validadores para la integración (sin fotos), con el uso de su límite."""
+
+    items: list[IntegrationValidator]  # type: ignore[assignment]
+
+    @classmethod
+    def of_list(cls, validators: ValidatorList) -> Self:
+        return cls.model_validate(validators, from_attributes=True)
+
+
+def integration_employee(employee: EmployeeRead) -> IntegrationEmployee:
+    return IntegrationEmployee.model_validate(employee, from_attributes=True)
 
 
 class IntegrationKeyInfo(BaseModel):

@@ -204,7 +204,7 @@ def correct_session(
 def today(user: EmployeeUser, db: DbSession) -> ApiResponse[AttendanceToday]:
     employee = approved_employee(user)
     result = AttendanceService(db, employee.company_id).today(employee)
-    return ok(result, result.message, code="ATTENDANCE_TODAY")
+    return ok(result, result.text, code="ATTENDANCE_TODAY")
 
 
 @employee_router.post(
@@ -265,7 +265,7 @@ def record(
     service = AttendanceService(db, employee.company_id)
     result = service.act(employee, user, ACTIONS[action], location, verify, samples, site_code)
     code = "ATTENDANCE_RECORDED" if result.verified else "IDENTITY_NOT_VERIFIED"
-    return ok(result, result.message, code=code)
+    return ok(result, result.text, code=code)
 
 
 @employee_router.get(

@@ -12,21 +12,41 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# libglib2.0-0 es requerido por OpenCV headless en imágenes slim.
+# libglib2.0-0 es requerido por OpenCV headless en imágenes slim. Tesseract (OCR de los documentos del empleado, decisión
+# del dueño, 2026-10-07; los datos de la empresa nunca salen a un servicio externo, regla 13): el binario y los datos de
+# cada idioma se instalan AQUÍ, al construir la imagen, nunca con una descarga en la petición (como el modelo de voz).
+# Los idiomas deben cubrir OCR_LANGUAGES del `.env` (por omisión `spa+eng`; se incluyen también por, fr, de e it para
+# poder ampliarlo sin reconstruir el sistema). Agrega ≈ 90 MB a la imagen (binario + leptonica + datos «fast» por idioma).
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends libglib2.0-0 \
+    && apt-get install -y --no-install-recommends \
+       libglib2.0-0 \
+       tesseract-ocr \
+       tesseract-ocr-spa tesseract-ocr-eng tesseract-ocr-por tesseract-ocr-fra tesseract-ocr-deu tesseract-ocr-ita \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
 RUN pip install -r requirements.txt
 
+# La cuenta de la API se crea ANTES de copiar modelos y código: cada capa nace con su dueño (`--chown`, `chown` en la
+# misma capa que escribe) y no hace falta un `chown -R /app` final, que duplicaba en una capa más todo lo copiado (con
+# el modelo de voz, ≈ 0.7 GB de imagen de más; medido el 2026-10-06).
+RUN useradd --create-home --uid 1000 appuser
+
 COPY app/facial_recognition/model_store.py /tmp/model_store.py
 # Descarga y verifica (SHA-256) los modelos ONNX durante el build.
-RUN python /tmp/model_store.py /app/models && rm /tmp/model_store.py
+RUN python /tmp/model_store.py /app/models && rm /tmp/model_store.py && chown -R appuser:appuser /app/models
+# Modelo de voz a texto (faster-whisper `small`, 484 MB; decisión del dueño, 2026-10-06: la voz se transcribe en este
+# servidor): descargado y verificado (SHA-256) durante el build, nunca desde una petición. Los dos `model_store.py`
+# se copian como paquetes de espacio de nombres (sin `__init__.py`): el de voz reutiliza la descarga del facial sin
+# cargar el resto de la aplicación; esta capa no cambia con el código.
+COPY app/facial_recognition/model_store.py /tmp/build/app/facial_recognition/model_store.py
+COPY app/speech/model_store.py /tmp/build/app/speech/model_store.py
+RUN cd /tmp/build && python -m app.speech.model_store /app/models/speech small && rm -rf /tmp/build \
+    && chown -R appuser:appuser /app/models/speech
+ENV SPEECH_MODELS_DIR=/app/models/speech
 
-COPY . .
+COPY --chown=appuser:appuser . .
 
-RUN useradd --create-home --uid 1000 appuser && chown -R appuser:appuser /app
 USER appuser
 
 EXPOSE 8000
@@ -109,6 +129,7 @@ RUN pip install -r requirements-dev.txt
 # Legibles para cualquier usuario: las pruebas corren con el uid de quien las lanza (-u).
 RUN cp -r /app/models /opt/models && chmod -R a+rX /opt/models
 ENV TEST_FACE_MODELS_DIR=/opt/models
+ENV TEST_SPEECH_MODELS_DIR=/opt/models/speech
 USER appuser
 ENTRYPOINT []
 CMD ["python", "scripts/quality.py"]

@@ -190,9 +190,15 @@ def test_accessory_consensus_requires_majority():
 
 def test_pipeline_accessories_and_headwear_exemption():
     accessories = StubAccessories(glasses=0.9, headwear=0.9, mask=0.99)
+    # Los lentes se permiten por omisión (decisión del dueño, 2026-10-07): el detector se conserva y aquí se enciende
+    # a propósito, como el destello retirado.
+    all_rules = FacePolicy(block_glasses=True)
     with pytest.raises(FaceValidationError) as exc:
-        pipeline([face()], accessories=accessories).analyze_frontal(image_bytes(color=(40, 40, 40)))
+        pipeline([face()], accessories=accessories).analyze_frontal(image_bytes(color=(40, 40, 40)), policy=all_rules)
     assert exc.value.details == {"accessories": ["GLASSES", "HEADWEAR", "MASK"]}
+    with pytest.raises(FaceValidationError) as default:
+        pipeline([face()], accessories=accessories).analyze_frontal(image_bytes(color=(40, 40, 40)))
+    assert default.value.details == {"accessories": ["HEADWEAR", "MASK"]}  # sin los lentes
     # El motor solo informa códigos: la frase la arma la API con los catálogos de la base.
     assert (
         get_catalogs().accessories_message(exc.value.details["accessories"])
@@ -210,7 +216,9 @@ def test_pipeline_accessories_and_headwear_exemption():
     )
     # Sin aplicar (consenso): se reporta en vez de bloquear.
     reported = pipeline([face()], accessories=StubAccessories(glasses=0.9))
-    assert reported.analyze_frontal(image_bytes(), enforce_accessories=False).accessories_found == ("GLASSES",)
+    found = reported.analyze_frontal(image_bytes(), policy=all_rules, enforce_accessories=False).accessories_found
+    assert found == ("GLASSES",)
+    assert reported.analyze_frontal(image_bytes(), enforce_accessories=False).accessories_found == ()
 
 
 TARGET = StepTarget(

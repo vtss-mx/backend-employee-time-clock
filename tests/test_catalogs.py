@@ -52,6 +52,7 @@ from app.models import (
     ValidatorMode,
     ValidatorModeMethod,
     VerificationMethod,
+    VoiceQuestion,
     WorkMode,
     WorkSessionStatus,
 )
@@ -59,6 +60,7 @@ from app.services.catalog_service import clear_catalog_cache, get_catalogs
 from app.services.enrollment_service import DUPLICATE_FLAG, POSSIBLE_DUPLICATE_FLAG
 from app.services.face_service import SECURITY_REASONS, SPOOF_FLAG
 from app.services.policy_rules import PRESETS
+from app.services.voice_verification import VIDEO_FACE_MISMATCH_FLAG, VOICE_RETRIES_FLAG
 from tests.conftest import COMPANY_EMAIL, COMPANY_PASSWORD, create_employee, login, submit_enrollment
 from tests.test_policy import admin_policy
 from tests.test_validators import validator_headers
@@ -110,6 +112,26 @@ def test_catalogs_require_a_session(client, company_headers):
         "SPOOF",
         "DUPLICATE_FACE",
         "POSSIBLE_DUPLICATE",
+        "VOICE_RETRIES",
+        "VIDEO_FACE_MISMATCH",
+    ]
+    # Verificación por voz (migración 0079; repertorio ampliado 0086): las preguntas viajan en el orden del catálogo (la
+    # app muestra el texto que renderiza el servidor); la respuesta esperada, nunca.
+    assert [q["code"] for q in data["voice_questions"]] == [
+        "FULL_NAME",
+        "BIRTH_DATE",
+        "COMPANY_NAME",
+        "EMPLOYEE_NUMBER",
+        "DEPARTMENT",
+        "WORK_SITE",
+        "FIRST_NAME",
+        "SURNAMES",
+        "FIRST_SURNAME",
+        "SECOND_SURNAME",
+        "BIRTH_MONTH",
+        "BIRTH_YEAR",
+        "BIRTH_DAY",
+        "ARITHMETIC_SUM",
     ]
     # Antifraude: lo que ven la empresa y el ADMIN viaja; las señales del motor (qué se mide) no.
     assert "risk_signals" not in data
@@ -149,7 +171,10 @@ def test_code_and_catalogs_name_the_same_values():
         SPOOF_FLAG,
         DUPLICATE_FLAG,
         POSSIBLE_DUPLICATE_FLAG,
+        VOICE_RETRIES_FLAG,
+        VIDEO_FACE_MISMATCH_FLAG,
     }
+    assert _codes("voice_questions") == {q.value for q in VoiceQuestion}
     # Antifraude (migración 0062).
     assert _codes("fraud_kinds") == {k.value for k in FraudKind}
     assert _codes("signal_modes") == {m.value for m in SignalMode}

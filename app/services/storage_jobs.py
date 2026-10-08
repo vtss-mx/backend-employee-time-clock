@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.object_storage import ObjectStorage, get_storage
 from app.core.observability import observed
+from app.i18n import t
 from app.models import StorageStatus
 from app.repositories.aggregates import LOG_COUNT_CAP
 from app.repositories.storage_repository import StorageRepository
@@ -93,12 +94,13 @@ def status(db: Session) -> ObjectStorageStatus:
     storage = get_storage()
     info = storage.describe()
     repo = StorageRepository(db)
+    stored = repo.count_stored(STORED_IMAGES, LOG_COUNT_CAP)  # todos los tipos en una consulta
     images = [
-        StoredImageCount(kind=image.kind, label=image.label, stored=repo.count_stored(image, LOG_COUNT_CAP))
-        for image in STORED_IMAGES
+        StoredImageCount(kind=image.kind, label=t(image.label), stored=count)
+        for image, count in zip(STORED_IMAGES, stored, strict=True)
     ]
     deletions = _task_status(
-        DELETE_TASK, "Objetos por borrar del bucket", repo.count_deletions(LOG_COUNT_CAP), repo.status(DELETE_TASK)
+        DELETE_TASK, t("STORAGE_PENDING_DELETIONS"), repo.count_deletions(LOG_COUNT_CAP), repo.status(DELETE_TASK)
     )
     return ObjectStorageStatus(
         configured=storage.configured,

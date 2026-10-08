@@ -63,12 +63,13 @@ from app.core.exceptions import AuthenticationError, PermissionDeniedError
 from app.core.input_guard import invalid_field
 from app.core.observability import observed
 from app.core.request_context import note_actor
-from app.core.responses import envelope_body, new_trace_id
+from app.core.responses import envelope_body, new_trace_id, single_error
 from app.core.row_security import use_platform
 from app.core.tokens import decode_access_token
 from app.dependencies import authenticate_request, scope_to
-from app.i18n import t
+from app.i18n import LazyText, Text, recording_texts, render_text
 from app.services import flash_pacing
+from app.services.availability_service import Availability
 from app.services.catalog_service import get_catalogs
 from app.services.error_reporter import error_reporter
 from app.services.face_capture_service import FACE_CAPTURE_SCREENS
@@ -102,14 +103,14 @@ class _Closed(Exception):
 
 
 def _envelope(
-    status: int, code: str, message: str, *, data: Any = None, trace_id: str | None = None, report: bool = True
+    status: int, code: str, message: LazyText, *, data: Any = None, trace_id: str | None = None, report: bool = True
 ) -> dict:
-    """Mensaje del canal con el contrato de siempre. Una falla del servidor (BD caída, saturación)
-    queda registrada para el ADMIN; un error del cliente (sin autenticar, mensaje inválido, campo no
-    permitido, demasiadas validaciones) es un resultado normal y solo va al log del proceso. El
+    """Mensaje del canal con el contrato de siempre, con sus textos en cada idioma (`i18n`, como HTTP). Una falla del
+    servidor (BD caída, saturación) queda registrada para el ADMIN; un error del cliente (sin autenticar, mensaje
+    inválido, campo no permitido, demasiadas validaciones) es un resultado normal y solo va al log del proceso. El
     resultado de una validación (`report=False`: «ese correo ya existe» mientras se escribe) ni eso."""
     trace = trace_id or new_trace_id()
-    errors = [] if 200 <= status < 300 else [{"code": code, "message": message, "field": None, "details": None}]
+    errors = None if 200 <= status < 300 else single_error(code, message)
     severity = severity_for(status)
     if status >= 400 and report and not is_recorded(severity):
         logger.info("Canal de validación: %s %s [%s]", status, code, trace)
@@ -119,7 +120,7 @@ def _envelope(
                 source="WEBSOCKET",
                 severity=severity,
                 code=code,
-                message=message,
+                message=render_text(message),
                 http_status=status,
                 location="/api/ws/validation",
                 trace_id=trace,
@@ -144,13 +145,13 @@ def _authenticate(token: str, headers: Mapping[str, str]) -> _Client:
     return _Client(user_id=user.id, session_id=session_id, expires_at=expires_at, fields=fields, flash=flash)
 
 
-def _validate(client: _Client, field: str, value: str, exclude_id: int | None, related: str | None) -> dict[str, Any]:
+def _validate(client: _Client, field: str, value: str, exclude_id: int | None, related: str | None) -> Availability:
     with SessionLocal() as db:
         use_platform(db)  # la sesión y la cuenta (identidad); la validación, con los datos de su empresa
         user = SessionService(db).active_user(client.session_id, client.user_id)  # cerrar sesión corta el canal
         db.commit()
         scope_to(db, user)
-        return validate_field(db, user, field, value, exclude_id, related).as_dict()
+        return validate_field(db, user, field, value, exclude_id, related)
 
 
 class _RateLimiter:
@@ -186,33 +187,33 @@ async def _handshake(ws: WebSocket) -> _Client:
     try:
         message = await _receive_json(ws, settings.WS_AUTH_TIMEOUT_SECONDS)
     except _Closed as exc:
-        await ws.send_json(_envelope(401, "WS_AUTH_TIMEOUT", t("WS_AUTH_TIMEOUT")))
+        await ws.send_json(_envelope(401, "WS_AUTH_TIMEOUT", Text("WS_AUTH_TIMEOUT")))
         raise _Closed(4408) from exc
     token = message.get("token") if message and message.get("type") == "auth" else None
     if not isinstance(token, str) or not token:
-        await ws.send_json(_envelope(401, "UNAUTHORIZED", t("WS_AUTH_REQUIRED")))
+        await ws.send_json(_envelope(401, "UNAUTHORIZED", Text("WS_AUTH_REQUIRED")))
         raise _Closed(4401)
     try:
         # Con el mismo tope que las validaciones: mil reconexiones a la vez no agotan hilos ni el pool.
         async with _validation_slots:
             client = await run_in_threadpool(_authenticate, token, ws.headers)
     except SQLAlchemyError as exc:
-        await ws.send_json(_envelope(503, "DATABASE_UNAVAILABLE", t("DATABASE_UNAVAILABLE")))
+        await ws.send_json(_envelope(503, "DATABASE_UNAVAILABLE", Text("DATABASE_UNAVAILABLE")))
         raise _Closed(1013) from exc  # 1013: inténtalo más tarde
     except AuthenticationError as exc:
-        await ws.send_json(_envelope(401, exc.code, exc.message))
+        await ws.send_json(_envelope(401, exc.code, exc.text))
         raise _Closed(4401) from exc
     except PermissionDeniedError as exc:  # p. ej. un validador desde un dispositivo no permitido
-        await ws.send_json(_envelope(403, exc.code, exc.message))
+        await ws.send_json(_envelope(403, exc.code, exc.text))
         raise _Closed(4403) from exc
     except PermissionError as exc:
-        await ws.send_json(_envelope(403, "FORBIDDEN", t("WS_NO_FIELDS")))
+        await ws.send_json(_envelope(403, "FORBIDDEN", Text("WS_NO_FIELDS")))
         raise _Closed(4403) from exc
     await ws.send_json(
         _envelope(
             200,
             "WS_AUTHENTICATED",
-            t("WS_AUTHENTICATED"),
+            Text("WS_AUTHENTICATED"),
             data={"fields": sorted(client.fields), "flash": client.flash},
         )
     )
@@ -224,15 +225,15 @@ def _flash(client: _Client, message: dict[str, Any], trace_id: str | None) -> di
     """Un paso del destello dictado (sin base de datos: el estado va sellado en el token; microsegundos de cifrado)."""
     token, digest = message.get("token"), message.get("digest")
     if not client.flash:
-        return _envelope(403, "FORBIDDEN", t("FORBIDDEN"), trace_id=trace_id)
+        return _envelope(403, "FORBIDDEN", Text("FORBIDDEN"), trace_id=trace_id)
     if not isinstance(token, str) or (digest is not None and not isinstance(digest, str)):
-        return _envelope(400, "BAD_MESSAGE", t("WS_BAD_MESSAGE"), trace_id=trace_id)
+        return _envelope(400, "BAD_MESSAGE", Text("WS_BAD_MESSAGE"), trace_id=trace_id)
     try:
         step = flash_pacing.advance(token, client.user_id, digest, epoch_ms())
     except flash_pacing.FlashTokenInvalid as exc:
-        return _envelope(422, exc.code, exc.message, trace_id=trace_id)
+        return _envelope(422, exc.code, exc.text, trace_id=trace_id)
     if step.done:
-        return _envelope(200, "FLASH_DONE", t("FLASH_DONE"), data={"receipt": step.token}, trace_id=trace_id)
+        return _envelope(200, "FLASH_DONE", Text("FLASH_DONE"), data={"receipt": step.token}, trace_id=trace_id)
     data = {
         "step": step.step,
         "total": step.total,
@@ -240,37 +241,37 @@ def _flash(client: _Client, message: dict[str, Any], trace_id: str | None) -> di
         "token": step.token,
         "window_ms": settings.FACE_FLASH_PACE_WINDOW_MS,
     }
-    return _envelope(200, "FLASH_COLOR", t("FLASH_COLOR"), data=data, trace_id=trace_id)
+    return _envelope(200, "FLASH_COLOR", Text("FLASH_COLOR"), data=data, trace_id=trace_id)
 
 
 async def _handle(ws: WebSocket, client: _Client, message: dict[str, Any] | None, limiter: _RateLimiter) -> None:
     trace = message.get("id") if message else None
     trace_id = trace if isinstance(trace, str) and _TRACE_ID.match(trace) else None
     if message is None:
-        await ws.send_json(_envelope(400, "BAD_MESSAGE", t("WS_BAD_JSON"), trace_id=trace_id))
+        await ws.send_json(_envelope(400, "BAD_MESSAGE", Text("WS_BAD_JSON"), trace_id=trace_id))
         return
     if time.time() >= client.expires_at:
-        await ws.send_json(_envelope(401, "TOKEN_EXPIRED", t("TOKEN_EXPIRED"), trace_id=trace_id))
+        await ws.send_json(_envelope(401, "TOKEN_EXPIRED", Text("TOKEN_EXPIRED"), trace_id=trace_id))
         raise _Closed(4401)
     if not limiter.allow():
-        await ws.send_json(_envelope(429, "RATE_LIMITED", t("WS_RATE_LIMITED"), trace_id=trace_id))
+        await ws.send_json(_envelope(429, "RATE_LIMITED", Text("WS_RATE_LIMITED"), trace_id=trace_id))
         return
     if invalid_field(message) is not None:  # NUL, controles: nunca llegan a la base (la misma regla que HTTP)
-        await ws.send_json(_envelope(422, "INVALID_CHARACTERS", t("INVALID_CHARACTERS"), trace_id=trace_id))
+        await ws.send_json(_envelope(422, "INVALID_CHARACTERS", Text("INVALID_CHARACTERS"), trace_id=trace_id))
         return
     kind = message.get("type")
     if kind == "ping":
-        await ws.send_json(_envelope(200, "PONG", t("PONG"), trace_id=trace_id))
+        await ws.send_json(_envelope(200, "PONG", Text("PONG"), trace_id=trace_id))
         return
     if kind == "flash":
         await ws.send_json(_flash(client, message, trace_id))
         return
     field, value, exclude = message.get("field"), message.get("value"), message.get("excludeId")
     if kind != "validate" or not isinstance(field, str) or not isinstance(value, str) or len(value) > 255:
-        await ws.send_json(_envelope(400, "BAD_MESSAGE", t("WS_BAD_MESSAGE"), trace_id=trace_id))
+        await ws.send_json(_envelope(400, "BAD_MESSAGE", Text("WS_BAD_MESSAGE"), trace_id=trace_id))
         return
     if field not in client.fields:
-        await ws.send_json(_envelope(403, "FIELD_NOT_ALLOWED", t("FIELD_NOT_ALLOWED"), trace_id=trace_id))
+        await ws.send_json(_envelope(403, "FIELD_NOT_ALLOWED", Text("FIELD_NOT_ALLOWED"), trace_id=trace_id))
         return
     exclude_id = exclude if isinstance(exclude, int) and not isinstance(exclude, bool) else None
     related = message.get("related")
@@ -279,18 +280,18 @@ async def _handle(ws: WebSocket, client: _Client, message: dict[str, Any] | None
         async with _validation_slots:
             result = await run_in_threadpool(_validate, client, field, value, exclude_id, related_value)
     except AuthenticationError as exc:
-        await ws.send_json(_envelope(401, exc.code, exc.message, trace_id=trace_id))
+        await ws.send_json(_envelope(401, exc.code, exc.text, trace_id=trace_id))
         raise _Closed(4401) from exc
     except PermissionDeniedError as exc:  # la pantalla se le retiró al rol con el canal abierto
-        await ws.send_json(_envelope(403, exc.code, exc.message, trace_id=trace_id))
+        await ws.send_json(_envelope(403, exc.code, exc.text, trace_id=trace_id))
         return
     except SQLAlchemyError:  # parpadeo de la BD: esa validación falla, el canal sigue abierto
         logger.warning("Validación en vivo sin base de datos", exc_info=True)
-        await ws.send_json(_envelope(503, "DATABASE_UNAVAILABLE", t("DATABASE_UNAVAILABLE"), trace_id=trace_id))
+        await ws.send_json(_envelope(503, "DATABASE_UNAVAILABLE", Text("DATABASE_UNAVAILABLE"), trace_id=trace_id))
         return
-    status = 200 if result["valid"] else 422
+    status = 200 if result.valid else 422
     await ws.send_json(
-        _envelope(status, result["code"], result["message"], data=result, trace_id=trace_id, report=False)
+        _envelope(status, result.code, result.text, data=result.as_dict(), trace_id=trace_id, report=False)
     )
 
 
@@ -299,16 +300,19 @@ async def validation_socket(ws: WebSocket) -> None:
     global _open_connections
     await ws.accept()
     if _open_connections >= settings.WS_MAX_CONNECTIONS:
-        await ws.send_json(_envelope(503, "SERVER_BUSY", t("WS_TOO_MANY_CONNECTIONS")))
+        await ws.send_json(_envelope(503, "SERVER_BUSY", Text("WS_TOO_MANY_CONNECTIONS")))
         await ws.close(code=1013)
         return
     _open_connections += 1
     try:
-        client = await _handshake(ws)
+        with recording_texts():
+            client = await _handshake(ws)
         limiter = _RateLimiter(settings.WS_MAX_MESSAGES_PER_10S)
         while True:
             message = await _receive_json(ws, settings.WS_IDLE_TIMEOUT_SECONDS)
-            await _handle(ws, client, message, limiter)
+            # Cada respuesta del canal lleva en cada idioma los textos de su `data` (no se puede volver a pedir).
+            with recording_texts():
+                await _handle(ws, client, message, limiter)
     except _Closed as closed:
         await ws.close(code=closed.code)
     except WebSocketDisconnect:

@@ -21,10 +21,18 @@ from app.services.face_signals import PaceVerdict
 from app.services.flash_pacing import FlashTokenInvalid, PaceState
 from app.services.liveness_service import Challenge
 from tests.conftest import FLASH_CODES, approved_employee, flash_files, turn_files
+from tests.test_policy import set_policy
 from tests.test_realtime import connect
 from tests.test_risk_engine import VERIFY, last_reasons
 
 NOW = 1_800_000_000_000
+
+
+@pytest.fixture(autouse=True)
+def _flash_on(client, company_headers):
+    """El destello se retiró de la experiencia (2026-10-06): nace apagado. Estas pruebas ejercitan el mecanismo que se
+    conserva en el servidor, así que lo encienden a propósito (solo medir, dictado por el servidor)."""
+    set_policy(client, company_headers, flash_liveness="OBSERVE", flash_paced=True)
 
 
 def challenge(colors=("RED", "GREEN", "BLUE"), user_id=7, minutes=1) -> Challenge:

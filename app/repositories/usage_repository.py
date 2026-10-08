@@ -25,6 +25,8 @@ from app.models import (
     Department,
     Employee,
     EmployeeAbsence,
+    EmployeeDocument,
+    EnrollmentVoiceAnswer,
     FaceAttemptMetric,
     FaceEmbedding,
     FaceEnrollment,
@@ -100,6 +102,9 @@ STORAGE_SOURCES: tuple[StorageSource, ...] = (
     StorageSource(StorageCategory.BILLING, "billing.payments", Payment.company_id),
     # Documentos de la empresa (migración 0075): la fila de cada uno; su archivo suma su tamaño real (`document_bytes`).
     StorageSource(StorageCategory.BILLING, "tenancy.company_documents", CompanyDocument.company_id),
+    # Documentos de identidad del empleado (migración 0087): la fila de cada uno; su archivo suma su tamaño real
+    # (`employee_document_bytes`). Es parte de la ficha del personal (PEOPLE).
+    StorageSource(StorageCategory.PEOPLE, "workforce.employee_documents", EmployeeDocument.company_id),
 )
 
 
@@ -303,6 +308,15 @@ class UsageRepository:
         )
         return {int(company): int(size or 0) for company, size in self.db.execute(stmt)}
 
+    def voice_clip_bytes(self) -> dict[int, int]:
+        """Bytes reales de los clips de la verificación por voz de cada empresa (un `GROUP BY` por su empresa)."""
+        stmt = (
+            select(EnrollmentVoiceAnswer.company_id, func.sum(EnrollmentVoiceAnswer.byte_size))
+            .where(EnrollmentVoiceAnswer.byte_size.is_not(None))
+            .group_by(EnrollmentVoiceAnswer.company_id)
+        )
+        return {int(company): int(size or 0) for company, size in self.db.execute(stmt)}
+
     def document_bytes(self) -> dict[int, int]:
         """Bytes reales de los documentos de cada empresa (también los de «Eliminados»: su archivo sigue en el bucket
         hasta que la depuración borra la fila). Un `GROUP BY` por el índice de la empresa."""
@@ -311,10 +325,22 @@ class UsageRepository:
         )
         return {int(company): int(size) for company, size in self.db.execute(with_deleted(stmt))}
 
-    def accounts(self, company_id: int, ids: list[int]) -> dict[int, tuple[str, str, str | None]]:
-        """Correo, rol y (si es empleado de ESA empresa) nombre de varias cuentas: dos consultas. Historial del
-        consumo: también las cuentas y los empleos que están en «Eliminados»."""
-        users = self.db.execute(with_deleted(select(User.id, User.email, User.role).where(User.id.in_(ids)))).all()
+    def employee_document_bytes(self) -> dict[int, int]:
+        """Bytes reales de los documentos de identidad de los empleados de cada empresa (también los de «Eliminados»:
+        su archivo sigue en el bucket hasta que la depuración borra la fila). Un `GROUP BY` por el índice de la
+        empresa."""
+        stmt = select(EmployeeDocument.company_id, func.sum(EmployeeDocument.byte_size)).group_by(
+            EmployeeDocument.company_id
+        )
+        return {int(company): int(size) for company, size in self.db.execute(with_deleted(stmt))}
+
+    def accounts(self, company_id: int, ids: list[int]) -> dict[int, tuple[str, str, str | None, str | None]]:
+        """Correo, rol, (si es empleado de ESA empresa) nombre y versión de la foto de perfil de varias cuentas: dos
+        consultas. Historial del consumo: también las cuentas y los empleos que están en «Eliminados» (una cuenta
+        eliminada ya no tiene foto: su versión quedó en NULL al borrarla de verdad)."""
+        users = self.db.execute(
+            with_deleted(select(User.id, User.email, User.role, User.avatar_version).where(User.id.in_(ids)))
+        ).all()
         names = dict(
             self.db.execute(
                 with_deleted(
@@ -324,7 +350,7 @@ class UsageRepository:
                 )
             ).all()
         )
-        return {int(uid): (str(email), str(role.value), names.get(uid)) for uid, email, role in users}
+        return {int(uid): (str(email), str(role.value), names.get(uid), version) for uid, email, role, version in users}
 
     def relation_bytes(self, tables: Iterable[str]) -> dict[str, int]:
         """Bytes que ocupa cada tabla con sus índices y TOAST (`pg_total_relation_size`), en UNA consulta.

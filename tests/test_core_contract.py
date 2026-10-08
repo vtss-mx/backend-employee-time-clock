@@ -85,7 +85,7 @@ def test_a_body_that_is_not_an_object_is_invalid_not_a_crash():
     como inválido con ValidationError, sin romper el validador."""
     with pytest.raises(ValidationError):
         ApiResponse[int].model_validate([200, "OK"])
-    assert ApiResponse[int].model_validate({"statusCode": 404, "success": True}).success is False
+    assert ApiResponse[int].model_validate({"statusCode": 404, "success": True, "message": "x"}).success is False
 
 
 def test_noting_the_actor_outside_a_request_is_harmless():

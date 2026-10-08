@@ -1,5 +1,5 @@
 """Foto de perfil por la API: cada persona sube, cambia o quita la SUYA; se guarda cifrada en el bucket (nunca en la
-BD) con una ruta versionada; solo la ve quien puede (la propia, su empresa, la plataforma sin fotos de empleados);
+BD) con una ruta versionada; solo la ve quien puede (la propia, su empresa a su gente, el ADMIN a todos);
 caché del navegador por versión (ETag, 304); y toda falla responde con su código sin dejar nada a medias."""
 
 import base64
@@ -127,32 +127,58 @@ def test_removing_the_photo_is_idempotent_and_leaves_the_initials(client, compan
 # ---------------------------------------------------------------- quién ve a quién
 
 
-def test_the_company_sees_its_active_people_and_nobody_else_does(client, company_headers, admin_headers):
+def test_the_company_sees_its_people_the_admin_sees_everyone_and_an_employee_only_himself(
+    client, company_headers, admin_headers
+):
+    """Decisión del dueño (2026-10-06): «las empresas pueden ver las fotos de los empleados y los admin de todos». La
+    empresa —su administrador y su validador, que es una cuenta de la empresa— ve a su gente (empleados activos e
+    inactivos, validadores y administradores); el ADMIN, a todos; el empleado, solo la suya."""
     employee, ana = _employee(client, company_headers)
     _, luis = _employee(client, company_headers, email="luis@empresa.com", number="EMP-011")
     validator = validator_headers(client, company_headers)
     urls = {}
-    for name, headers in (("ana", ana), ("validator", validator), ("company", company_headers)):
+    for name, headers in (("ana", ana), ("luis", luis), ("validator", validator), ("company", company_headers)):
         urls[name] = upload(client, headers).json()["data"]["avatar"]
-    # La empresa ve a su empleada (también en el listado y el detalle) y a su validador; el validador, a ambas.
-    for viewer in (company_headers, validator):
-        assert fetch(client, viewer, urls["ana"]).status_code == 200
-    assert fetch(client, company_headers, urls["validator"]).status_code == 200
+    for viewer in (company_headers, validator, admin_headers):
+        for url in urls.values():
+            assert fetch(client, viewer, url).status_code == 200, (viewer, url)
     listed = client.get("/api/employees", headers=company_headers).json()["data"]["items"]
     assert {item["user_id"]: item["avatar"] for item in listed}[employee["user_id"]] == urls["ana"]
     detail = client.get(f"/api/employees/{employee['id']}", headers=company_headers).json()["data"]
     assert detail["avatar"] == urls["ana"]
-    # Un empleado solo ve la suya; el ADMIN ve cuentas que no son de empleados (regla 13: nunca fotos de empleados).
-    for viewer, url in ((luis, urls["ana"]), (luis, urls["company"]), (ana, urls["validator"])):
-        assert_envelope(fetch(client, viewer, url), 404, "AVATAR_NOT_FOUND")
-    assert fetch(client, admin_headers, urls["company"]).status_code == 200
-    assert fetch(client, admin_headers, urls["validator"]).status_code == 200
-    assert_envelope(fetch(client, admin_headers, urls["ana"]), 404, "AVATAR_NOT_FOUND")
-    # Inactiva: la empresa deja de ver su foto (en la lista tampoco viaja).
+    # Un empleado solo ve la suya.
+    assert fetch(client, luis, urls["luis"]).status_code == 200
+    for url in (urls["ana"], urls["company"], urls["validator"]):
+        assert_envelope(fetch(client, luis, url), 404, "AVATAR_NOT_FOUND")
+    # Inactiva: la empresa y su validador la siguen viendo (también en el detalle).
     client.patch(f"/api/employees/{employee['id']}/status", json={"active": False}, headers=company_headers)
-    assert fetch(client, company_headers, urls["ana"]).status_code == 404
+    for viewer in (company_headers, validator, admin_headers):
+        assert fetch(client, viewer, urls["ana"]).status_code == 200
     detail = client.get(f"/api/employees/{employee['id']}", headers=company_headers).json()["data"]
-    assert detail["avatar"] is None
+    assert detail["avatar"] == urls["ana"]
+    # En «Eliminados» no tiene foto: se borró de verdad (nadie la ve y la papelera no la manda).
+    assert client.delete(f"/api/employees/{employee['id']}", headers=company_headers).status_code == 200
+    for viewer in (company_headers, validator, admin_headers):
+        assert_envelope(fetch(client, viewer, urls["ana"]), 404, "AVATAR_NOT_FOUND")
+    trash = client.get("/api/employees?deleted=true", headers=company_headers).json()["data"]["items"]
+    assert [item["avatar"] for item in trash] == [None]
+
+
+def test_a_deleted_job_hides_the_photo_from_that_company_only(client, company_headers, admin_headers):
+    """Quien trabaja en dos empresas conserva su foto (es suya) si una lo elimina: esa empresa deja de verla (el empleo
+    eliminado no cuenta y su referencia no la manda), la otra y el ADMIN la siguen viendo."""
+    employee, ana = _employee(client, company_headers)
+    url = upload(client, ana).json()["data"]["avatar"]
+    assert create_company(client, admin_headers).status_code == 201
+    other = login(client, "admin@panificadora.com", "Empresa1234")
+    linked = create_employee(client, other, number="PN-001", email="ana@empresa.com", phone=employee["phone"])
+    assert linked.status_code == 201
+    assert client.delete(f"/api/employees/{employee['id']}", headers=company_headers).status_code == 200
+    assert_envelope(fetch(client, company_headers, url), 404, "AVATAR_NOT_FOUND")
+    for viewer in (other, admin_headers):
+        assert fetch(client, viewer, url).status_code == 200
+    detail = client.get(f"/api/employees/{employee['id']}", headers=company_headers).json()["data"]
+    assert detail["deleted_at"] is not None and detail["avatar"] is None
 
 
 def test_another_company_never_sees_the_photo_of_a_person_of_this_one(client, company_headers, admin_headers):

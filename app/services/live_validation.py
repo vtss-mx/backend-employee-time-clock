@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import PermissionDeniedError
-from app.i18n import t
+from app.i18n import Text, error_text
 from app.models import Screen, User
 from app.schemas.validators import normalize_phone
 from app.services.availability_service import FIELDS as EMPLOYEE_FIELDS
@@ -92,12 +92,12 @@ def _format_only(field: str, normalize: Callable[[str], str], empty: str, valid:
     def check(_db: Session, _user: User, value: str, _exclude_id: int | None, _related: str | None) -> Availability:
         raw = (value or "").strip()
         if not raw:
-            return Availability(field, value, None, False, False, "EMPTY", t(empty))
+            return Availability(field, value, None, False, False, "EMPTY", Text(empty))
         try:
             normalized = normalize(raw)
         except ValueError as exc:
-            return Availability(field, value, None, False, False, "INVALID_FORMAT", str(exc))
-        return Availability(field, value, normalized, True, True, "VALID", t(valid))
+            return Availability(field, value, None, False, False, "INVALID_FORMAT", error_text(exc))
+        return Availability(field, value, normalized, True, True, "VALID", Text(valid))
 
     return check
 

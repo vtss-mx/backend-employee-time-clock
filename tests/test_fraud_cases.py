@@ -30,6 +30,8 @@ from tests.conftest import (
     approved_employee,
     create_company,
     create_employee,
+    enrollment_challenge,
+    initial_photo,
     login,
     turn_files,
 )
@@ -342,7 +344,8 @@ def test_deleting_an_employee_or_a_company_releases_its_evidence(client, company
 def test_an_enrollment_with_a_photo_opens_its_own_case(client, company_headers):
     create_employee(client, company_headers)
     headers = login(client, "juan@empresa.com", "Empleado123")
-    challenge = client.post("/api/face/challenge", headers=headers).json()["data"]
+    assert initial_photo(client, headers).status_code == 201
+    challenge = enrollment_challenge(client, headers)
     files = [("images", (f"f{i}.jpg", b"exif:juan", "image/jpeg")) for i in range(3)] + turn_files(challenge)
     response = client.post(
         "/api/enrollment/face", data={"challenge_id": challenge["challenge_id"]}, files=files, headers=headers

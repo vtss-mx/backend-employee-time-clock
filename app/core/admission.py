@@ -59,7 +59,13 @@ CRITICAL_PREFIXES = (
     "POST kiosk/code",
     "POST verification/",
     "POST face/challenge",
+    # La API pública de verificación (SDK móviles): el reto y el envío, con la persona frente a la cámara.
+    "POST integrations/v1/verification",
+    # Los pasos del registro facial (la foto inicial, las capturas): la persona espera frente a la cámara.
+    "POST enrollment/photo",
     "POST enrollment/face",
+    # La verificación por voz del registro (la sesión y cada respuesta): la persona espera frente a la cámara.
+    "POST enrollment/voice",
     "POST users/me/qr",
     "POST me/attendance/",
     "GET users/me/qr",
@@ -73,13 +79,27 @@ CRITICAL_PREFIXES = (
 #: `tests/test_slow_requests.py` falla si esta lista y las rutas que usan el motor no coinciden.
 FACE_PREFIXES = (
     "POST face/",
+    "POST enrollment/photo",
     "POST enrollment/face",
     "POST employees/{id}/face/enroll",
     "POST employees/{id}/face/verify",
     "POST verification/face",
     "POST checkpoint/identify/face",
     "POST me/attendance/",
+    # La API pública de verificación (SDK móviles): el envío usa el motor; su reto (`.../challenge`) no.
+    "POST integrations/v1/verification/verify",
+    "POST integrations/v1/verification/identify",
 )
+#: Rutas de la VERIFICACIÓN POR VOZ del registro facial (decisión del dueño, 2026-10-06): usan el motor facial (el
+#: rostro del video) y además decodifican el clip y transcriben la voz (≈ 1.5-3 s con el modelo small): su petición
+#: lenta se cuenta desde `SLOW_REQUEST_VOICE_THRESHOLD_MS` (8 000 ms, medido). `tests/test_slow_requests.py` exige que
+#: toda ruta que use el motor esté aquí o en `FACE_PREFIXES`. La que solo emite la sesión (`voice/start`, 2026-10-07)
+#: no analiza nada: sigue con el umbral general.
+VOICE_PREFIXES = ("POST enrollment/voice/answer",)
+#: Rutas que corren OCR (Tesseract) al subir un documento del empleado (decisión del dueño, 2026-10-07): leer una foto
+#: de un documento puede pasar de 1 s sin que nada esté mal. Alertan desde `SLOW_REQUEST_OCR_THRESHOLD_MS`. No usan el
+#: motor facial (`Pipeline`): `tests/test_slow_requests.py` no las exige en `FACE_PREFIXES`; su umbral vive aparte.
+OCR_PREFIXES = ("POST me/documents",)
 #: Lo que puede esperar: tableros, resúmenes, documentación y los reportes de fallas del navegador
 #: (si el servidor está saturado, se descartan primero: la app no los reintenta). El tablero de
 #: asistencia se refresca solo cada pocos segundos y la seguridad facial, el consumo y el resumen de la
@@ -91,12 +111,19 @@ FACE_PREFIXES = (
 BACKGROUND_PREFIXES = (
     "GET users/{id}/avatar",
     "GET documents/{id}/file",
+    # Descargar un documento de identidad del empleado (hasta EMPLOYEE_DOCUMENT_MAX_MB descifrados y en base64): puede
+    # esperar a que pase la saturación. El de la empresa comparte el grupo de `GET validations/employees/{id}`.
+    "GET me/documents/{id}",
+    # El clip de video de una respuesta (hasta FACE_VIDEO_MAX_MB descifrados y en base64): la revisión puede esperar.
+    "GET enrollments/{id}/voice",
     "GET admin/stats",
     "GET admin/face-security",
     "GET admin/fraud-cases",
     "GET admin/usage",
     "GET admin/billing/overview",
     "GET admin/performance",
+    # Deriva de las señales (antifraude fase 3): estadísticas semanales del ADMIN.
+    "GET admin/drift",
     "GET attendance/board",
     "POST client-errors",
     "POST telemetry/",
@@ -135,6 +162,16 @@ def is_face_route(method: str, path: str) -> bool:
     """¿Es una ruta facial (`FACE_PREFIXES`)? Con la ruta COMPLETA (ids → `{id}`): `employees/{id}/face/verify` lo es y
     `employees/{id}/face/reset` no (pide otro registro facial, no analiza capturas)."""
     return group_of(method, path, depth=None).startswith(FACE_PREFIXES)
+
+
+def is_voice_route(method: str, path: str) -> bool:
+    """¿Es una ruta de la verificación por voz (`VOICE_PREFIXES`)?"""
+    return group_of(method, path, depth=None).startswith(VOICE_PREFIXES)
+
+
+def is_ocr_route(method: str, path: str) -> bool:
+    """¿Es una ruta que corre OCR al subir un documento del empleado (`OCR_PREFIXES`)?"""
+    return group_of(method, path, depth=None).startswith(OCR_PREFIXES)
 
 
 def tier_of(group: str) -> Tier:

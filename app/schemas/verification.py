@@ -1,10 +1,11 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.facial_recognition.pose import LivenessAction
 from app.models.enums import VerificationMethod
-from app.schemas.common import Page
+from app.schemas.common import Explained, Page
 
 
 class BurstSpec(BaseModel):
@@ -36,6 +37,11 @@ class FlashPace(BaseModel):
     window_ms: int
 
 
+#: Para qué se pide el reto: una verificación (los 1 a 3 movimientos de la política) o el registro facial (siempre
+#: los cuatro movimientos de la cabeza; decisión del dueño, 2026-10-07).
+type ChallengePurpose = Literal["VERIFICATION", "ENROLLMENT"]
+
+
 class FaceChallengeResponse(BaseModel):
     """Reto de prueba de vida. Debe completarse antes de `expires_in` segundos.
 
@@ -49,7 +55,8 @@ class FaceChallengeResponse(BaseModel):
     #: Primer movimiento (igual a `actions[0]`).
     action: LivenessAction | None = None
     instruction: str | None = None
-    #: Todos los movimientos, en orden (de uno a tres).
+    #: Todos los movimientos, en orden: de uno a tres en una verificación; los cuatro de la cabeza en el registro
+    #: (`purpose=ENROLLMENT`), con la vuelta al frente entre uno y otro.
     actions: list[LivenessAction] = []
     instructions: list[str] = []
     #: Giro mínimo (ratio nariz/ojos), cambio mínimo al mirar arriba o abajo (pitch) y cuánto debe
@@ -93,13 +100,18 @@ class ValidatorAttendance(BaseModel):
     message: str
 
 
-class VerificationResult(BaseModel):
+class VerificationResult(Explained):
+    """El resultado de una verificación o identificación; `message` se construye diferido (`Explained`)."""
+
     verified: bool
     method: VerificationMethod
     message: str
     employee_id: int | None = None
     employee_number: str | None = None
     name: str | None = None
+    #: Foto de perfil de quien se verificó (ruta versionada) o None: la persona misma, su empresa o el validador de su
+    #: empresa (los únicos que reciben este resultado) pueden verla.
+    avatar: str | None = None
     confidence: float | None = None
     verified_at: datetime | None = None
     #: Solo en un validador: la entrada o salida del turno que registró esta identificación.
@@ -109,8 +121,8 @@ class VerificationResult(BaseModel):
     #: Solo en un validador (antifraude 2b): el reto que firma su dispositivo en la siguiente identificación.
     device_nonce: str | None = None
 
-    model_config = {
-        "json_schema_extra": {
+    model_config = ConfigDict(
+        json_schema_extra={
             "examples": [
                 {
                     "verified": True,
@@ -125,7 +137,7 @@ class VerificationResult(BaseModel):
                 {"verified": False, "method": "FACE", "message": "Rostro no reconocido"},
             ]
         }
-    }
+    )
 
 
 class VerificationLogRead(BaseModel):
@@ -142,3 +154,33 @@ class VerificationLogRead(BaseModel):
 
 class VerificationLogList(Page[VerificationLogRead]):
     """Página de la bitácora de verificaciones de un empleado (la más reciente primero)."""
+
+
+class CompanyVerificationRead(BaseModel):
+    """Una verificación de identidad de la empresa con DÓNDE se hizo (pantalla «Verificaciones», mapa; decisión del
+    dueño, 2026-10-07). Trae a la persona con su foto de perfil (`avatar`; la empresa ve a su gente) y, si la
+    verificación llevó ubicación, su punto. Nunca fotos del registro facial.
+    La empresa sale de la sesión (aislamiento)."""
+
+    id: int
+    created_at: datetime
+    method: VerificationMethod
+    success: bool
+    #: Motivo del rechazo (catalog.verification_reasons); None si fue exitosa.
+    reason: str | None
+    #: Confianza del reconocimiento facial (None en el QR, que no la tiene).
+    confidence: float | None
+    #: Empleado (None cuando no se identificó a nadie, p. ej. un 1:N sin coincidencia).
+    employee_id: int | None
+    employee_number: str | None
+    employee_name: str | None
+    #: Ruta versionada de la foto de perfil dentro de la API (None sin foto o sin empleado).
+    avatar: str | None = None
+    #: Dónde se hizo (WGS-84); None cuando la verificación no llevó ubicación.
+    latitude: float | None
+    longitude: float | None
+    location_accuracy_m: int | None
+
+
+class CompanyVerificationList(Page[CompanyVerificationRead]):
+    """Página de las verificaciones de la empresa (la más reciente primero), para el mapa de «Verificaciones»."""

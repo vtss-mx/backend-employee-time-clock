@@ -13,7 +13,7 @@ import re
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Literal
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from cryptography.fernet import Fernet
@@ -129,6 +129,20 @@ class Settings(BaseSettings):
     REMEMBER_COOKIE_NAME: str = "tc_remember"
     REMEMBER_ACCOUNT_DAYS: int = Field(default=30, ge=1, le=365)
 
+    # --- Llaves de acceso (WebAuthn / passkeys, antifraude fase 3; app/services/passkey_service.py) ---
+    # Identificador del sitio para WebAuthn (RP ID): el dominio de la aplicación web, sin esquema ni puerto ("localhost"
+    # en desarrollo, "reloj.empresa.com" en producción). Una llave registrada vale solo para este dominio.
+    WEBAUTHN_RP_ID: str = "localhost"
+    # Nombre del sitio que el dispositivo muestra al crear la llave.
+    WEBAUTHN_RP_NAME: str = "Employee Time Clock"
+    # Orígenes (esquema, dominio y puerto) desde los que se acepta una ceremonia, separados por comas; vacío = los de
+    # CORS_ORIGINS más https://<WEBAUTHN_RP_ID> (la aplicación web detrás del gateway).
+    WEBAUTHN_ORIGINS: Annotated[list[str], NoDecode] = []
+    # Vigencia del reto sellado de una ceremonia (registrar o entrar); cada reto se acepta UNA sola vez.
+    PASSKEY_CHALLENGE_TTL_SECONDS: int = Field(default=120, ge=30, le=900)
+    # Llaves de acceso por cuenta (varios dispositivos y una de respaldo bastan).
+    PASSKEYS_MAX_PER_USER: int = Field(default=10, ge=1, le=50)
+
     # --- CORS ---
     # Orígenes que pueden llamar a la API desde otro dominio (la webapp detrás del gateway es del mismo origen
     # y no lo necesita; sí el servidor de desarrollo de Vite si llama directo a la API).
@@ -209,14 +223,82 @@ class Settings(BaseSettings):
 
     # Registro: las muestras de un mismo registro deben ser consistentes entre sí.
     FACE_ENROLL_CONSISTENCY_THRESHOLD: float = Field(default=0.55, ge=0.0, le=1.0)
-    # Registro con muchas fotos (decisión del dueño, 2026-10-06; `enrollment_selection`): fotos completas que acepta un
-    # registro (propio o en persona; más es 422 TOO_MANY_IMAGES), fotos útiles mínimas para armar la plantilla (con
-    # menos, 422 con el motivo de descarte más frecuente) y lo más que el registro espera (s) la parte que analizan los
-    # workers de repuesto (lo que no terminen lo analiza el de la petición). La plantilla sigue siendo de
-    # FACE_MAX_SAMPLES_PER_EMPLOYEE muestras: el servidor elige las mejores.
+    # Registro con muchas fotos (decisión del dueño, 2026-10-06; `enrollment_selection`): fotos VÁLIDAS que reúne la app
+    # antes de enviar (cuenta solo las que pasan su revisión en vivo: «Capturas válidas: 24/32»; una borrosa, oscura o
+    # sin el rostro completo no cuenta), fotos completas que acepta un registro como máximo (propio o en persona; una
+    # app anterior manda 36; más es 422 TOO_MANY_IMAGES), fotos útiles mínimas tras la revisión del SERVIDOR para armar
+    # la plantilla (con menos, 422 con el motivo de descarte más frecuente) y lo más que el registro espera (s) la parte
+    # que analizan los workers de repuesto (lo que no terminen lo analiza el de la petición). La plantilla sigue siendo
+    # de FACE_MAX_SAMPLES_PER_EMPLOYEE muestras: el servidor elige las mejores.
+    FACE_ENROLL_VALID_PHOTOS: int = Field(default=32, ge=1, le=60)
     FACE_ENROLL_MAX_PHOTOS: int = Field(default=36, ge=1, le=60)
-    FACE_ENROLL_MIN_USABLE: int = Field(default=3, ge=1, le=36)
+    FACE_ENROLL_MIN_USABLE: int = Field(default=3, ge=1, le=60)
     FACE_ENROLL_SPARE_WAIT_SECONDS: float = Field(default=5.0, gt=0, le=60)
+    # Los tres pasos del registro son independientes y retomables (decisión del dueño, 2026-10-07): horas que vive un
+    # registro a medias: la foto inicial aceptada (el borrador, `POST /enrollment/photo`: vencida, el paso 2 responde
+    # 409 ENROLLMENT_PHOTO_REQUIRED y hay que repetirla) y las capturas aceptadas que esperan su video (después, la
+    # depuración borra el registro con su foto y sus respuestas). 72 h: «volver otro día a continuar» sin conservar
+    # biometría de un registro abandonado.
+    FACE_ENROLLMENT_DRAFT_HOURS: int = Field(default=72, ge=1, le=720)
+
+    # --- Verificación por voz y video del registro facial (decisión del dueño, 2026-10-06; app/speech) ---
+    # Tras las fotos válidas, el empleado responde en video tres preguntas al azar sobre sus propios datos. La voz se
+    # transcribe EN ESTE SERVIDOR con un modelo Whisper abierto (faster-whisper, CTranslate2 en int8; el audio nunca
+    # sale de la plataforma): carpeta de los modelos (la imagen los trae en /app/models/speech, verificados por SHA-256
+    # al construirla), tamaño del modelo (small: 484 MB, el elegido —medido el 2026-10-06: acierta las fechas y los
+    # nombres en los siete idiomas—; base: 145 MB, 3 veces más rápido pero confunde nombres y fechas en español), si se
+    # descargan al faltar (apagado: nunca desde una petición; `python -m app.speech.model_store` los baja) e hilos de
+    # CPU por transcripción (2: una respuesta tarda ≈ 1.5 s en vez de 3; las transcripciones son raras —tres por
+    # empleado en toda su vida— y el paralelismo entre peticiones lo dan los workers faciales, uno por núcleo).
+    SPEECH_MODELS_DIR: str = "./models/speech"
+    SPEECH_MODEL_SIZE: Literal["base", "small"] = "small"
+    SPEECH_MODELS_AUTO_DOWNLOAD: bool = False
+    SPEECH_CPU_THREADS: int = Field(default=2, ge=1, le=16)
+    # Cada respuesta grabada: duración mínima y máxima del audio (s; más larga se recorta al analizarla y, si el clip
+    # pasa de VOICE_CLIP_MAX_SECONDS, se rechaza como ANSWER_TOO_LONG), sonoridad mínima (dBFS: por debajo es
+    # ANSWER_INAUDIBLE), fracción mínima de ventanas de 20 ms con voz, probabilidad máxima de «sin voz» y confianza
+    # mínima (logaritmo de la probabilidad promedio) de la transcripción (por debajo, ANSWER_UNCLEAR).
+    SPEECH_MIN_ANSWER_SECONDS: float = Field(default=0.6, gt=0, le=10)
+    SPEECH_MAX_ANSWER_SECONDS: float = Field(default=12.0, gt=0, le=60)
+    SPEECH_MIN_RMS_DBFS: float = Field(default=-42.0, ge=-90.0, le=0.0)
+    SPEECH_MIN_SPEECH_RATIO: float = Field(default=0.12, ge=0.0, le=1.0)
+    SPEECH_MAX_NO_SPEECH_PROB: float = Field(default=0.6, ge=0.0, le=1.0)
+    SPEECH_MIN_AVG_LOGPROB: float = Field(default=-1.3, ge=-10.0, le=0.0)
+    # Transcribir con el dato registrado como vocabulario sugerido (`hotwords` de faster-whisper) en las preguntas de
+    # texto (nombre, empresa, departamento, sitio; nunca fechas ni números). Medido el 2026-10-06 con voces sintéticas:
+    # 28/28 nombres propios frente a 12/28 sin él; con un dato AJENO sugerido el modelo lo "oyó" en 1 de 28 (la
+    # comparación sigue exigiendo las palabras y el rostro del video debe ser el de las fotos). Nunca sale del servidor.
+    SPEECH_HOTWORDS_ENABLED: bool = True
+    # Comparación con el dato registrado: parecido mínimo entre una palabra esperada y una oída (0-1, Levenshtein) y
+    # fracción mínima de las palabras del dato que deben oírse (un nombre completo puede decirse sin el segundo
+    # apellido).
+    VOICE_TOKEN_SIMILARITY: float = Field(default=0.8, ge=0.5, le=1.0)
+    VOICE_NAME_MIN_RATIO: float = Field(default=0.6, ge=0.1, le=1.0)
+    # Preguntas por sesión (distintas, al azar, solo de datos que el empleado tiene registrados), intentos por pregunta
+    # (una respuesta que no pasa se repite; al agotarse, 422 VOICE_RETRIES_EXHAUSTED y el registro empieza de nuevo),
+    # vida de la sesión (s; el token sellado vence y la app pide otra con las respuestas aceptadas; un registro sin
+    # terminar se depura a las FACE_ENROLLMENT_DRAFT_HOURS) y
+    # respuestas por usuario y minuto.
+    VOICE_QUESTIONS_PER_SESSION: int = Field(default=3, ge=1, le=6)
+    VOICE_MAX_RETRIES_PER_QUESTION: int = Field(default=3, ge=1, le=10)
+    VOICE_SESSION_TTL_SECONDS: int = Field(default=900, ge=60, le=7200)
+    RATE_LIMIT_VOICE_ANSWERS_PER_MINUTE: int = Field(default=20, ge=1)
+    # Rango de los dos sumandos de la pregunta ARITHMETIC_SUM (ambos inclusive): el servidor genera dos números al azar
+    # en este rango y la respuesta esperada es su suma («¿Cuánto es 7 más 4?» → 11). Pequeños para que cualquiera los
+    # sume de cabeza; cambian en cada intento (prueba cognitiva y antirreplay, no un dato de identidad).
+    VOICE_ARITHMETIC_MIN: int = Field(default=1, ge=0, le=99)
+    VOICE_ARITHMETIC_MAX: int = Field(default=9, ge=1, le=99)
+    # El video de cada respuesta (WebM/VP8+Opus en Chrome y Firefox, MP4/H.264+AAC en Safari; el formato se reconoce por
+    # su contenido): tamaño máximo del archivo (MB; más es 413 VIDEO_TOO_LARGE), duración máxima del clip (s),
+    # fotogramas que se muestrean para comprobar que el rostro del video es el de las fotos del registro, holgura bajo
+    # la similitud que exige la empresa (un fotograma de video comprimido, hablando, se parece algo menos que una foto
+    # quieta; por debajo, VIDEO_FACE_MISMATCH) y días que los clips se conservan cifrados en el bucket para que la
+    # empresa los revise (como la evidencia de fraude: después se borran solos).
+    FACE_VIDEO_MAX_MB: float = Field(default=8.0, gt=0, le=25)
+    VOICE_CLIP_MAX_SECONDS: float = Field(default=20.0, gt=0, le=120)
+    FACE_VIDEO_SAMPLE_FRAMES: int = Field(default=3, ge=1, le=10)
+    FACE_VIDEO_MATCH_MARGIN: float = Field(default=0.05, ge=0.0, le=0.3)
+    FACE_VIDEO_RETENTION_DAYS: int = Field(default=90, ge=1, le=365)
 
     # Accesorios (lentes, gorra/sombrero, cubrebocas) detectados con CLIP zero-shot.
     FACE_ACCESSORY_CHECK_ENABLED: bool = True
@@ -312,9 +394,20 @@ class Settings(BaseSettings):
     # Cambio máximo de luz (brillo medio del rostro, 0-255) entre la frontal y el giro: una imagen
     # de otra toma suele venir con otra iluminación.
     FACE_CONTINUITY_MAX_BRIGHTNESS_DELTA: float = Field(default=70.0, ge=5.0, le=255.0)
-    # Cámaras virtuales (programas que fingen ser una cámara para inyectar video), por su nombre.
+    # Cámaras virtuales (programas que fingen ser una cámara para inyectar video), por su nombre: cada entrada se
+    # busca como palabra completa, sin distinguir mayúsculas ni acentos, en los idiomas en que los sistemas nombran
+    # sus cámaras («virtual», «virtuelle», «virtuale» y los nombres localizados; decisión D-C4).
     FACE_BLOCKED_CAMERAS: Annotated[list[str], NoDecode] = [
         "virtual",
+        "virtuelle",
+        "virtuell",
+        "virtuel",
+        "virtuale",
+        "câmera virtual",
+        "cámara virtual",
+        "caméra virtuelle",
+        "virtuelle kamera",
+        "fotocamera virtuale",
         "manycam",
         "xsplit",
         "snap camera",
@@ -347,6 +440,10 @@ class Settings(BaseSettings):
     RISK_LOCATION_JUMP_RATIO: float = Field(default=0.5, gt=0.0, le=1.0)
     # LOCATION_STATIC: lecturas idénticas (coordenadas y precisión) en al menos estas muestras de un registro.
     RISK_LOCATION_STATIC_MIN_SAMPLES: int = Field(default=3, ge=2, le=50)
+    # LOCATION_STATIC y LOCATION_ROUND_ACCURACY solo se miden en una lectura de GPS: precisión de hasta estos
+    # metros. Más es la ubicación de la red (Wi-Fi de una computadora), del celular o aproximada (iOS sin "Ubicación
+    # exacta", Android aproximada: kilómetros), que se repite exacta y redonda sin ser un simulador: no se mide.
+    RISK_LOCATION_GPS_MAX_ACCURACY_M: float = Field(default=20.0, gt=0, le=1000)
     # Muestras de ubicación que acepta un registro (la app toma varias en una ventana corta); más: 422.
     LOCATION_MAX_SAMPLES: int = Field(default=10, ge=1, le=50)
     # DEVICE_SHARED: el mismo dispositivo (su llave) lo usaron al menos estos empleados de la empresa, contando al que
@@ -392,8 +489,8 @@ class Settings(BaseSettings):
     FACE_BURST_MIN_FRAMES: int = Field(default=6, ge=3, le=40)
     FACE_BURST_MIN_INTERVAL_MS: int = Field(default=25, ge=1, le=1000)
     FACE_BURST_MAX_SPAN_MS: int = Field(default=8000, ge=1000, le=60_000)
-    # Con un worker facial libre, la hoja se analiza en OTRO núcleo mientras la petición sigue con el destello y los
-    # movimientos: lo más que el intento espera ese resultado (s). Si no llega, el intento sigue sin medirla y queda
+    # Con un worker facial libre, la hoja se analiza en OTRO núcleo mientras la petición sigue con la prueba de
+    # vida: lo más que el intento espera ese resultado (s). Si no llega, el intento sigue sin medirla y queda
     # registrado; sin un worker libre se analiza con el de la petición, como antes.
     FACE_BURST_WAIT_SECONDS: float = Field(default=5.0, gt=0, le=60)
     # Continuidad (BURST_DISCONTINUOUS): fracción de recortes sin un único rostro que se tolera y salto máximo de los
@@ -515,10 +612,33 @@ class Settings(BaseSettings):
     ATTACK_SIGNATURE_PLATFORM_COMPANIES: int = Field(default=2, ge=1, le=100)
     ATTACK_SIGNATURE_CACHE_SECONDS: float = Field(default=30.0, ge=0, le=3600)
     ATTACK_SIGNATURE_MAX_LOADED: int = Field(default=50_000, ge=100, le=1_000_000)
-    # Regla de dos personas (decisión D12): un cambio que relaja la seguridad de una empresa espera la aprobación
-    # de OTRO ADMIN hasta estas horas. Apagarla (false) solo tiene sentido en una plataforma con un único ADMIN.
-    POLICY_TWO_PERSON_RULE: bool = True
+    # Regla de dos personas (decisión D12): con `true`, un cambio que relaja la seguridad de una empresa espera la
+    # aprobación de OTRO ADMIN hasta estas horas. Apagada por omisión (decisión del dueño, 2026-10-06): la plataforma
+    # tiene un único ADMIN y todo lo que configura a una empresa aplica de inmediato. El mecanismo se conserva para
+    # una plataforma con varios ADMIN.
+    POLICY_TWO_PERSON_RULE: bool = False
     POLICY_CHANGE_APPROVAL_HOURS: int = Field(default=72, ge=1, le=720)
+
+    # --- Deriva de las señales del motor facial (antifraude fase 3, I+D §3.5; services/drift_service.py) ---
+    # Al cerrar cada ventana el mantenimiento compara, por señal y plataforma, los intentos genuinos con la ventana
+    # anterior (mediana, cola y PSI) y mide por empresa la tasa de casos y las revisiones aprobadas sin mirar.
+    DRIFT_ENABLED: bool = True
+    # Días de cada ventana (7 = semanas, alineadas al lunes).
+    DRIFT_WINDOW_DAYS: int = Field(default=7, ge=1, le=31)
+    # Intentos genuinos mínimos por señal y plataforma para comparar (menos: "sin datos suficientes") y tope de lectura.
+    DRIFT_MIN_SAMPLES: int = Field(default=200, ge=20, le=1_000_000)
+    DRIFT_MAX_SAMPLES: int = Field(default=20_000, ge=100, le=1_000_000)
+    # Alerta al ADMIN: índice de estabilidad de población (PSI) mayor que este valor, o la cola (el p10 de un mínimo, el
+    # p90 de un máximo) que se mueve hacia lo sospechoso más de esta fracción respecto de la ventana anterior.
+    DRIFT_PSI_ALERT: float = Field(default=0.2, gt=0, le=5)
+    DRIFT_TAIL_DROP_ALERT: float = Field(default=0.15, gt=0, le=1)
+    # Fraude interno: un registro "en revisión" que la empresa aprueba en menos de estos segundos desde que se abrió
+    # cuenta como aprobado sin mirar; alerta si esa fracción supera el umbral con al menos DRIFT_MIN_REVIEWS decisiones.
+    DRIFT_QUICK_REVIEW_SECONDS: int = Field(default=30, ge=1, le=3600)
+    DRIFT_QUICK_APPROVAL_RATIO: float = Field(default=0.8, gt=0, le=1)
+    DRIFT_MIN_REVIEWS: int = Field(default=10, ge=1, le=100_000)
+    # Días que se conservan las filas de deriva (por ventana y por empresa) y la bitácora de versiones del motor.
+    DRIFT_RETENTION_DAYS: int = Field(default=400, ge=30, le=3650)
 
     # --- Tolerancia a fallas ---
     # Conexiones persistentes: las de "overflow" se abren y cierran en cada uso (autenticación
@@ -630,9 +750,50 @@ class Settings(BaseSettings):
     POLICY_CACHE_SECONDS: float = Field(default=5.0, ge=0, le=300)
     POLICY_CACHE_COMPANIES: int = Field(default=10_000, ge=1, le=1_000_000)
 
+    # --- Caché compartida entre réplicas (Redis; app/core/cache.py) ---
+    # Decisión del dueño del producto (2026-10-07): Redis retiene los catálogos entre las réplicas y comparte los
+    # contadores de límites de peticiones. REDIS_URL (redis://[:contraseña@]host:puerto/base o rediss://) tiene
+    # prioridad; vacía, se arma con REDIS_HOST/PORT/DB y REDIS_PASSWORD (la contraseña se define una sola vez: también
+    # la lee el servicio redis de docker compose). REDIS_HOST vacío y REDIS_URL vacía = Redis APAGADO: la topología
+    # mínima (solo db + API) sigue igual que siempre, con la caché local de cada proceso. docker compose la pasa
+    # desde el .env de la raíz: vacía por omisión (decisión del dueño, 2026-10-07: Redis apagado por ahora). La URL
+    # nunca se escribe en el log (lleva la contraseña).
+    REDIS_URL: str = ""
+    REDIS_HOST: str = ""
+    REDIS_PORT: int = Field(default=6379, ge=1, le=65_535)
+    REDIS_DB: int = Field(default=0, ge=0, le=15)
+    REDIS_PASSWORD: str = ""
+    # Prefijo de todas las llaves (varios entornos pueden compartir un Redis): minúsculas, números, '.', '_' y '-'.
+    REDIS_KEY_PREFIX: str = "timeclock"
+    # Tiempos límite cortos (ms) de conectar y de cada comando: Redis vive en la misma red; si no responde en esto, la
+    # capa corta el circuito y la aplicación sigue sin él (regla 7: Redis caído nunca agrega latencia ni tumba nada).
+    REDIS_CONNECT_TIMEOUT_MS: int = Field(default=200, ge=10, le=10_000)
+    REDIS_TIMEOUT_MS: int = Field(default=200, ge=10, le=10_000)
+    # Cortacircuitos: tras una falla, cada proceso deja de hablarle a Redis estos segundos (responde "sin dato" en
+    # microsegundos) y luego vuelve a intentar UNA vez; la falla se registra una sola vez como error del sistema.
+    REDIS_RETRY_SECONDS: float = Field(default=5.0, ge=0.1, le=300)
+    # Conexiones del pool por proceso (los comandos son de milisegundos: pocas bastan).
+    REDIS_MAX_CONNECTIONS: int = Field(default=16, ge=1, le=1000)
+    # Compresión zlib de los valores JSON (la instantánea de catálogos): nivel 1 la deja en ≈ 1/10 por unos milisegundos
+    # de CPU una vez por recarga (menos red y menos memoria de Redis); 0 = sin comprimir.
+    REDIS_COMPRESSION_LEVEL: int = Field(default=1, ge=0, le=9)
+    # Catálogos en Redis (segundo nivel de la caché; el primero sigue siendo la memoria de cada proceso,
+    # CATALOG_CACHE_SECONDS): al vencer la copia local se lee la instantánea compartida y solo si no está se va a la
+    # base y se escribe con esta vigencia (s). Mayor que la local: una instantánea sirve a todas las réplicas durante
+    # varios ciclos. La llave lleva la versión del código y de las migraciones, y el servicio `migrate` las borra al
+    # terminar (`python -m app.cli cache clear-catalogs`): un cambio de catálogo se ve en todas al instante; un cambio a
+    # mano en la tabla, a lo más en este tiempo. 0 = los catálogos no se guardan en Redis.
+    CATALOG_REDIS_SECONDS: float = Field(default=600, ge=0, le=86_400)
+    # Sal (secreto generado) con que se calcula la huella de cada sujeto de un límite de peticiones (correo, IP, sesión)
+    # antes de usarla como llave en Redis o en la base: nunca un dato personal en claro en un contador (regla 13).
+    RATE_LIMIT_HASH_SALT: str = ""
+
     # --- Protección contra abuso (peticiones por minuto) ---
-    # memory = por proceso; database = compartido por todos los procesos/instancias (PostgreSQL).
-    RATE_LIMIT_BACKEND: Literal["memory", "database"] = "database"
+    # memory = por proceso; database = compartido por todos los procesos/instancias (PostgreSQL, UPSERT atómico);
+    # redis = compartido en la caché de Redis (INCR atómico, sin tocar la base; exige REDIS_HOST o REDIS_URL) y, si
+    # Redis no responde, el límite por proceso como respaldo. docker compose lo pasa desde el .env de la raíz
+    # (database por omisión).
+    RATE_LIMIT_BACKEND: Literal["memory", "database", "redis"] = "database"
     RATE_LIMIT_REFRESH_PER_MINUTE: int = Field(default=30, ge=1)  # renovaciones por sesión
     RATE_LIMIT_LOGIN_PER_MINUTE: int = Field(default=10, ge=1)  # intentos por cuenta
     # Por IP es alto a propósito: oficinas enteras salen a Internet con una sola IP (NAT);
@@ -650,6 +811,13 @@ class Settings(BaseSettings):
     RATE_LIMIT_VALIDATION_PER_MINUTE: int = Field(default=120, ge=1)
     # API de integración: peticiones por llave y minuto.
     RATE_LIMIT_API_KEY_PER_MINUTE: int = Field(default=120, ge=1)
+    # API pública de verificación facial (SDK móviles, /integrations/v1/verification/*): peticiones por llave y minuto,
+    # con su propio contador (toda una plantilla checa a la misma hora con la llave de la aplicación de la empresa; el
+    # reto y el envío son dos peticiones por intento).
+    RATE_LIMIT_API_VERIFICATION_PER_MINUTE: int = Field(default=600, ge=1)
+    # La misma API por DISPOSITIVO (la huella de la llave pública del teléfono) y minuto: una llave extraída de la
+    # aplicación no prueba rostros sin límite desde un solo equipo.
+    RATE_LIMIT_API_VERIFICATION_DEVICE_PER_MINUTE: int = Field(default=20, ge=1)
     # Fallas de la aplicación web que reporta el navegador (público): reportes por IP y minuto. La app
     # no repite el mismo reporte en una carga de la página; esto frena a quien lo use para inundar.
     RATE_LIMIT_CLIENT_ERRORS_PER_MINUTE: int = Field(default=20, ge=1)
@@ -740,6 +908,12 @@ class Settings(BaseSettings):
     # registro, verificación, identificación, reto y registro de asistencia) analizan varias capturas con el motor y
     # alertan desde este umbral (ms); las demás siguen con SLOW_REQUEST_THRESHOLD_MS.
     SLOW_REQUEST_FACE_THRESHOLD_MS: int = Field(default=2500, ge=50, le=600_000)
+    # Las rutas de la verificación por voz (`VOICE_PREFIXES`: la respuesta en video decodifica el clip, transcribe la
+    # voz —≈ 1.5-3 s con el modelo small— y compara el rostro) alertan desde este umbral (ms; medido el 2026-10-06).
+    SLOW_REQUEST_VOICE_THRESHOLD_MS: int = Field(default=8000, ge=50, le=600_000)
+    # Las rutas que corren OCR al subir un documento del empleado (`OCR_PREFIXES`: leen una foto del documento con
+    # Tesseract) alertan desde este umbral (ms): leer un documento puede pasar de 1 s sin que nada esté mal.
+    SLOW_REQUEST_OCR_THRESHOLD_MS: int = Field(default=5000, ge=50, le=600_000)
     # Rutas distintas con peticiones lentas que caben en memoria entre lotes (las que no caben se suman a OTHER).
     SLOW_REQUEST_MAX_ROUTES: int = Field(default=1000, ge=10, le=100_000)
     # Una alerta RESUELTA que no ha vuelto a ocurrir en este tiempo se depura (si vuelve, se crea de nuevo abierta).
@@ -849,7 +1023,7 @@ class Settings(BaseSettings):
 
     # --- Documentos de la empresa (para su facturación; cifrados en el bucket, nunca en la BD) ---
     # Archivo que se recibe (PDF, Word, Excel, XML, JPG o PNG): tamaño máximo. Más grande: 413 DOCUMENT_TOO_LARGE.
-    # Debe caber en el límite del cuerpo del gateway (client_max_body_size de docker/nginx.conf, 27 MB).
+    # Debe caber en el límite del cuerpo del gateway (NGINX_CLIENT_MAX_BODY_SIZE del `.env` de la raíz, 27 MB).
     COMPANY_DOCUMENT_MAX_MB: float = Field(default=20.0, gt=0, le=25)
     # Megapíxeles máximos de una imagen (JPG o PNG) recibida (defensa contra "bombas" de descompresión: una imagen
     # pequeña en bytes que ocupa gigas al abrirse). Más: 422 DOCUMENT_IMAGE_TOO_LARGE.
@@ -858,6 +1032,21 @@ class Settings(BaseSettings):
     COMPANY_DOCUMENT_JPEG_QUALITY: int = Field(default=92, ge=50, le=100)
     # Documentos nuevos (subir) por persona y minuto (cada uno cuesta revisarlo, cifrarlo y subirlo al bucket).
     RATE_LIMIT_DOCUMENT_UPLOADS_PER_MINUTE: int = Field(default=10, ge=1)
+
+    # --- Documentos de identidad del empleado (onboarding con OCR; decisión del dueño, 2026-10-07) ---
+    # El archivo que sube el empleado (foto del documento o PDF/Word/Excel/XML/JPG/PNG): tamaño máximo (MB). Más
+    # grande: 413 EMPLOYEE_DOCUMENT_TOO_LARGE. Las imágenes comparten el tope de megapíxeles y la calidad JPEG de los
+    # documentos de la empresa (`COMPANY_DOCUMENT_MAX_MEGAPIXELS`, `COMPANY_DOCUMENT_JPEG_QUALITY`: `document_files`).
+    EMPLOYEE_DOCUMENT_MAX_MB: float = Field(default=15.0, gt=0, le=25)
+    # Documentos nuevos (subir) por persona y minuto (cada uno cuesta leerlo con OCR, cifrarlo y subirlo al bucket).
+    RATE_LIMIT_EMPLOYEE_DOCUMENT_UPLOADS_PER_MINUTE: int = Field(default=10, ge=1)
+    # OCR EN ESTE SERVIDOR (Tesseract; regla 13: los datos de la empresa nunca salen a un servicio externo). Idiomas que
+    # Tesseract usa (códigos unidos por `+`; sus datos se instalan al construir la imagen, nunca en la petición),
+    # tiempo límite del subproceso por documento (s) y tope de megapíxeles de la imagen antes de leerla. La extracción
+    # es de MEJOR ESFUERZO: un fallo o un tiempo agotado deja los datos vacíos y la empresa los captura (nunca bloquea).
+    OCR_LANGUAGES: str = "spa+eng"
+    OCR_TIMEOUT_SECONDS: float = Field(default=20.0, gt=0, le=120)
+    OCR_MAX_MEGAPIXELS: float = Field(default=40.0, gt=0, le=200)
 
     # --- API de integración (llaves por empresa) ---
     API_KEYS_MAX_ACTIVE: int = Field(default=10, ge=1, le=100)  # llaves activas por empresa
@@ -886,6 +1075,8 @@ class Settings(BaseSettings):
     @field_validator("FACE_BLOCKED_CAMERAS", mode="before")
     @classmethod
     def _split_cameras(cls, value: object) -> object:
+        """Lista separada por comas, en minúsculas; los acentos se conservan tal como se escribieron y se pliegan
+        al comparar (`capture_guard.is_virtual_camera`, con `fold_text`), así el `.env` se lee como se escribió."""
         if isinstance(value, str):
             return [name.strip().lower() for name in value.split(",") if name.strip()]
         return value
@@ -913,7 +1104,7 @@ class Settings(BaseSettings):
     def ip_asn_db(self) -> Path:
         return _api_path(self.IP_ASN_DB_PATH)
 
-    @field_validator("CORS_ORIGINS", mode="before")
+    @field_validator("CORS_ORIGINS", "WEBAUTHN_ORIGINS", mode="before")
     @classmethod
     def _split_origins(cls, value: object) -> object:
         if isinstance(value, str):
@@ -949,6 +1140,29 @@ class Settings(BaseSettings):
             raise ValueError("GCS_PREFIX: solo minúsculas, números, '.', '_' y '-' (hasta 40), p. ej. production")
         return value
 
+    @field_validator("REDIS_KEY_PREFIX")
+    @classmethod
+    def _redis_prefix(cls, value: str) -> str:
+        """Una sola palabra en minúsculas: es parte de cada llave (y de lo que se borra por prefijo)."""
+        value = value.strip().strip(":")
+        if not _PREFIX.fullmatch(value):
+            raise ValueError("REDIS_KEY_PREFIX: solo minúsculas, números, '.', '_' y '-' (hasta 40), p. ej. timeclock")
+        return value
+
+    @property
+    def redis_url(self) -> str:
+        """La URL de Redis: REDIS_URL o, sin ella, la que arman REDIS_HOST/PORT/DB y REDIS_PASSWORD; vacía = apagado."""
+        if self.REDIS_URL or not self.REDIS_HOST:
+            return self.REDIS_URL
+        auth = f":{quote(self.REDIS_PASSWORD, safe='')}@" if self.REDIS_PASSWORD else ""
+        return f"redis://{auth}{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
+
+    @property
+    def redis_target(self) -> str:
+        """Dónde está Redis, para el log y el estado del servidor: host, puerto y base, NUNCA la contraseña."""
+        parsed = urlsplit(self.redis_url)
+        return f"{parsed.hostname or '?'}:{parsed.port or 6379}{parsed.path or '/0'}"
+
     @field_validator("PITR_CIPHER_PASS")
     @classmethod
     def _cipher_pass(cls, value: str) -> str:
@@ -970,8 +1184,10 @@ class Settings(BaseSettings):
         if self.is_production and self.RATE_LIMIT_BACKEND == "memory":
             raise ValueError(
                 "RATE_LIMIT_BACKEND=memory no se permite en producción: cada réplica contaría por su lado "
-                "(usa database, compartido por todas)"
+                "(usa database o redis, compartidos por todas)"
             )
+        if self.RATE_LIMIT_BACKEND == "redis" and not self.redis_url:
+            raise ValueError("RATE_LIMIT_BACKEND=redis requiere Redis: define REDIS_HOST (o REDIS_URL), o usa database")
         if self.JWT_ALGORITHM == "ES256" and "PRIVATE KEY" not in self.JWT_PRIVATE_KEY:
             raise ValueError(
                 "JWT_ALGORITHM=ES256 requiere JWT_PRIVATE_KEY (genérala con: python scripts/generate_secrets.py)"
@@ -1039,6 +1255,12 @@ class Settings(BaseSettings):
         return [self.DATA_ENCRYPTION_KEY, *previous]
 
     @property
+    def webauthn_origins(self) -> list[str]:
+        """Orígenes que aceptan una ceremonia WebAuthn: los configurados o, sin ellos, los de CORS (el servidor de
+        desarrollo) más el origen HTTPS del propio sitio (la aplicación web detrás del gateway no necesita CORS)."""
+        return self.WEBAUTHN_ORIGINS or [*self.CORS_ORIGINS, f"https://{self.WEBAUTHN_RP_ID}"]
+
+    @property
     def max_image_bytes(self) -> int:
         return int(self.MAX_IMAGE_SIZE_MB * 1024 * 1024)
 
@@ -1073,8 +1295,15 @@ _ORDERED_PAIRS = (
     ("FACE_MOIRE_TIGHTEST_DB", "FACE_MOIRE_MAX_DB"),
     ("FACE_PULSE_MIN_HZ", "FACE_PULSE_MAX_HZ"),
     ("FACE_FLASH_PACE_MIN_MS", "FACE_FLASH_PACE_WINDOW_MS"),
-    # Un registro que pide más fotos útiles de las que acepta nunca podría completarse.
+    # Un registro que pide más fotos útiles de las que acepta nunca podría completarse; las fotos válidas que reúne la
+    # app caben en lo que acepta el servidor.
     ("FACE_ENROLL_MIN_USABLE", "FACE_ENROLL_MAX_PHOTOS"),
+    ("FACE_ENROLL_VALID_PHOTOS", "FACE_ENROLL_MAX_PHOTOS"),
+    # Una respuesta no puede exigir más segundos de los que acepta.
+    ("SPEECH_MIN_ANSWER_SECONDS", "SPEECH_MAX_ANSWER_SECONDS"),
+    ("SPEECH_MAX_ANSWER_SECONDS", "VOICE_CLIP_MAX_SECONDS"),
+    # El sumando mínimo de la pregunta de la suma nunca supera al máximo (si no, no habría rango del que elegir).
+    ("VOICE_ARITHMETIC_MIN", "VOICE_ARITHMETIC_MAX"),
     # El aviso de WAL acumulado llega antes que el guardián que lo descarta.
     ("PITR_WAL_ALERT_MB", "PITR_WAL_MAX_MB"),
 )

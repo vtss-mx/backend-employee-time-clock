@@ -43,6 +43,7 @@ def test_every_role_gets_its_screens_and_home(client, admin_headers, company_hea
         "ADMIN_FACE_SECURITY",
         "ADMIN_PERFORMANCE",  # módulo Operación: rendimiento y alertas de peticiones lentas (regla 18)
         "ADMIN_FRAUD_CASES",  # y los casos de fraude que revisa el ADMIN (antifraude, migración 0062)
+        "ADMIN_DRIFT",  # deriva de las señales del motor por plataforma (antifraude fase 3, migración 0081)
         "PROFILE",
     ]
     assert admin["home"] == "/admin/dashboard"
@@ -69,6 +70,7 @@ def test_every_role_gets_its_screens_and_home(client, admin_headers, company_hea
         "COMPANY_SHIFTS",
         "COMPANY_CALENDAR",
         "COMPANY_SITES",
+        "COMPANY_VERIFICATIONS",  # módulo Asistencia, al final (sort_order 15: ubicación de las verificaciones, 0085)
         "COMPANY_VALIDATORS",
         "COMPANY_API",
         "COMPANY_DOCUMENTS",  # módulo Cuenta, junto a Mi perfil (documentos de la empresa, migración 0075)
@@ -79,6 +81,7 @@ def test_every_role_gets_its_screens_and_home(client, admin_headers, company_hea
     assert (
         company["screens"][6]["badge"] == "PENDING_ABSENCE_REQUESTS" and company["screens"][6]["module"] == "ATTENDANCE"
     )
+    assert company["screens"][8]["code"] == "COMPANY_VERIFICATIONS" and company["screens"][8]["module"] == "ATTENDANCE"
     assert [s["module"] for s in company["screens"][:4]] == ["OVERVIEW", "PEOPLE", "PEOPLE", "PEOPLE"]
     assert [m["code"] for m in company["modules"]] == ["OVERVIEW", "PEOPLE", "ATTENDANCE", "ACCESS", "DATA", "ACCOUNT"]
 

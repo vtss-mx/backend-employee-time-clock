@@ -12,7 +12,8 @@ class DynamicQrRead(BaseModel):
     servidor no genera imágenes: cada rotación cuesta una consulta, no CPU)."""
 
     id: int
-    employee_number: str
+    #: Opcional (migración 0076): null si el empleado no tiene número.
+    employee_number: str | None = None
     created_at: datetime
     expires_at: datetime
     #: Vigencia en segundos (política de la empresa): la webapp lo renueva al terminar.

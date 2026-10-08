@@ -1,0 +1,30 @@
+ Container timeclock-scale-k6-run-b1223a7bac8b Creating 
+ Container timeclock-scale-k6-run-b1223a7bac8b Created 
+
+
+  █ TOTAL RESULTS 
+
+    checks_total.......: 6001    295.340785/s
+    checks_succeeded...: 100.00% 6001 out of 6001
+    checks_failed......: 0.00%   0 out of 6001
+
+    ✓ respuesta 200
+
+    HTTP
+    http_req_duration..............: avg=23.84ms p(50)=14.24ms p(95)=72.13ms p(99)=167.85ms max=477.16ms
+      { expected_response:true }...: avg=23.84ms p(50)=14.24ms p(95)=72.13ms p(99)=167.85ms max=477.16ms
+    http_req_failed................: 0.00%  0 out of 6002
+    http_reqs......................: 6002   295.39/s
+
+    EXECUTION
+    iteration_duration.............: avg=24ms    p(50)=14.39ms p(95)=72.56ms p(99)=167.42ms max=477.76ms
+    iterations.....................: 6001   295.340785/s
+    vus............................: 1      min=1         max=13 
+    vus_max........................: 300    min=300       max=300
+
+    NETWORK
+    data_received..................: 107 MB 5.3 MB/s
+    data_sent......................: 3.3 MB 163 kB/s
+
+
+

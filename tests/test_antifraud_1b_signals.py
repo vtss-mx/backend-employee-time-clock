@@ -9,6 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
+from app.core.config import settings
 from app.core.database import SessionLocal
 from app.main import app
 from app.models import AttendanceEvent
@@ -148,6 +149,20 @@ def test_identical_readings_and_a_constant_round_accuracy_look_simulated(client,
     clock(worker["day"], "12:00")
     recorded(punch(client, worker["headers"], "break-start", accuracy=10, samples=real))
     assert not {"LOCATION_STATIC", "LOCATION_ROUND_ACCURACY"} & set(last_reasons())
+
+
+def test_a_network_or_approximate_location_repeats_itself_unsimulated(client, company_headers, worker, clock):  # noqa: F811
+    """Compatibilidad universal: una computadora con la ubicación del Wi-Fi (o un teléfono con la ubicación aproximada)
+    da la MISMA lectura con la misma precisión redonda varias veces; sin GPS eso no se puede medir y no cuenta."""
+    clock(worker["day"], "07:50")
+    wifi = [{"latitude": POINT[0], "longitude": POINT[1], "accuracy": 65.0}] * 3
+    recorded(punch(client, worker["headers"], "check-in", accuracy=65, samples=wifi))
+    assert not {"LOCATION_STATIC", "LOCATION_ROUND_ACCURACY"} & set(last_reasons())
+    # En el límite de una lectura de GPS se sigue midiendo: un simulador que inventa 20.0 m constantes se marca.
+    clock(worker["day"], "12:00")
+    gps = [{"latitude": POINT[0], "longitude": POINT[1], "accuracy": settings.RISK_LOCATION_GPS_MAX_ACCURACY_M}] * 3
+    recorded(punch(client, worker["headers"], "break-start", accuracy=20, samples=gps))
+    assert {"LOCATION_STATIC", "LOCATION_ROUND_ACCURACY"} <= set(last_reasons())
 
 
 @pytest.mark.parametrize(

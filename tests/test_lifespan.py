@@ -48,6 +48,8 @@ def startup(monkeypatch):
     monkeypatch.setattr(main, "ensure_first_company", lambda _db: events.append("company"))
     monkeypatch.setattr(main, "statement_timeout_missing", lambda: events.append("timeout") or False)
     monkeypatch.setattr(main, "install_drain", lambda delay: events.append(f"drain({delay:g})") or True)
+    cache = SimpleNamespace(close=lambda: events.append("cache.close"))
+    monkeypatch.setattr(main, "shared_cache", lambda: events.append("cache") or cache)
     monkeypatch.setattr(settings, "SHUTDOWN_DRAIN_SECONDS", 5.0)
     monkeypatch.setattr(settings, "THREADPOOL_SIZE", 0)
     monkeypatch.setattr(settings, "MAX_CONCURRENT_REQUESTS", 100)
@@ -93,6 +95,7 @@ def test_full_start_runs_everything_in_order_and_stops_in_reverse(startup, monke
         "timeout",  # ¿las consultas tienen tiempo límite? (con PgBouncer lo pone su configuración)
         "admin",
         "company",
+        "cache",  # la caché compartida (Redis) dice una vez dónde está o que está apagada
         "scheduler(300)",
         "scheduler.start",
         "drain(5)",  # al final del arranque: el manejador de SIGTERM del servidor ya existe
@@ -101,6 +104,7 @@ def test_full_start_runs_everything_in_order_and_stops_in_reverse(startup, monke
         "meter.stop",  # guarda el consumo pendiente
         "perf.stop",  # y el rendimiento pendiente
         "flusher.stop",  # al final: guarda lo que el mantenimiento reportó al detenerse
+        "cache.close",  # y el pool de Redis, ya sin nadie que lo use
     ]
     # Más hilos que peticiones admitidas + espacio para la fila facial: nadie bloquea el login.
     assert threads == 100 + max(16, (8 + 32) // 4)
@@ -114,7 +118,8 @@ def test_start_without_database_nor_face_models_still_serves(startup, monkeypatc
     _face_pool(monkeypatch, error=RuntimeError("modelo no encontrado"))
     threads = _serve(startup)
     # Sin alta de usuarios ni revisión del tiempo límite (no hay BD); el drenado sí (no depende de ella).
-    assert startup == ["log_handler", f"db x{settings.DB_STARTUP_RETRIES}", "drain(5)", "serving"]
+    retries = settings.DB_STARTUP_RETRIES
+    assert startup == ["log_handler", f"db x{retries}", "cache", "drain(5)", "serving", "cache.close"]
     assert threads >= 100 + 16
     assert "La base de datos no respondió al iniciar" in caplog.text
     assert (

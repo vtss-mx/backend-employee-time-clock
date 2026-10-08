@@ -1,45 +1,49 @@
 {
   "$schema": "https://raw.githubusercontent.com/streetsidesoftware/cspell/main/cspell.schema.json",
   "version": "0.2",
-  "description": "Ortografía de los textos del backend (regla 16): el catálogo de mensajes (app/i18n/messages: es_mx solo contra el diccionario de español y en_us solo contra el de inglés de Estados Unidos) y los textos de los catálogos de la BD (alembic/seed/catalogs.json en español, catalogs.en-US.json en inglés). Reutiliza la instalación de cspell, el diccionario de español y las listas de palabras propias revisadas de la aplicación web (no se duplican: es la misma regla para toda la plataforma). Distingue mayúsculas y acentos. Revisa solo los textos: no las llaves, los códigos, los {marcadores}, los comentarios ni los docstrings. Se corre desde la raíz: ./scripts/quality.sh --only=backend (o: cd webapp-employee-time-clock && npx cspell --no-progress --config ../backend-employee-time-clock/cspell.json).",
+  "description": "Ortografía de los textos del backend (regla 16) en los siete idiomas: el catálogo de mensajes (app/i18n/messages/<idioma>/*.py) y los textos de los catálogos de la BD (alembic/seed/catalogs.json en español de México y catalogs.<idioma>.json en los demás). Cada idioma SOLO contra su diccionario (es_mx y es_es con el de español, en_us con el de inglés de Estados Unidos, pt_br con el de portugués de Brasil, fr_fr con el de francés, de_de con el de alemán, it_it con el de italiano) más la lista común y su lista propia revisada. Reutiliza la instalación de cspell, los diccionarios y las listas de palabras de la aplicación web (no se duplican: es la misma regla para toda la plataforma). ESTRICTA: sin la configuración por omisión de cspell (loadDefaultConfiguration: false; sus diccionarios de programación dejaban pasar palabras en inglés en un texto en español). La marca «Employee Time Clock» solo como frase completa. Distingue mayúsculas y acentos. Revisa solo los textos: no las llaves, los códigos, los {marcadores}, los comentarios ni los docstrings. Se corre desde la raíz: ./scripts/quality.sh --only=backend (o: cd backend-employee-time-clock && ../webapp-employee-time-clock/node_modules/.bin/cspell --no-progress).",
   "import": [
-    "../webapp-employee-time-clock/node_modules/@cspell/dict-es-es/cspell-ext.json"
+    "../webapp-employee-time-clock/node_modules/@cspell/dict-es-es/cspell-ext.json",
+    "../webapp-employee-time-clock/node_modules/@cspell/dict-en_us/cspell-ext.json",
+    "../webapp-employee-time-clock/node_modules/@cspell/dict-pt-br/cspell-ext.json",
+    "../webapp-employee-time-clock/node_modules/@cspell/dict-fr-fr/cspell-ext.json",
+    "../webapp-employee-time-clock/node_modules/@cspell/dict-de-de/cspell-ext.json",
+    "../webapp-employee-time-clock/node_modules/@cspell/dict-it-it/cspell-ext.json"
   ],
   "caseSensitive": true,
   "minWordLength": 3,
   "dictionaryDefinitions": [
-    {
-      "name": "project-words",
-      "path": "../webapp-employee-time-clock/cspell-words.txt",
-      "addWords": true
-    },
-    {
-      "name": "project-words-es",
-      "path": "../webapp-employee-time-clock/cspell-words.es-MX.txt",
-      "addWords": true
-    },
-    {
-      "name": "project-words-en",
-      "path": "../webapp-employee-time-clock/cspell-words.en-US.txt",
-      "addWords": true
-    }
+    { "name": "project-words", "path": "../webapp-employee-time-clock/cspell-words.txt", "addWords": true },
+    { "name": "project-words-es-MX", "path": "../webapp-employee-time-clock/cspell-words.es-MX.txt", "addWords": true },
+    { "name": "project-words-en-US", "path": "../webapp-employee-time-clock/cspell-words.en-US.txt", "addWords": true },
+    { "name": "project-words-pt-BR", "path": "../webapp-employee-time-clock/cspell-words.pt-BR.txt", "addWords": true },
+    { "name": "project-words-fr-FR", "path": "../webapp-employee-time-clock/cspell-words.fr-FR.txt", "addWords": true },
+    { "name": "project-words-de-DE", "path": "../webapp-employee-time-clock/cspell-words.de-DE.txt", "addWords": true },
+    { "name": "project-words-it-IT", "path": "../webapp-employee-time-clock/cspell-words.it-IT.txt", "addWords": true },
+    { "name": "project-words-es-ES", "path": "../webapp-employee-time-clock/cspell-words.es-ES.txt", "addWords": true }
   ],
-  "dictionaries": [
-    "project-words"
-  ],
+  "dictionaries": ["project-words"],
   "files": [
     "app/i18n/messages/es_mx/*.py",
     "app/i18n/messages/en_us/*.py",
+    "app/i18n/messages/pt_br/*.py",
+    "app/i18n/messages/fr_fr/*.py",
+    "app/i18n/messages/de_de/*.py",
+    "app/i18n/messages/it_it/*.py",
+    "app/i18n/messages/es_es/*.py",
     "alembic/seed/catalogs.json",
-    "alembic/seed/catalogs.en-US.json"
+    "alembic/seed/catalogs.en-US.json",
+    "alembic/seed/catalogs.pt-BR.json",
+    "alembic/seed/catalogs.fr-FR.json",
+    "alembic/seed/catalogs.de-DE.json",
+    "alembic/seed/catalogs.it-IT.json",
+    "alembic/seed/catalogs.es-ES.json"
   ],
   "overrides": [
     {
       "filename": "app/i18n/messages/**/*.py",
       "languageId": "plaintext",
-      "includeRegExpList": [
-        "/\"(?:[^\"\\\\\\n]|\\\\.)*\"|'(?:[^'\\\\\\n]|\\\\.)*'/g"
-      ],
+      "includeRegExpList": ["/\"(?:[^\"\\\\\\n]|\\\\.)*\"|'(?:[^'\\\\\\n]|\\\\.)*'/g"],
       "ignoreRegExpList": [
         "/\"\"\"[\\s\\S]*?\"\"\"/g",
         "/^\\s*#.*$/gm",
@@ -53,36 +57,23 @@
     {
       "filename": "alembic/seed/*.json",
       "languageId": "plaintext",
-      "includeRegExpList": [
-        "/(?<=\"(?:name|description|message|phrase|instruction|employee_note|short_name)\":\\s*\")(?:[^\"\\\\]|\\\\.)*/g"
-      ],
-      "ignoreRegExpList": [
-        "/\\{\\w+\\}/g",
-        "/(?<=[\\s(])\\/[\\w/{}.-]+/g",
-        "/\\b[a-z]+(?:[._][a-z]+)+\\b/g",
-        "/\\(phrase\\)/g",
-        "/\\d*N-ésimo/g"
-      ]
+      "includeRegExpList": ["/(?<=\"(?:name|description|message|phrase|instruction|employee_note|short_name)\":\\s*\")(?:[^\"\\\\]|\\\\.)*/g"],
+      "ignoreRegExpList": ["/\\{\\w+\\}/g", "/(?<=[\\s(])\\/[\\w/{}.-]+/g", "/\\b[a-z]+(?:[._][a-z]+)+\\b/g", "/\\(phrase\\)/g", "/\\d*N-ésimo/g"]
     },
-    {
-      "filename": [
-        "app/i18n/messages/es_mx/**",
-        "alembic/seed/catalogs.json"
-      ],
-      "language": "es",
-      "dictionaries": [
-        "project-words-es"
-      ]
-    },
-    {
-      "filename": [
-        "app/i18n/messages/en_us/**",
-        "alembic/seed/catalogs.en-US.json"
-      ],
-      "language": "en-US",
-      "dictionaries": [
-        "project-words-en"
-      ]
-    }
+    { "filename": ["app/i18n/messages/es_mx/**", "alembic/seed/catalogs.json"], "language": "es", "dictionaries": ["project-words-es-MX"] },
+    { "filename": ["app/i18n/messages/en_us/**", "alembic/seed/catalogs.en-US.json"], "language": "en-US", "dictionaries": ["project-words-en-US"] },
+    { "filename": ["app/i18n/messages/pt_br/**", "alembic/seed/catalogs.pt-BR.json"], "language": "pt", "dictionaries": ["project-words-pt-BR"] },
+    { "filename": ["app/i18n/messages/fr_fr/**", "alembic/seed/catalogs.fr-FR.json"], "language": "fr", "dictionaries": ["project-words-fr-FR"] },
+    { "filename": ["app/i18n/messages/de_de/**", "alembic/seed/catalogs.de-DE.json"], "language": "de", "dictionaries": ["project-words-de-DE"] },
+    { "filename": ["app/i18n/messages/it_it/**", "alembic/seed/catalogs.it-IT.json"], "language": "it", "dictionaries": ["project-words-it-IT"] },
+    { "filename": ["app/i18n/messages/es_es/**", "alembic/seed/catalogs.es-ES.json"], "language": "es", "dictionaries": ["project-words-es-ES"] }
+  ],
+  "loadDefaultConfiguration": false,
+  "ignoreRegExpList": [
+    "/Employee Time Clock/g",
+    "/\\bX-[A-Za-z]+(?:-[A-Za-z]+)*\\b/g",
+    "/[\\w.+-]+@[\\w-]+(?:\\.[\\w-]+)+/g",
+    "/\\b(?:GET|POST|PUT|PATCH|DELETE)\\b(?=\\s+\\/)/g",
+    "/\\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\\b/g"
   ]
 }

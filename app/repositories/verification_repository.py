@@ -1,7 +1,7 @@
 from collections.abc import Iterable
 from datetime import datetime
 
-from sqlalchemy import Select, func, select
+from sqlalchemy import ColumnElement, Select, func, select
 from sqlalchemy.orm import Session
 
 from app.models import VerificationLog
@@ -86,12 +86,20 @@ class VerificationLogRepository:
         reasons: Iterable[str],
         since: datetime,
         limit: int,
+        device_hash: str | None = None,
     ) -> list[datetime]:
-        """Fallos seguidos (después del último éxito) de un empleado o de una cuenta en la ventana,
-        el más reciente primero; a lo más `limit` (es todo lo que necesita el bloqueo)."""
-        column = VerificationLog.employee_id if employee_id is not None else VerificationLog.user_id
-        key = employee_id if employee_id is not None else actor_id
-        recent = [column == key, VerificationLog.method.in_(list(methods)), VerificationLog.created_at >= since]
+        """Fallos seguidos (después del último éxito) de un empleado, de un dispositivo de la API pública o de una
+        cuenta en la ventana, el más reciente primero; a lo más `limit` (es todo lo que necesita el bloqueo). Cada
+        sujeto va por su índice: `ix_verification_logs_employee_created`, `ix_verification_logs_device_created`
+        (parcial, solo lo que vino de la API) o `ix_verification_logs_user_created`."""
+        subject: ColumnElement[bool]
+        if employee_id is not None:
+            subject = VerificationLog.employee_id == employee_id
+        elif device_hash is not None:
+            subject = VerificationLog.device_hash == device_hash
+        else:
+            subject = VerificationLog.user_id == actor_id
+        recent = [subject, VerificationLog.method.in_(list(methods)), VerificationLog.created_at >= since]
         # El orden lo da el id de la bitácora (estrictamente creciente): varias horas pueden coincidir.
         last_success = self.db.scalar(
             select(func.max(VerificationLog.id)).where(*recent, VerificationLog.success.is_(True))

@@ -14,7 +14,8 @@ from app.services import fraud_case_service
 from app.services.catalog_service import clear_catalog_cache
 from app.services.face_signals import AttemptSignals
 from app.services.fraud_case_service import reason_name
-from app.services.fraud_cases import _image_type, _kind_and_reason
+from app.services.fraud_cases import _kind_and_reason
+from app.services.image_storage import image_type
 from app.services.policy_service import PolicySnapshot
 from app.services.risk_engine import config_for
 from tests.conftest import ADMIN_EMAIL, ADMIN_PASSWORD, approved_employee, login, qr_content
@@ -53,9 +54,9 @@ def test_a_case_without_a_lock_reason_nor_signals_is_a_generic_alert():
 
 
 def test_evidence_keeps_the_image_type_of_its_bytes():
-    assert _image_type(b"\x89PNG\r\n\x1a\n...") == "image/png"
-    assert _image_type(b"RIFF\x00\x00\x00\x00WEBPVP8 ") == "image/webp"
-    assert _image_type(b"\xff\xd8\xff\xe0") == "image/jpeg"
+    assert image_type(b"\x89PNG\r\n\x1a\n...") == "image/png"
+    assert image_type(b"RIFF\x00\x00\x00\x00WEBPVP8 ") == "image/webp"
+    assert image_type(b"\xff\xd8\xff\xe0") == "image/jpeg"
 
 
 def test_blocking_or_counting_no_signatures_touches_nothing():

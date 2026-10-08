@@ -244,7 +244,7 @@ def test_without_a_bucket_or_key_storage_is_off_with_a_single_warning(monkeypatc
         disabled = load_storage()
     assert isinstance(disabled, DisabledStorage) and disabled.configured is False
     assert "faltan GCS_BUCKET" in caplog.text and not [r for r in caplog.records if r.levelno >= logging.ERROR]
-    assert disabled.describe() == {"backend": "disabled", "bucket": None, "reason": disabled.reason}
+    assert disabled.describe() == {"backend": "disabled", "bucket": None, "reason": str(disabled.reason)}
     for call in (
         lambda: disabled.put("x", b"", {}),
         lambda: disabled.stat("x"),

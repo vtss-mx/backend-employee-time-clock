@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from app.core.clock import business_today
 from app.core.exceptions import AppError, ConflictError, NotFoundError, UnprocessableError
+from app.i18n import render_text
 from app.models import Employee, EmployeeAbsence, ShiftRequestStatus, User
 from app.repositories.calendar_repository import ACTIVE_STATUSES, CalendarRepository
 from app.repositories.employee_repository import EmployeeRepository
@@ -32,14 +33,18 @@ from app.schemas.calendar import (
 )
 from app.schemas.common import PageParams
 from app.services.calendar_rules import span_days
-from app.services.catalog_service import get_catalogs
+from app.services.catalog_service import catalog_name_text, get_catalogs
 from app.services.shift_service import employee_ref
 
 
 def _overlap(absence: EmployeeAbsence) -> ConflictError:
-    catalogs = get_catalogs()
-    kind = catalogs.name("day_off_types", absence.type_code)
-    state = catalogs.name("shift_request_statuses", absence.status).lower()
+    kind = catalog_name_text("day_off_types", absence.type_code)
+    status = catalog_name_text("shift_request_statuses", absence.status)
+
+    def state() -> str:
+        """El estado en minúsculas («aprobada» · "approved"), en el idioma de cada mensaje que lo lleva."""
+        return render_text(status).lower()
+
     return ConflictError(
         code="ABSENCE_OVERLAP",
         params={"kind": kind, "state": state, "start": absence.starts_on, "end": absence.ends_on},
@@ -81,7 +86,8 @@ class AbsenceService:
         if row is None or not row["active"]:
             raise UnprocessableError(code="DAY_OFF_TYPE_INVALID", field="type")
         if requestable and not row["requestable"]:
-            raise UnprocessableError(code="DAY_OFF_TYPE_NOT_REQUESTABLE", params={"name": row["name"]}, field="type")
+            name = catalog_name_text("day_off_types", type_code)
+            raise UnprocessableError(code="DAY_OFF_TYPE_NOT_REQUESTABLE", params={"name": name}, field="type")
 
     # ---------- Empresa ----------
 

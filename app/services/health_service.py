@@ -15,6 +15,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.core.admission import admission
+from app.core.cache import shared_cache
 from app.core.database import engine
 from app.facial_recognition import face_engine_status
 from app.services import storage_jobs
@@ -77,12 +78,14 @@ def readiness() -> dict[str, Any]:
 
 
 def server_status(db: Session) -> dict[str, Any]:
-    """Vista del ADMIN: todo el detalle de los componentes, la capacidad adaptativa del proceso y el
-    almacenamiento de imágenes en el bucket (conteos de la BD; ninguna llamada al bucket)."""
+    """Vista del ADMIN: todo el detalle de los componentes, la capacidad adaptativa del proceso, el
+    almacenamiento de imágenes en el bucket (conteos de la BD; ninguna llamada al bucket) y la caché compartida
+    (Redis) tal como la ve este proceso (su cortacircuitos; sin llamarle)."""
     found = components()
     return {
         "status": overall(found),
         "components": found,
         "admission": admission.snapshot(),
         "storage": storage_jobs.status(db),
+        "cache": shared_cache().describe(),
     }

@@ -1,9 +1,14 @@
 """Comparación de embeddings mediante similitud coseno."""
 
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 
 import numpy as np
+
+from app.core.crypto import try_decrypt
+
+logger = logging.getLogger(__name__)
 
 #: La fusión guarda [√w·SFace (128), √(1-w)·FaceNet (512)]: cada parte se compara por separado
 #: renormalizándola (sin volver a registrar a nadie).
@@ -67,4 +72,20 @@ def embedding_from_bytes(data: bytes, dimension: int) -> np.ndarray:
     vector = np.frombuffer(data, dtype=np.float32)
     if vector.size != dimension:
         raise ValueError(f"Dimensión de embedding inesperada: {vector.size} != {dimension}")
+    return vector
+
+
+def readable_embedding(sample_id: int, encrypted: bytes, dimension: int) -> np.ndarray | None:
+    """El vector de una muestra (descifrado y deserializado), o None (y un registro en el log) si es ilegible. Vive en
+    esta capa (reconocimiento, sin servicios ni repositorios) para que el servicio Y el repositorio lo usen sin un ciclo
+    de importación servicio ↔ repositorio."""
+    data = try_decrypt(encrypted)
+    vector = None
+    if data is not None:
+        try:
+            vector = embedding_from_bytes(data, dimension)
+        except ValueError:
+            vector = None
+    if vector is None:
+        logger.error("Muestra facial %s ilegible (dañada o de otra llave de cifrado): se omite", sample_id)
     return vector

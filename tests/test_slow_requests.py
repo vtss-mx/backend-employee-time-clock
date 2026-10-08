@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
-from app.core.admission import FACE_PREFIXES, is_face_route
+from app.core.admission import FACE_PREFIXES, VOICE_PREFIXES, is_face_route, is_voice_route
 from app.core.config import settings
 from app.dependencies import get_pipeline
 from app.main import API_ROUTERS
@@ -40,9 +40,15 @@ def _api_routes():
 
 def test_the_face_routes_are_exactly_the_ones_that_use_the_face_engine():
     routes = list(_api_routes())
-    wrong = [(method, path) for method, path, face in routes if is_face_route(method, path) != face]
+    # Una ruta que usa el motor es facial o de la verificación por voz (que además transcribe: su propio umbral).
+    wrong = [
+        (method, path)
+        for method, path, face in routes
+        if (is_face_route(method, path) or is_voice_route(method, path)) != face
+    ]
     assert wrong == []
-    faces = {(method, path) for method, path, face in routes if face}
+    assert {(m, p) for m, p, _ in routes if is_voice_route(m, p)} == {("POST", "/api/enrollment/voice/answer")}
+    faces = {(method, path) for method, path, face in routes if face and not is_voice_route(method, path)}
     # Las que pidió el dueño: registro (propio y en persona), verificación, identificación, reto y asistencia.
     assert {
         ("POST", "/api/enrollment/face"),
@@ -58,6 +64,7 @@ def test_the_face_routes_are_exactly_the_ones_that_use_the_face_engine():
 
     groups = {group_of(method, path, depth=None) for method, path in faces}
     assert all(any(group.startswith(prefix) for group in groups) for prefix in FACE_PREFIXES)
+    assert not any(group.startswith(VOICE_PREFIXES) for group in groups)
     assert not is_face_route("POST", "/api/checkpoint/identify/qr")  # sin rostro
     assert not is_face_route("POST", "/api/employees/1/face/reset")  # pide otro registro: no analiza capturas
     assert not is_face_route("GET", "/api/me/attendance/today")
@@ -78,6 +85,12 @@ def _scope(method: str, path: str) -> dict:
         ("GET", "/api/employees", 1200.0, 1000),  # cualquier otra: desde 1 s
         ("GET", "/api/employees", 1000.0, None),
         ("POST", "/api/checkpoint/identify/qr", 1500.0, 1000),
+        # La verificación por voz (transcribe): desde 8 s (decisión del dueño, 2026-10-06, medido).
+        ("POST", "/api/enrollment/voice/answer", 7900.0, None),
+        ("POST", "/api/enrollment/voice/answer", 8100.0, 8000),
+        # El OCR de un documento del empleado (Tesseract): desde 5 s (decisión del dueño, 2026-10-07, medido).
+        ("POST", "/api/me/documents", 4900.0, None),
+        ("POST", "/api/me/documents", 5100.0, 5000),
     ],
 )
 def test_each_route_class_has_its_threshold(method, path, elapsed, expected):

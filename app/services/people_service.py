@@ -15,7 +15,7 @@ from typing import Literal
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import ConflictError
-from app.i18n import t
+from app.i18n import LazyText, Text
 from app.models import User, UserRole
 from app.repositories.user_repository import UserRepository
 
@@ -37,8 +37,8 @@ Match = Literal["AVAILABLE", "LINKABLE", "TAKEN", "MISMATCH"]
 @dataclass(frozen=True)
 class AccountCheck:
     match: Match
-    #: Ya en el idioma de la petición.
-    message: str | None = None
+    #: Para la persona, diferido (se arma en el idioma de quien lo lee y, en el sobre, en cada idioma).
+    text: LazyText | None = None
 
 
 def ensure_account_free(users: UserRepository, account: User) -> None:
@@ -75,8 +75,8 @@ class PeopleService:
         try:
             account = self.account_to_link(email, phone)
         except ConflictError as exc:
-            return AccountCheck("MISMATCH", exc.message) if exc.field == "phone" else None
-        return AccountCheck("LINKABLE", t(PHONE_MATCHES)) if account else AccountCheck("AVAILABLE")
+            return AccountCheck("MISMATCH", exc.text) if exc.field == "phone" else None
+        return AccountCheck("LINKABLE", Text(PHONE_MATCHES)) if account else AccountCheck("AVAILABLE")
 
     def account_to_link(self, email: str, phone: str) -> User | None:
         """Cuenta existente a vincular como empleado de esta empresa, o None si es una persona nueva.
@@ -108,8 +108,10 @@ class PeopleService:
         if owner is None or owner.id == exclude_user_id:
             return AccountCheck("AVAILABLE")
         if self._linkable(owner):
-            return AccountCheck("LINKABLE", t(linkable)) if exclude_user_id is None else AccountCheck("TAKEN", t(taken))
-        return AccountCheck("TAKEN", t(here if owner.role == UserRole.EMPLOYEE else taken))
+            if exclude_user_id is None:
+                return AccountCheck("LINKABLE", Text(linkable))
+            return AccountCheck("TAKEN", Text(taken))
+        return AccountCheck("TAKEN", Text(here if owner.role == UserRole.EMPLOYEE else taken))
 
     def _linkable(self, user: User) -> bool:
         """Empleado de OTRA(S) empresa(s): puede sumarse a esta con la misma cuenta."""

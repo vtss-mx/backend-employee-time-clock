@@ -108,7 +108,7 @@ FROZEN_MIGRATIONS: dict[str, tuple[int, str]] = {
 DYNAMIC_ATTRIBUTES: dict[tuple[str, str], tuple[int, str]] = {
     ("app/repositories/employee_repository.py", "EmployeeRepository.unique_exists"): (
         1,
-        "`field` es `UniqueDocument` = Literal['rfc', 'curp', 'nss']",
+        "`field` es `UniqueField` = Literal['employee_number', 'rfc', 'curp', 'nss']",
     ),
     ("app/repositories/performance_repository.py", "_bucket_bound"): (
         2,

@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, Double, ForeignKey, ForeignKeyConstraint, Index, String, func, text
+from sqlalchemy import DateTime, Double, ForeignKey, ForeignKeyConstraint, Index, Integer, String, func, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db_schemas import CATALOG
@@ -43,6 +43,25 @@ class AddressMixin:
     reference_notes: Mapped[str | None] = mapped_column(String(300))
     latitude: Mapped[float | None] = mapped_column(Double)
     longitude: Mapped[float | None] = mapped_column(Double)
+
+
+class StoredFileReference:
+    """Referencia (NO los bytes) de un archivo CIFRADO en el bucket (`STORED_IMAGES`): su formato real, la clave al azar
+    del objeto, su nombre, su tamaño, el SHA-256 del objeto cifrado y cuándo se subió (verificado).
+
+    Lo comparten las tablas que guardan un archivo en el bucket con borrado lógico (los documentos de la empresa y los
+    documentos de identidad del empleado): una sola definición de estas columnas (regla 6 de la raíz: sin duplicación).
+    Cada tabla agrega lo suyo (el nombre del archivo, quién lo subió, los datos del OCR...)."""
+
+    #: Formato real, reconocido por su contenido (nunca lo que declara el navegador).
+    content_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    #: Clave al azar del objeto (32 caracteres hexadecimales): lo nombra sin esperar el id de la fila.
+    uid: Mapped[str] = mapped_column(String(32), nullable=False)
+    #: Nombre del objeto en el bucket (`StoredImage`): solo ids, nunca datos de la persona.
+    object_name: Mapped[str] = mapped_column(String(300), nullable=False)
+    byte_size: Mapped[int] = mapped_column(Integer, nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 def company_fk(table: str, column: str, target: str, *, ondelete: str = "CASCADE") -> ForeignKeyConstraint:

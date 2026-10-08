@@ -1,0 +1,6 @@
+memoria: used_memory:1262072 maxmemory:268435456 
+llaves: 5
+instantánea timeclock:catalogs:6f298f8f6321392b bytes=163904 ttl=500
+contadores de límites (rl:*): 4
+aciertos/fallos: total_commands_processed:251 keyspace_hits:11 keyspace_misses:2 
+caídas registradas por las réplicas (Redis no responde): 0

@@ -488,29 +488,29 @@ class AttendanceService:
             remaining=max(0, session.breaks_allowed - state.breaks_used),
         )
 
-    def _explain(self, state: _State, upcoming: _Upcoming, day_off: tuple[DayOff, date] | None, today: date) -> str:
-        """Qué hay ahora, para la persona (en el idioma de la petición)."""
+    def _explain(self, state: _State, upcoming: _Upcoming, day_off: tuple[DayOff, date] | None, today: date) -> Text:
+        """Qué hay ahora, para la persona (diferido: `data.message` en el idioma de la petición y el sobre en cada
+        idioma)."""
         if state.session is not None:
             if state.open_break is not None:
-                return t("ON_BREAK_SINCE", {"time": _clock(state.open_break.started_at)})
+                return Text("ON_BREAK_SINCE", {"time": _clock(state.open_break.started_at)})
             since, until = _clock(state.session.check_in_at), _clock(state.session.scheduled_end)
-            return t("ON_SHIFT_SINCE", {"since": since, "until": until})
+            return Text("ON_SHIFT_SINCE", {"since": since, "until": until})
         if state.done is not None:
-            return t("SHIFT_ALREADY_RECORDED_TODAY")
+            return Text("SHIFT_ALREADY_RECORDED_TODAY")
         if day_off is not None:
             return self._then(Text("SENTENCE", {"text": day_off[0].explain(day_off[1], today)}), upcoming)
         if state.can_check_in:
             occurrence = cast(_Slot, state.slot).occurrence
-            return t("SHIFT_CHECK_IN_NOW", {"start": _clock(occurrence.start), "end": _clock(occurrence.end)})
+            return Text("SHIFT_CHECK_IN_NOW", {"start": _clock(occurrence.start), "end": _clock(occurrence.end)})
         if state.slot is not None:
             return self._then(Text("SHIFT_ENDED_UNRECORDED", {"time": _clock(state.slot.occurrence.end)}), upcoming)
-        upcoming_text = self._next_text(upcoming)
-        return str(upcoming_text) if upcoming_text else t("NO_SHIFT_ASSIGNED")
+        return self._next_text(upcoming) or Text("NO_SHIFT_ASSIGNED")
 
-    def _then(self, now: Text, upcoming: _Upcoming) -> str:
+    def _then(self, now: Text, upcoming: _Upcoming) -> Text:
         """Lo de ahora y, si hay, la siguiente jornada."""
         upcoming_text = self._next_text(upcoming)
-        return t("TWO_SENTENCES", {"first": now, "second": upcoming_text}) if upcoming_text else str(now)
+        return Text("TWO_SENTENCES", {"first": now, "second": upcoming_text}) if upcoming_text else now
 
     def _next_text(self, upcoming: _Upcoming) -> Text | None:
         if upcoming.slot is None:
@@ -553,7 +553,7 @@ class AttendanceService:
             verified = verify()  # el rostro (registra su intento en la bitácora y confirma)
         result, log, review, network = verified.result, verified.log, verified.review, verified.network
         if not result.verified:
-            return AttendanceActionResult(verified=False, message=result.message, action=action, verification=result)
+            return AttendanceActionResult(verified=False, message=result.text, action=action, verification=result)
         EmployeeRepository(self.db, self.company_id).get_by_id(employee.id, lock=True)  # en orden con otros registros
         state = self._state(employee.id, now, lock=True)  # pudo cambiar mientras se verificaba el rostro
         self._ensure_allowed(state, action)
@@ -583,7 +583,7 @@ class AttendanceService:
         self.db.commit()
         return AttendanceActionResult(
             verified=True,
-            message=str(done_text(action, result.review)),
+            message=done_text(action, result.review),
             action=action,
             verification=result,
             session=self._read(session),

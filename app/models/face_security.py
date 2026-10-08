@@ -93,6 +93,10 @@ class FaceAttemptMetric(Base):
     #: Lo que decidió la revisión de un caso: FRAUD (no "envenena" la calibración de las personas reales) o
     #: GENUINE (falso positivo: un genuino difícil). None = sin revisar.
     fraud_label: Mapped[str | None] = mapped_column(String(20))
+    #: Plataforma del navegador que hizo el intento (migración 0081, deriva de señales): IOS_SAFARI, ANDROID_CHROME,
+    #: DESKTOP u OTHER (`app/core/devices.py`, `platform_of`). Una categoría gruesa, nunca el User-Agent ni la persona;
+    #: None en los intentos anteriores a la migración.
+    platform: Mapped[str | None] = mapped_column(String(20))
 
 
 class SecurityThreshold(Base):

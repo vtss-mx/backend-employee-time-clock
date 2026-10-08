@@ -5,6 +5,7 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, computed_field, field_validator
 
 from app.models.company import RFC_TAX_ID_TYPE, VALIDATORS_MAX
+from app.schemas.avatar import avatar_path
 from app.schemas.billing import BillingPlanIn
 from app.schemas.common import Deletion, Page
 from app.schemas.tax_ids import TaxIdFields
@@ -52,6 +53,10 @@ class CompanyCreate(TaxIdFields, _CompanyFields):
     admin_email: EmailStr = Field(description="Correo del administrador de la empresa (inicia sesión con él)")
     admin_password: str
     api_enabled: bool = Field(default=False, description="Acceso al módulo de Integraciones (API)")
+    require_employee_documents: bool = Field(
+        default=False,
+        description="Onboarding con documentos: el empleado sube comprobante de domicilio e identificación oficial",
+    )
     #: Plan de cobro, en la misma operación (la webapp siempre lo envía). Sin él la empresa no se cobra
     #: hasta que el ADMIN se lo configure.
     billing: BillingPlanIn | None = None
@@ -74,6 +79,9 @@ class CompanyUpdate(TaxIdFields, _CompanyFields):
         "`VALIDATOR_LIMIT_BELOW_ACTIVE`",
     )
     api_enabled: bool | None = Field(default=None, description="Acceso al módulo de Integraciones (API)")
+    require_employee_documents: bool | None = Field(
+        default=None, description="Onboarding con documentos (comprobante de domicilio e identificación oficial)"
+    )
 
 
 class CompanyStatusUpdate(BaseModel):
@@ -99,6 +107,14 @@ class CompanyAdminRead(BaseModel):
     active: bool
     last_login_at: datetime | None = None
     created_at: datetime
+    #: Versión de su foto de perfil (solo para armar `avatar`; no se envía).
+    avatar_version: str | None = Field(default=None, exclude=True)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def avatar(self) -> str | None:
+        """Ruta versionada de su foto de perfil o None (el ADMIN ve la de toda cuenta vigente)."""
+        return avatar_path(self.id, self.avatar_version)
 
 
 class CompanyAdminList(Page[CompanyAdminRead]):
@@ -123,6 +139,8 @@ class CompanyRead(Deletion):
     max_validators: int = 0
     #: Tiene el módulo de Integraciones (API).
     api_enabled: bool = False
+    #: Onboarding con documentos: el empleado sube comprobante de domicilio e identificación oficial (OCR).
+    require_employee_documents: bool = False
     #: Estado de servicio (catalog.billing_statuses) y, si está suspendida, por qué (suspension_reasons).
     billing_status: str = "ACTIVE"
     suspension_reason: str | None = None
@@ -158,10 +176,11 @@ class PlatformStats(BaseModel):
 class CompanyEmployeeRead(BaseModel):
     """Un empleado de una empresa visto por el ADMIN de la plataforma: su ficha de trabajo, de solo
     lectura, y cuánto aprendió de él el reconocimiento facial (lo administra el ADMIN). Sin datos
-    fiscales (RFC, CURP, NSS), fecha de nacimiento, fotos ni plantillas."""
+    fiscales (RFC, CURP, NSS), fecha de nacimiento, fotos del registro facial ni plantillas; sí su foto de perfil."""
 
     id: int
-    employee_number: str
+    #: Opcional (migración 0076): null si el empleado no tiene número.
+    employee_number: str | None = None
     first_name: str
     last_name: str
     department_name: str | None = None
@@ -169,6 +188,9 @@ class CompanyEmployeeRead(BaseModel):
     phone: str | None = None
     active: bool
     face_status: str
+    #: Su foto de perfil (ruta versionada) o None: el ADMIN ve la foto de todos (decisión del dueño, 2026-10-06). Es la
+    #: foto de PERFIL; las del registro facial nunca viajan aquí.
+    avatar: str | None = None
     #: Muestras que el reconocimiento aprendió de sus identificaciones seguras (solo cuántas y cuándo).
     face_learned_samples: int = 0
     face_last_learned_at: datetime | None = None

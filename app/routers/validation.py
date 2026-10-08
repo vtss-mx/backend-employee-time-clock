@@ -46,4 +46,4 @@ def validate(
     # Cada consulta pregunta por correos/teléfonos de toda la plataforma: con límite por usuario.
     enforce(f"validation:user:{user.id}", settings.RATE_LIMIT_VALIDATION_PER_MINUTE)
     result = validate_field(db, user, field, value, exclude_id, related)
-    return ok(result.as_dict(), result.message, code=result.code)
+    return ok(result.as_dict(), result.text, code=result.code)

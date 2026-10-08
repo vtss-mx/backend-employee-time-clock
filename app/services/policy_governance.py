@@ -62,6 +62,10 @@ CATALOG_FIELDS = (
     ("validator_signing", "signal_modes", "INVALID_SIGNAL_MODE"),
     ("validator_location", "signal_modes", "INVALID_SIGNAL_MODE"),
     ("site_codes", "signal_modes", "INVALID_SIGNAL_MODE"),
+    # Ubicación de cada verificación de identidad (decisión del dueño, 2026-10-07): el mismo catálogo de modos.
+    ("verification_location", "signal_modes", "INVALID_SIGNAL_MODE"),
+    # Guía por audio (decisión del dueño, 2026-10-08): la voz elegida es un código de catalog.voice_profiles.
+    ("voice_profile", "voice_profiles", "INVALID_VOICE_PROFILE"),
 )
 #: Niveles de confianza (catalog.confidence_levels).
 CONFIDENCE_FIELDS = ("min_confidence", "identify_confidence", "duplicate_confidence")

@@ -6,7 +6,9 @@ Formato de la llave:  "tck_<43 caracteres>" (32 bytes aleatorios, 256 bits).
 - Se presenta en la cabecera `X-API-Key` y solo sirve en la API de integración (`/integrations/v1`);
   la sesión de un usuario no sirve ahí, ni la llave en el resto de la API.
 - La empresa sale SIEMPRE de la llave (nunca de la petición) y cada permiso es de solo lectura
-  (catalog.api_scopes). Revocarla, que venza o que la empresa se desactive la apaga al instante.
+  (catalog.api_scopes), salvo `VERIFICATION`: la verificación facial desde la aplicación móvil de la empresa (SDK,
+  migración 0084), que solo registra sus intentos. Revocarla, que venza o que la empresa se desactive la apaga al
+  instante.
 """
 
 import secrets
@@ -32,7 +34,7 @@ from app.repositories.user_repository import UserRepository
 from app.schemas.api_key import ApiKeyCreate, ApiKeyCreated, ApiKeyList, ApiKeyRead
 from app.schemas.common import PageParams
 from app.services.auth_service import company_suspended
-from app.services.catalog_service import get_catalogs
+from app.services.catalog_service import catalog_name_text, get_catalogs
 
 API_KEY_PREFIX = "tck_"
 SECRET_BYTES = 32
@@ -63,15 +65,22 @@ def key_status(key: CompanyApiKey, now: datetime | None = None) -> ApiKeyStatus:
     return ApiKeyStatus.ACTIVE
 
 
-def authenticate(db: Session, raw_key: str | None, ip: str | None) -> ApiClient:
-    """Valida la llave de la cabecera y devuelve a qué empresa y permisos da acceso."""
+def authenticate(
+    db: Session, raw_key: str | None, ip: str | None, *, rule: str = "api-key", limit: int | None = None
+) -> ApiClient:
+    """Valida la llave de la cabecera y devuelve a qué empresa y permisos da acceso.
+
+    `rule` y `limit`: el límite de peticiones de la llave en ESTAS rutas. Por omisión el general de la API de
+    integración (`RATE_LIMIT_API_KEY_PER_MINUTE`); la verificación facial de la aplicación móvil de la empresa lleva su
+    propio contador, más alto (`RATE_LIMIT_API_VERIFICATION_PER_MINUTE`: toda una plantilla checando a la misma hora con
+    la misma llave), que no se mezcla con el de los sistemas que leen datos."""
     if not raw_key or not raw_key.strip():
         raise ApiKeyAuthenticationError(code="API_KEY_REQUIRED")
     raw = raw_key.strip()
     digest = hash_token(raw)
     # El límite va ANTES de cualquier consulta: la petición nunca ocupa dos conexiones a la vez y
     # probar llaves inventadas también cuenta.
-    enforce(f"api-key:{digest[:32]}", settings.RATE_LIMIT_API_KEY_PER_MINUTE)
+    enforce(f"{rule}:{digest[:32]}", settings.RATE_LIMIT_API_KEY_PER_MINUTE if limit is None else limit)
     key = find_by_hash(db, digest) if raw.startswith(API_KEY_PREFIX) and len(raw) <= _MAX_KEY_LENGTH else None
     if key is None:
         raise ApiKeyAuthenticationError(code="API_KEY_INVALID")
@@ -113,7 +122,7 @@ def _touch(db: Session, key: CompanyApiKey, ip: str | None) -> None:
 
 def require_scope(client: ApiClient, scope: str) -> None:
     if scope not in client.scopes:
-        name = get_catalogs().name("api_scopes", scope)
+        name = catalog_name_text("api_scopes", scope)
         raise PermissionDeniedError(code="API_SCOPE_REQUIRED", params={"scope": name}, details={"scope": scope})
 
 

@@ -1,18 +1,20 @@
 """Excepciones de dominio y manejadores globales de errores.
 
 Todas las respuestas de error usan el contrato único de `app.core.responses`
-(success=false, statusCode, code, message, data=null, errors=[...], traceId, timestamp).
+(success=false, statusCode, code, message, data=null, errors=[...], i18n, traceId, timestamp).
 
 **El texto de un error no se escribe al lanzarlo** (regla 16 de la raíz): `code` es el código estable y nombra su
 mensaje en el catálogo (`app/i18n/messages/`); si el mismo código tiene varias frases, `key` elige la suya; los datos
-van en `params`. El mensaje se arma al responder, en el idioma de la petición:
+van en `params`. El mensaje se arma al responder, en el idioma de la petición (y en cada idioma, `i18n`):
 
     raise NotFoundError(code="EMPLOYEE_NOT_FOUND")
     raise UnprocessableError(code="CURRENCY_LOCKED", params={"currency": "MXN"}, field="currency")
     raise ConflictError(code="EMPLOYEE_INACTIVE", key="EMPLOYEE_INACTIVE_ENROLL")
 
-`message` (un texto ya escrito) solo existe para los módulos que todavía no se migran al catálogo; el código nuevo no
-lo usa (`tests/test_i18n.py` lo vigila).
+`message` es el texto DIFERIDO de un error cuyo texto no es un mensaje del catálogo de mensajes: uno de un catálogo de
+la BD (`face_error_text(code)`, `session_text(reason)`) o el `Text` de una regla (`LocalizedValueError.text`). Nunca
+una cadena ya armada: el sobre arma el texto en cada idioma (`i18n`, regla 16) y una cadena diría lo mismo en los dos
+(`tests/test_i18n.py` y `tests/test_api_language.py` lo vigilan).
 """
 
 import logging
@@ -25,9 +27,9 @@ from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.core.request_context import note_error
-from app.core.responses import ErrorItem, envelope_response
+from app.core.responses import ErrorItem, LazyErrors, envelope_body, single_error
 from app.core.validation_errors import validation_items
-from app.i18n import Params, Text, t
+from app.i18n import LazyText, Params, Text, render_text, t
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +47,7 @@ class AppError(Exception):
 
     def __init__(
         self,
-        message: str | None = None,
+        message: LazyText | None = None,
         *,
         code: str | None = None,
         key: str | None = None,
@@ -59,7 +61,8 @@ class AppError(Exception):
         #: Mensaje del catálogo (por omisión, el del código) y sus datos.
         self.key = key or self.code
         self.params = params
-        self._literal = message
+        #: Texto diferido que no es del catálogo de mensajes (un catálogo de la BD); None = el de `key`.
+        self._text = message
         super().__init__(self.key)
         self.headers = headers
         self.details = details
@@ -67,9 +70,14 @@ class AppError(Exception):
         self.field = field
 
     @property
+    def text(self) -> LazyText:
+        """El mensaje diferido: el sobre lo arma en cada idioma (`i18n`)."""
+        return self._text if self._text is not None else Text(self.key, self.params)
+
+    @property
     def message(self) -> str:
-        """El mensaje en el idioma de la petición en curso."""
-        return self._literal if self._literal is not None else t(self.key, self.params)
+        """El mensaje en el idioma vigente (el de la petición en curso)."""
+        return render_text(self.text)
 
     def __str__(self) -> str:
         return self.message
@@ -81,7 +89,7 @@ class AuthenticationError(AppError):
 
     def __init__(
         self,
-        message: str | None = None,
+        message: LazyText | None = None,
         *,
         code: str | None = None,
         key: str | None = None,
@@ -96,7 +104,7 @@ class ApiKeyAuthenticationError(AppError):
     status_code = status.HTTP_401_UNAUTHORIZED
     code = "API_KEY_INVALID"
 
-    def __init__(self, message: str | None = None, *, code: str, key: str | None = None) -> None:
+    def __init__(self, message: LazyText | None = None, *, code: str, key: str | None = None) -> None:
         super().__init__(message, code=code, key=key, headers={"WWW-Authenticate": 'ApiKey header="X-API-Key"'})
 
 
@@ -106,7 +114,7 @@ class PermissionDeniedError(AppError):
 
     def __init__(
         self,
-        message: str | None = None,
+        message: LazyText | None = None,
         *,
         code: str | None = None,
         key: str | None = None,
@@ -155,7 +163,7 @@ class ServiceUnavailableError(AppError):
 
     def __init__(
         self,
-        message: str | None = None,
+        message: LazyText | None = None,
         *,
         code: str | None = None,
         key: str | None = None,
@@ -195,43 +203,56 @@ _HTTP_CODES = {
 def error_response(
     status_code: int,
     code: str,
-    message: str,
+    message: LazyText,
     *,
-    errors: list[ErrorItem] | None = None,
+    errors: LazyErrors | None = None,
     details: dict | None = None,
     headers: dict[str, str] | None = None,
     field: str | None = None,
 ) -> JSONResponse:
-    """La respuesta de error con el sobre de siempre; `message` ya viene en el idioma de la petición (`t(...)`)."""
+    """La respuesta de error con el sobre de siempre; `message` es el texto diferido (`Text("LLAVE")`): se arma en el
+    idioma de la petición y en cada idioma (`i18n`)."""
     # Siempre hay al menos un elemento en `errors` para que el cliente pueda iterarlos.
-    items = errors or [ErrorItem(code=code, message=message, field=field, details=details)]
-    # Toda respuesta de error pasa por aquí: se anota para registrarla en ops.error_reports.
-    note_error(status_code, code, message)
-    return envelope_response(status_code, code, message, errors=items, headers=headers)
+    body = envelope_body(
+        status_code, code, message, errors=errors or single_error(code, message, field=field, details=details)
+    )
+    # Toda respuesta de error pasa por aquí: se anota (una vez, con el texto que recibió la persona) para registrarla
+    # en ops.error_reports si es una falla.
+    note_error(status_code, code, body["message"])
+    return JSONResponse(status_code=status_code, content=body, headers=headers)
 
 
 def internal_error_response() -> JSONResponse:
-    return error_response(status.HTTP_500_INTERNAL_SERVER_ERROR, "INTERNAL_ERROR", t("INTERNAL_ERROR"))
+    return error_response(status.HTTP_500_INTERNAL_SERVER_ERROR, "INTERNAL_ERROR", Text("INTERNAL_ERROR"))
 
 
-def _http_message(code: str, detail: object) -> str:
+def _http_message(code: str, detail: object) -> Text:
     """El texto de un `HTTPException`: el `Text` que trae (413 al leer el cuerpo) o el del catálogo para su código
     (cada código de `_HTTP_CODES` y `HTTP_ERROR` tienen el suyo)."""
-    return str(detail) if isinstance(detail, Text) else t(code)
+    return detail if isinstance(detail, Text) else Text(code)
+
+
+def _validation_message(errors: list[ErrorItem]) -> str:
+    """El `message` de un 422 de Pydantic: el del error si es uno solo; si son varios, el general."""
+    return errors[0].message if len(errors) == 1 else t("VALIDATION_ERROR")
 
 
 def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(AppError)
     async def _app_error(_: Request, exc: AppError) -> JSONResponse:
         return error_response(
-            exc.status_code, exc.code, exc.message, details=exc.details, headers=exc.headers, field=exc.field
+            exc.status_code, exc.code, exc.text, details=exc.details, headers=exc.headers, field=exc.field
         )
 
     @app.exception_handler(RequestValidationError)
     async def _validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:
-        errors = validation_items(exc.errors())
-        message = errors[0].message if len(errors) == 1 else t("VALIDATION_ERROR")
-        return error_response(status.HTTP_422_UNPROCESSABLE_CONTENT, "VALIDATION_ERROR", message, errors=errors)
+        found = exc.errors()
+        return error_response(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            "VALIDATION_ERROR",
+            lambda: _validation_message(validation_items(found)),
+            errors=lambda: validation_items(found),
+        )
 
     @app.exception_handler(StarletteHTTPException)
     async def _http_error(_: Request, exc: StarletteHTTPException) -> JSONResponse:
@@ -248,18 +269,18 @@ def register_exception_handlers(app: FastAPI) -> None:
         sqlstate = getattr(getattr(exc, "orig", None), "sqlstate", None)
         logger.error("Error de base de datos: %s (SQLSTATE %s)", exc.__class__.__name__, sqlstate or "-")
         if sqlstate in _CONFLICT_STATES:
-            return error_response(status.HTTP_409_CONFLICT, "CONCURRENT_UPDATE", t("CONCURRENT_UPDATE"))
+            return error_response(status.HTTP_409_CONFLICT, "CONCURRENT_UPDATE", Text("CONCURRENT_UPDATE"))
         if sqlstate == _STATEMENT_TIMEOUT:
             return error_response(
                 status.HTTP_503_SERVICE_UNAVAILABLE,
                 "DATABASE_TIMEOUT",
-                t("DATABASE_TIMEOUT"),
+                Text("DATABASE_TIMEOUT"),
                 headers={"Retry-After": "5"},
             )
         return error_response(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "DATABASE_UNAVAILABLE",
-            t("DATABASE_UNAVAILABLE"),
+            Text("DATABASE_UNAVAILABLE"),
             headers={"Retry-After": "5"},
         )
 
@@ -268,7 +289,7 @@ def register_exception_handlers(app: FastAPI) -> None:
         # Dos peticiones simultáneas chocaron con una regla única de la BD (la que llegó segunda):
         # 409 reintentable en lugar de 500. La sesión se descarta al terminar la petición.
         logger.warning("Conflicto de integridad: %s", exc.orig.__class__.__name__ if exc.orig else exc)
-        return error_response(status.HTTP_409_CONFLICT, "CONCURRENT_UPDATE", t("CONCURRENT_UPDATE"))
+        return error_response(status.HTTP_409_CONFLICT, "CONCURRENT_UPDATE", Text("CONCURRENT_UPDATE"))
 
     @app.exception_handler(Exception)
     async def _unhandled(_: Request, exc: Exception) -> JSONResponse:

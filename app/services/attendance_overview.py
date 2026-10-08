@@ -17,6 +17,7 @@ from app.repositories.aggregates import LOG_COUNT_CAP, get_scoped
 from app.repositories.attendance_repository import AttendanceRepository
 from app.repositories.department_repository import DepartmentRepository
 from app.repositories.shift_repository import ShiftRepository
+from app.repositories.user_repository import UserRepository
 from app.schemas.attendance import (
     AttendanceBoard,
     AttendanceEventRead,
@@ -78,6 +79,8 @@ class AttendanceOverview:
             e.department_id for _, e in rows if e.department_id
         )
         calendar = self.sessions.calendar.days_off((e.id for _, e in rows), day, day)
+        # La página no carga las cuentas (ver `assigned_on`): la foto de cada una, en UNA consulta por su llave.
+        versions = UserRepository(self.db).avatar_versions(e.user_id for _, e in rows)
         items = []
         for assignment, employee in rows:
             occurrence = occurrence_of(shifts[assignment.shift_id], day, self.sessions.zone)
@@ -87,7 +90,7 @@ class AttendanceOverview:
             day_off = None if session else calendar.on(employee.id, day)
             items.append(
                 BoardRow(
-                    employee=employee_ref(employee),
+                    employee=employee_ref(employee, versions),
                     department=departments.get(employee.department_id or 0),
                     shift_name=session.shift_name if session else shifts[assignment.shift_id].name,
                     scheduled_start=session.scheduled_start if session else occurrence.start,
